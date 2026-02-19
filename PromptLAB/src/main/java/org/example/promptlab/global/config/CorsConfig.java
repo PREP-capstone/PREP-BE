@@ -24,8 +24,7 @@ public class CorsConfig implements WebMvcConfigurer {
         allowedOriginPatterns.add("http://localhost:5501");
         allowedOriginPatterns.add("http://localhost:3453");
         allowedOriginPatterns.add("http://localhost:8800");
-        allowedOriginPatterns.add("http://api-promptlab.shop"); //api
-        allowedOriginPatterns.add("http://www.promptlab.shop"); //FE
+        allowedOriginPatterns.add("http://www.promptlab.shop");
 
         corsConfiguration.setAllowedOrigins(allowedOriginPatterns);
 
