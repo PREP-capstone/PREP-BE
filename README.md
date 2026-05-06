@@ -1,5 +1,5 @@
-# PromptLAB-BE
-PromptLAB SERVER
+# PREP-BE
+PREP SERVER
 
 ## 🚀 Git 컨벤션 규칙
 
