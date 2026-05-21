@@ -5,17 +5,16 @@ PREP SERVER
 
 ### Commit 규칙
 
-|   Gitmoji    |    Tag     | Description |
-|:------------:|:----------:| --- |
-|      ✨       |   `feat`   | 새로운 기능 추가 |
-|      🐛      |   `fix`    | 버그 수정 |
-|      📝      |   `docs`   | 문서 추가, 수정, 삭제 |
-|      ✅       |   `test`   | 테스트 코드 추가, 수정, 삭제 |
-|      💄      |  `style`   | 코드 형식 변경 |
-|      ♻️      | `refactor` | 코드 리팩토링 |
-|      ⚡️      |   `perf`   | 성능 개선 |
-|      💚      |    `ci`    | CI 관련 설정 수정 |
-|      🚀      |  `chore`   | 기타 변경사항 |
+| Gitmoji | Tag | Description |
+|:-------:|:---:| --- |
+| ✨ | `feat` | 새로운 기능 추가 |
+| 🔧 | `fix` | 버그 수정 |
+| 🐛 | `bug` | 버그 이슈 |
+| 📋 | `docs` | 문서 추가, 수정, 삭제 |
+| ✅ | `test` | 테스트 코드 추가, 수정, 삭제 |
+| ♻️ | `refactor` | 코드 리팩토링 |
+| ⚙️ | `chore` | 설정 및 기타 변경사항 |
+| 🔄 | `ci-cd` | CI/CD 관련 설정 수정 |
 
 #### Commit Message Format
 - **헤더(Header)**: `<타입>(스코프): <주제>`
