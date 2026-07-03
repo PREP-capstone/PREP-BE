@@ -1,0 +1,34 @@
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from sqlalchemy import text
+
+from app.core.redis_client import redis_client
+from app.db.session import engine
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await redis_client.aclose()
+    await engine.dispose()
+
+
+app = FastAPI(
+    title="PREP API",
+    lifespan=lifespan,
+)
+
+
+@app.get("/api/v1/health")
+async def health_check():
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+
+    await redis_client.ping()
+
+    return {
+        "status": "ok",
+        "postgres": "ok",
+        "redis": "ok",
+    }
