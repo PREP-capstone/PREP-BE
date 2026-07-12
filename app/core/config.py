@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     analysis_ttl_seconds: int = 1800
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
 
     model_config = SettingsConfigDict(
         env_file=".env",
