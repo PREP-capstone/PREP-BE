@@ -1,20 +1,5 @@
-"""[4]+[5] Stage A 프롬프트 주입 + LLM 호출 노드.
-
-참고: docs/langgraph_파이프라인_설계서.md §4 (extract_A)
-출력 스키마: docs/db_구축_설계서.md §4.2 Stage A — gate_keywords
-{
-  "type": "DISEASE | PROHIBITED_ACTION | DOCTOR_REPLACEMENT",
-  "keyword": "",
-  "keyword_category": "DIAGNOSIS | TREATMENT | DATA_TYPE | OTHER",
-  "data_type_focus": "IMAGING | NUMERIC | TEXT | LIFESTYLE | NONE",
-  "verdict": "FAIL_CANDIDATE | CONTEXT_CHECK | FAIL_CONFIRMED",
-  "weight": 0,
-  "legal_basis": {"document_id": "", "article": "", "quote": ""}
-}
-
-legal_basis.document_id는 LLM에게 묻지 않고 현재 문서의 document_id를 코드에서 채운다
-(LLM이 문서 id를 지어낼 위험을 없애기 위함). article/quote만 LLM 출력 대상.
-한 청크에서 0개 이상의 키워드 후보가 나올 수 있으므로 응답을 "keywords" 배열로 감싼다.
+"""[4]+[5] Stage A 프롬프트 주입 + LLM 호출 노드. gate_keywords 스키마로 구조화 출력을 받는다.
+legal_basis.document_id는 LLM 대신 코드에서 채우고, 청크당 0개 이상의 keywords 배열로 응답받는다.
 """
 
 import json

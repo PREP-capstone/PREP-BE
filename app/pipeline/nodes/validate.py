@@ -1,13 +1,5 @@
-"""[6] 자동 검증 노드.
-
-참고: docs/db_구축_설계서.md §4.4 자동 검증 규칙, docs/langgraph_파이프라인_설계서.md §7
-Stage A 검증 항목: 필수필드/enum/weight 1~5 범위/인용/중복 + FAIL_CONFIRMED 4조건 매칭 확인
-(파생값 일치 검증은 Stage C 전용이라 여기서는 대상 아님)
-
-지금은 retry_extract/human_review 분기가 없으므로, 개별 draft가 검증에 실패하면
-이번 실행에서는 publish 대상에서만 제외하고(자동 폐기가 아니라 "이번 배치에 포함 안 함"),
-validation.failed_checks에 실패 사유를 남긴다. route_after_validate(설계서 §5.3)가 붙으면
-실패건은 재시도/검수 큐로 보내야 한다.
+"""[6] 자동 검증 노드. 필수필드/enum/weight범위/인용/중복 + FAIL_CONFIRMED 조건을 확인한다.
+검증 실패 draft는 이번 배치에서만 제외(폐기 아님) — human_review가 붙으면 재시도/검수로 보내야 한다.
 """
 
 from sqlalchemy import func, select
@@ -103,12 +95,7 @@ def _check_weight_range(draft: ExtractedDraft) -> list[str]:
 
 
 def _check_fail_confirmed_condition(draft: ExtractedDraft) -> list[str]:
-    """FAIL_CONFIRMED 지정 기준 4조건 중 구조적으로 확인 가능한 부분만 검증.
-
-    (1)고위해도 5요소, (2)의료기기 정의 4목적 명시는 문면 판단이 필요해 LLM/관리자 판단에 맡기고,
-    여기서는 (3) type=DOCTOR_REPLACEMENT, (4) weight=5 AND type=DISEASE — 두 구조적 조건만
-    자동 검증한다 (db_구축_설계서.md §4.2 FAIL_CONFIRMED 지정 기준).
-    """
+    """FAIL_CONFIRMED는 type=DOCTOR_REPLACEMENT 또는 weight=5일 때만 구조적으로 인정."""
     fields = draft["fields"]
     if fields["verdict"] != "FAIL_CONFIRMED":
         return []
