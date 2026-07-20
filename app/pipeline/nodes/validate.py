@@ -1,11 +1,13 @@
 """[6] 자동 검증 노드. draft["stage"]별로 분기한다.
 Stage A: 필수필드/enum/weight범위/인용/중복 + FAIL_CONFIRMED 조건
 Stage B: 필수필드/enum/인용/중복(data_type+function_type 조합) + 파생값(verdict) 일치 검증
+Stage C: 필수필드/점수범위(0~3)/인용(legal_basis+advertising_basis)/중복(risky_text) +
+         derived_from_keyword_id가 실제 gate_keywords row를 가리키는지 검증
 """
 
 from sqlalchemy import func, select
 
-from app.db.models import GateKeyword, GateMatrix
+from app.db.models import CorrectionRule, GateKeyword, GateMatrix
 from app.db.session import AsyncSessionLocal
 from app.pipeline.gate_matrix_table import (
     DATA_TYPE_ENUM,
@@ -29,6 +31,15 @@ _STAGE_A_REQUIRED_FIELDS = [
     "legal_basis",
 ]
 _STAGE_B_REQUIRED_FIELDS = ["data_type", "function_type", "verdict", "legal_basis"]
+_STAGE_C_REQUIRED_FIELDS = [
+    "risky_text",
+    "safe_text",
+    "regulatory_score",
+    "privacy_score",
+    "advertising_score",
+    "advertising_basis",
+    "legal_basis",
+]
 
 
 async def auto_validate(state: PipelineState) -> dict:
@@ -36,17 +47,24 @@ async def auto_validate(state: PipelineState) -> dict:
     valid_drafts: list[ExtractedDraft] = []
     seen_keywords: set[str] = set()
     seen_matrix_combos: set[tuple[str, str]] = set()
+    seen_risky_texts: set[str] = set()
 
     existing_keywords = await _load_existing_keywords()
     existing_matrix_combos = await _load_existing_matrix_combos()
+    existing_keyword_ids = await _load_existing_keyword_ids()
+    existing_risky_texts = await _load_existing_risky_texts()
 
     for draft in state["drafts"]:
         if draft["stage"] == "A":
             checks = _validate_stage_a(draft, state["chunks"], seen_keywords, existing_keywords)
         elif draft["stage"] == "B":
             checks = _validate_stage_b(draft, state["chunks"], seen_matrix_combos, existing_matrix_combos)
+        elif draft["stage"] == "C":
+            checks = _validate_stage_c(
+                draft, state["chunks"], seen_risky_texts, existing_risky_texts, existing_keyword_ids
+            )
         else:
-            checks = ["값오류"]  # Stage C/D는 아직 미구현
+            checks = ["값오류"]  # Stage D는 아직 미구현
 
         if checks:
             failed_checks.extend(checks)
@@ -54,8 +72,10 @@ async def auto_validate(state: PipelineState) -> dict:
             valid_drafts.append(draft)
             if draft["stage"] == "A":
                 seen_keywords.add(_normalize_keyword(draft["fields"]["keyword"]))
-            else:
+            elif draft["stage"] == "B":
                 seen_matrix_combos.add((draft["fields"]["data_type"], draft["fields"]["function_type"]))
+            else:
+                seen_risky_texts.add(draft["fields"]["risky_text"].strip().lower())
 
     validation: ValidationResult = {
         "passed": len(failed_checks) == 0,
@@ -74,6 +94,18 @@ async def _load_existing_matrix_combos() -> set[tuple[str, str]]:
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(GateMatrix.data_type, GateMatrix.function_type))
         return {(row[0], row[1]) for row in result.all()}
+
+
+async def _load_existing_keyword_ids() -> set[str]:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(GateKeyword.keyword_id))
+        return {str(row[0]) for row in result.all()}
+
+
+async def _load_existing_risky_texts() -> set[str]:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(func.lower(CorrectionRule.risky_text)))
+        return {row[0] for row in result.all()}
 
 
 def _normalize_keyword(keyword: str) -> str:
@@ -219,5 +251,82 @@ def _check_duplicate_combo(
 ) -> list[str]:
     combo = (draft["fields"]["data_type"], draft["fields"]["function_type"])
     if combo in seen_combos or combo in existing_combos:
+        return ["중복후보"]
+    return []
+
+
+# ---- Stage C ----
+
+
+def _validate_stage_c(
+    draft: ExtractedDraft,
+    chunks: list,
+    seen_risky_texts: set[str],
+    existing_risky_texts: set[str],
+    existing_keyword_ids: set[str],
+) -> list[str]:
+    checks = _check_required_fields_c(draft)
+    if checks:
+        return checks
+    checks += _check_score_range_c(draft)
+    checks += _check_derived_from_keyword_exists(draft, existing_keyword_ids)
+    checks += _check_citation_c(draft, chunks)
+    checks += _check_duplicate_risky_text(draft, seen_risky_texts, existing_risky_texts)
+    return checks
+
+
+def _check_required_fields_c(draft: ExtractedDraft) -> list[str]:
+    fields = draft.get("fields", {})
+    for field_name in _STAGE_C_REQUIRED_FIELDS:
+        value = fields.get(field_name)
+        if not value and value != 0:
+            return ["필드누락"]
+
+    legal_basis = fields["legal_basis"]
+    for legal_field in ("document_id", "article", "quote"):
+        if not legal_basis.get(legal_field):
+            return ["필드누락"]
+    if not fields["advertising_basis"].get("quote"):
+        return ["필드누락"]
+    return []
+
+
+def _check_score_range_c(draft: ExtractedDraft) -> list[str]:
+    fields = draft["fields"]
+    for score_field in ("regulatory_score", "privacy_score", "advertising_score"):
+        score = fields[score_field]
+        if not isinstance(score, int) or not (0 <= score <= 3):
+            return ["값오류"]
+    return []
+
+
+def _check_derived_from_keyword_exists(draft: ExtractedDraft, existing_keyword_ids: set[str]) -> list[str]:
+    derived_id = draft["fields"].get("derived_from_keyword_id")
+    if derived_id is None:
+        return []
+    if derived_id not in existing_keyword_ids:
+        return ["값오류"]
+    return []
+
+
+def _check_citation_c(draft: ExtractedDraft, chunks: list) -> list[str]:
+    checks = _check_citation(draft, chunks)  # legal_basis.quote
+    if checks:
+        return checks
+
+    quote = draft["fields"]["advertising_basis"]["quote"].strip()
+    if not quote:
+        return ["인용미확인"]
+    for chunk in chunks:
+        if quote in chunk["content"]:
+            return []
+    return ["인용미확인"]
+
+
+def _check_duplicate_risky_text(
+    draft: ExtractedDraft, seen_risky_texts: set[str], existing_risky_texts: set[str]
+) -> list[str]:
+    normalized = draft["fields"]["risky_text"].strip().lower()
+    if normalized in seen_risky_texts or normalized in existing_risky_texts:
         return ["중복후보"]
     return []
