@@ -1,6 +1,4 @@
-"""LangGraph 파이프라인 State 스키마. 현재는 Stage A만 구현해 current_stage/target_stages는
-단일값("A")으로만 쓰고, Send 팬아웃이 붙으면 target_stages가 복수 Stage를 담게 된다.
-"""
+"""LangGraph 파이프라인 State 스키마. """
 
 from typing import Literal, NotRequired, Optional, TypedDict
 
