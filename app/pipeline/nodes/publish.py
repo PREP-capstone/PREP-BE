@@ -1,12 +1,13 @@
-"""[8] rule_versions 발행 노드. 검증 통과 draft로 새 버전을 만들고 이전 active 버전은 deprecated 처리.
-human_review가 붙으면 admin_decision == "approve"일 때만 호출되도록 바뀐다.
+"""[8] rule_versions 발행 노드.
 """
 
 from sqlalchemy import select, update
 
-from app.db.models import GateKeyword, RuleVersion
+from app.db.models import GateKeyword, GateMatrix, RuleVersion
 from app.db.session import AsyncSessionLocal
-from app.pipeline.state import PipelineState
+from app.pipeline.state import ExtractedDraft, PipelineState
+
+_STAGE_MODEL = {"A": GateKeyword, "B": GateMatrix}
 
 
 async def publish(state: PipelineState) -> dict:
@@ -15,31 +16,70 @@ async def publish(state: PipelineState) -> dict:
         # 발행할 draft가 없으면 새 버전을 만들지 않음
         return {"rule_version_id": state.get("rule_version_id")}
 
+    drafts_by_stage: dict[str, list[ExtractedDraft]] = {}
+    for draft in drafts:
+        drafts_by_stage.setdefault(draft["stage"], []).append(draft)
+
     async with AsyncSessionLocal() as session:
-        await session.execute(
-            update(RuleVersion).where(RuleVersion.status == "active").values(status="deprecated")
-        )
+        latest_rule_version_id = None
 
-        count_result = await session.execute(select(RuleVersion))
-        version_number = len(count_result.scalars().all()) + 1
+        for stage, stage_drafts in drafts_by_stage.items():
+            await _deprecate_active_versions_for_stage(session, _STAGE_MODEL[stage])
 
-        new_version = RuleVersion(version=f"v0.{version_number}", status="active")
-        session.add(new_version)
-        await session.flush()  # rule_version_id 확보
+            count_result = await session.execute(select(RuleVersion))
+            version_number = len(count_result.scalars().all()) + 1
+            new_version = RuleVersion(version=f"v0.{version_number}", status="active")
+            session.add(new_version)
+            await session.flush()  # rule_version_id 확보
 
-        for draft in drafts:
-            fields = draft["fields"]
-            session.add(
-                GateKeyword(
-                    rule_version_id=new_version.rule_version_id,
-                    type=fields["type"],
-                    keyword=fields["keyword"],
-                    keyword_category=fields["keyword_category"],
-                    data_type_focus=fields["data_type_focus"],
-                    verdict=fields["verdict"],
-                    weight=fields["weight"],
-                )
-            )
+            for draft in stage_drafts:
+                session.add(_build_row(draft, new_version.rule_version_id))
+
+            latest_rule_version_id = new_version.rule_version_id
 
         await session.commit()
-        return {"rule_version_id": str(new_version.rule_version_id)}
+        # 참고: 이번 호출에서 Stage를 여러 개 발행했으면 Stage마다 별도 rule_version이 생기지만,
+        # PipelineState.rule_version_id는 하나만 담을 수 있어 마지막으로 만든 버전만 반환한다.
+        return {"rule_version_id": str(latest_rule_version_id)}
+
+
+async def _deprecate_active_versions_for_stage(session, model) -> None:
+    active_version_ids = (
+        await session.scalars(
+            select(model.rule_version_id)
+            .distinct()
+            .join(RuleVersion, RuleVersion.rule_version_id == model.rule_version_id)
+            .where(RuleVersion.status == "active")
+        )
+    ).all()
+    if active_version_ids:
+        await session.execute(
+            update(RuleVersion)
+            .where(RuleVersion.rule_version_id.in_(active_version_ids))
+            .values(status="deprecated")
+        )
+
+
+def _build_row(draft: ExtractedDraft, rule_version_id):
+    fields = draft["fields"]
+    if draft["stage"] == "A":
+        return GateKeyword(
+            rule_version_id=rule_version_id,
+            type=fields["type"],
+            keyword=fields["keyword"],
+            keyword_category=fields["keyword_category"],
+            data_type_focus=fields["data_type_focus"],
+            verdict=fields["verdict"],
+            weight=fields["weight"],
+        )
+    if draft["stage"] == "B":
+        return GateMatrix(
+            rule_version_id=rule_version_id,
+            data_type=fields["data_type"],
+            function_type=fields["function_type"],
+            verdict=fields["verdict"],
+            exemption_note=fields["exemption_note"],
+            risk_code=fields["risk_code"],
+            priority=fields["priority"],
+        )
+    raise ValueError(f"publish 미구현 stage: {draft['stage']}")
