@@ -1,13 +1,15 @@
 """[8] rule_versions 발행 노드.
 """
 
+import uuid
+
 from sqlalchemy import select, update
 
-from app.db.models import GateKeyword, GateMatrix, RuleVersion
+from app.db.models import CorrectionRule, GateKeyword, GateMatrix, RuleVersion
 from app.db.session import AsyncSessionLocal
 from app.pipeline.state import ExtractedDraft, PipelineState
 
-_STAGE_MODEL = {"A": GateKeyword, "B": GateMatrix}
+_STAGE_MODEL = {"A": GateKeyword, "B": GateMatrix, "C": CorrectionRule}
 
 
 async def publish(state: PipelineState) -> dict:
@@ -81,5 +83,18 @@ def _build_row(draft: ExtractedDraft, rule_version_id):
             exemption_note=fields["exemption_note"],
             risk_code=fields["risk_code"],
             priority=fields["priority"],
+        )
+    if draft["stage"] == "C":
+        derived_id = fields.get("derived_from_keyword_id")
+        return CorrectionRule(
+            rule_version_id=rule_version_id,
+            risky_text=fields["risky_text"],
+            safe_text=fields["safe_text"],
+            regulatory_score=fields["regulatory_score"],
+            privacy_score=fields["privacy_score"],
+            advertising_score=fields["advertising_score"],
+            derived_from_keyword_id=uuid.UUID(derived_id) if derived_id else None,
+            legal_basis_doc=fields["legal_basis"]["document_id"],
+            legal_basis_article=fields["legal_basis"]["article"],
         )
     raise ValueError(f"publish 미구현 stage: {draft['stage']}")
