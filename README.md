@@ -3,6 +3,8 @@ PREP SERVER
 
 ## RAG Evidence Vector Search
 
+Postgres stores evidence document/chunk metadata. ChromaDB stores vector embeddings.
+
 ### Setup
 
 ```bash
@@ -14,6 +16,7 @@ docker compose up -d postgres redis
 ### Generate embeddings
 
 `OPENAI_API_KEY` must be configured before running embedding generation.
+Embeddings are persisted to `CHROMA_PERSIST_DIRECTORY`.
 
 ```bash
 .venv/bin/python scripts/embed_evidence_chunks.py --dry-run

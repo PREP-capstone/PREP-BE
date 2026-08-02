@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.rag.embeddings import EmbeddingClient, to_pgvector_literal
+from app.rag.embeddings import EmbeddingClient
+from app.rag.vector_store import get_evidence_collection
 
 
 @dataclass(frozen=True)
@@ -40,58 +40,68 @@ class EvidenceRetriever:
         document_ids: list[str] | None = None,
     ) -> list[RetrievedEvidenceChunk]:
         query_embedding = await self.embedding_client.embed_query(query)
-        embedding_literal = to_pgvector_literal(query_embedding)
-
-        filters = [
-            "ec.status = 'active'",
-            "ed.status = 'active'",
-            "ed.usage_scope IN ('RAG', 'BOTH')",
-            "ece.embedding_model = :embedding_model",
-        ]
-        params: dict[str, object] = {
-            "embedding": embedding_literal,
-            "embedding_model": self.embedding_client.model,
-            "limit": top_k or settings.rag_retrieval_top_k,
-        }
-
-        if tag_regulatory is not None:
-            filters.append("ec.tag_regulatory = :tag_regulatory")
-            params["tag_regulatory"] = tag_regulatory
-        if tag_privacy is not None:
-            filters.append("ec.tag_privacy = :tag_privacy")
-            params["tag_privacy"] = tag_privacy
-        if tag_advertising is not None:
-            filters.append("ec.tag_advertising = :tag_advertising")
-            params["tag_advertising"] = tag_advertising
-        if document_ids:
-            filters.append("ec.document_id IN :document_ids")
-            params["document_ids"] = document_ids
-
-        where_clause = " AND ".join(filters)
-        stmt = text(
-            f"""
-            SELECT
-                ec.chunk_id,
-                ec.document_id,
-                ed.title,
-                ed.doc_type,
-                ec.section_id,
-                ec.section_title,
-                ec.chunk_text,
-                COALESCE(ec.source_url, ed.source_url) AS source_url,
-                ec.page_start,
-                ec.page_end,
-                1 - (ece.embedding <=> CAST(:embedding AS vector)) AS similarity
-            FROM evidence_chunk_embeddings ece
-            JOIN evidence_chunks ec ON ec.chunk_id = ece.chunk_id
-            JOIN evidence_documents ed ON ed.document_id = ec.document_id
-            WHERE {where_clause}
-            ORDER BY ece.embedding <=> CAST(:embedding AS vector)
-            LIMIT :limit
-            """
+        where = _build_where(
+            tag_regulatory=tag_regulatory,
+            tag_privacy=tag_privacy,
+            tag_advertising=tag_advertising,
+            document_ids=document_ids,
+            embedding_model=self.embedding_client.model,
         )
-        if document_ids:
-            stmt = stmt.bindparams(bindparam("document_ids", expanding=True))
 
-        rows = (await session.execute(stmt, params)).mappings().all()
-        return [RetrievedEvidenceChunk(**row) for row in rows]
+        collection = get_evidence_collection()
+        result = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k or settings.rag_retrieval_top_k,
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+
+        ids = result.get("ids", [[]])[0]
+        documents = result.get("documents", [[]])[0]
+        metadatas = result.get("metadatas", [[]])[0]
+        distances = result.get("distances", [[]])[0]
+
+        chunks: list[RetrievedEvidenceChunk] = []
+        for chunk_id, document, metadata, distance in zip(ids, documents, metadatas, distances, strict=True):
+            chunks.append(
+                RetrievedEvidenceChunk(
+                    chunk_id=chunk_id,
+                    document_id=metadata["document_id"],
+                    title=metadata["title"],
+                    doc_type=metadata["doc_type"],
+                    section_id=metadata.get("section_id") or None,
+                    section_title=metadata.get("section_title") or None,
+                    chunk_text=document,
+                    source_url=metadata.get("source_url") or None,
+                    page_start=metadata.get("page_start"),
+                    page_end=metadata.get("page_end"),
+                    similarity=1 - float(distance),
+                )
+            )
+        return chunks
+
+
+def _build_where(
+    *,
+    tag_regulatory: bool | None,
+    tag_privacy: bool | None,
+    tag_advertising: bool | None,
+    document_ids: list[str] | None,
+    embedding_model: str,
+) -> dict:
+    conditions: list[dict] = [
+        {"status": "active"},
+        {"document_status": "active"},
+        {"usage_scope": {"$in": ["RAG", "BOTH"]}},
+        {"embedding_model": embedding_model},
+    ]
+    if tag_regulatory is not None:
+        conditions.append({"tag_regulatory": tag_regulatory})
+    if tag_privacy is not None:
+        conditions.append({"tag_privacy": tag_privacy})
+    if tag_advertising is not None:
+        conditions.append({"tag_advertising": tag_advertising})
+    if document_ids:
+        conditions.append({"document_id": {"$in": document_ids}})
+
+    return conditions[0] if len(conditions) == 1 else {"$and": conditions}

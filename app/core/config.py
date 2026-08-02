@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int = 1536
     rag_retrieval_top_k: int = 5
+    chroma_persist_directory: str = "data/chroma"
+    chroma_collection_name: str = "evidence_chunks"
 
     model_config = SettingsConfigDict(
         env_file=".env",

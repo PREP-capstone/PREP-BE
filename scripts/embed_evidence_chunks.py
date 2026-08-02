@@ -12,19 +12,34 @@ sys.path.insert(0, str(ROOT))
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
-from app.rag.embeddings import EmbeddingClient, content_hash, to_pgvector_literal
+from app.rag.embeddings import EmbeddingClient, content_hash
+from app.rag.vector_store import get_evidence_collection
 
 
 SELECT_CANDIDATES_SQL = """
 SELECT
     ec.chunk_id,
     ec.chunk_text,
-    ece.content_hash AS existing_content_hash
+    ec.document_id,
+    ed.title,
+    ed.doc_type,
+    ec.section_id,
+    ec.section_title,
+    COALESCE(ec.source_url, ed.source_url) AS source_url,
+    ec.page_start,
+    ec.page_end,
+    ec.tag_regulatory,
+    ec.tag_privacy,
+    ec.tag_advertising,
+    ec.case_tag_advertising,
+    ec.case_tag_privacy,
+    ec.case_tag_medical_device,
+    ec.case_tag_health_functional_food,
+    ec.status,
+    ed.status AS document_status,
+    ed.usage_scope
 FROM evidence_chunks ec
 JOIN evidence_documents ed ON ed.document_id = ec.document_id
-LEFT JOIN evidence_chunk_embeddings ece
-    ON ece.chunk_id = ec.chunk_id
-    AND ece.embedding_model = :embedding_model
 WHERE ec.status = 'active'
   AND ed.status = 'active'
   AND ed.usage_scope IN ('RAG', 'BOTH')
@@ -33,44 +48,50 @@ ORDER BY ec.document_id, ec.chunk_order
 """
 
 
-UPSERT_EMBEDDING_SQL = """
-INSERT INTO evidence_chunk_embeddings (
-    chunk_id,
-    embedding_model,
-    embedding_dimensions,
-    content_hash,
-    embedding,
-    embedded_at,
-    created_at,
-    updated_at
-) VALUES (
-    :chunk_id,
-    :embedding_model,
-    :embedding_dimensions,
-    :content_hash,
-    CAST(:embedding AS vector),
-    now(),
-    now(),
-    now()
-)
-ON CONFLICT (chunk_id) DO UPDATE SET
-    embedding_model = EXCLUDED.embedding_model,
-    embedding_dimensions = EXCLUDED.embedding_dimensions,
-    content_hash = EXCLUDED.content_hash,
-    embedding = EXCLUDED.embedding,
-    embedded_at = now(),
-    updated_at = now()
-"""
-
-
 def batched[T](items: list[T], size: int) -> list[list[T]]:
     return [items[index:index + size] for index in range(0, len(items), size)]
+
+
+def _metadata(row: dict, row_hash: str, embedding_model: str) -> dict:
+    return {
+        "document_id": row["document_id"],
+        "title": row["title"],
+        "doc_type": row["doc_type"],
+        "section_id": row["section_id"] or "",
+        "section_title": row["section_title"] or "",
+        "source_url": row["source_url"] or "",
+        "page_start": row["page_start"] if row["page_start"] is not None else -1,
+        "page_end": row["page_end"] if row["page_end"] is not None else -1,
+        "tag_regulatory": bool(row["tag_regulatory"]),
+        "tag_privacy": bool(row["tag_privacy"]),
+        "tag_advertising": bool(row["tag_advertising"]),
+        "case_tag_advertising": bool(row["case_tag_advertising"]),
+        "case_tag_privacy": bool(row["case_tag_privacy"]),
+        "case_tag_medical_device": bool(row["case_tag_medical_device"]),
+        "case_tag_health_functional_food": bool(row["case_tag_health_functional_food"]),
+        "status": row["status"],
+        "document_status": row["document_status"],
+        "usage_scope": row["usage_scope"],
+        "embedding_model": embedding_model,
+        "content_hash": row_hash,
+    }
+
+
+def _existing_hashes(chunk_ids: list[str]) -> dict[str, str]:
+    collection = get_evidence_collection()
+    existing: dict[str, str] = {}
+    for batch in batched(chunk_ids, 500):
+        result = collection.get(ids=batch, include=["metadatas"])
+        for chunk_id, metadata in zip(result.get("ids", []), result.get("metadatas", []), strict=True):
+            if metadata and metadata.get("content_hash"):
+                existing[chunk_id] = metadata["content_hash"]
+    return existing
 
 
 async def load_candidate_chunks(document_id: str | None, embedding_model: str, force: bool) -> list[dict]:
     document_filter = "AND ec.document_id = :document_id" if document_id else ""
     query = SELECT_CANDIDATES_SQL.format(document_filter=document_filter)
-    params = {"embedding_model": embedding_model}
+    params = {}
     if document_id:
         params["document_id"] = document_id
 
@@ -82,36 +103,34 @@ async def load_candidate_chunks(document_id: str | None, embedding_model: str, f
             )
         ).mappings().all()
 
+    row_dicts = [dict(row) for row in rows]
+    existing_hashes = {} if force else _existing_hashes([row["chunk_id"] for row in row_dicts])
+
     candidates: list[dict] = []
-    for row in rows:
+    for row in row_dicts:
         row_hash = content_hash(row["chunk_text"])
-        if force or row["existing_content_hash"] != row_hash:
+        if force or existing_hashes.get(row["chunk_id"]) != row_hash:
             candidates.append({
                 "chunk_id": row["chunk_id"],
                 "chunk_text": row["chunk_text"],
                 "content_hash": row_hash,
+                "metadata": _metadata(row, row_hash, embedding_model),
             })
     return candidates
 
 
 async def upsert_embeddings(rows: list[dict], embeddings: list[list[float]], client: EmbeddingClient) -> None:
-    async with AsyncSessionLocal() as session:
-        for row, embedding in zip(rows, embeddings, strict=True):
-            await session.execute(
-                text(UPSERT_EMBEDDING_SQL),
-                {
-                    "chunk_id": row["chunk_id"],
-                    "embedding_model": client.model,
-                    "embedding_dimensions": client.dimensions,
-                    "content_hash": row["content_hash"],
-                    "embedding": to_pgvector_literal(embedding),
-                },
-            )
-        await session.commit()
+    collection = get_evidence_collection()
+    collection.upsert(
+        ids=[row["chunk_id"] for row in rows],
+        documents=[row["chunk_text"] for row in rows],
+        metadatas=[row["metadata"] for row in rows],
+        embeddings=embeddings,
+    )
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate pgvector embeddings for evidence_chunks.")
+    parser = argparse.ArgumentParser(description="Generate ChromaDB embeddings for evidence_chunks.")
     parser.add_argument("--document-id", help="Embed one evidence document only.")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--force", action="store_true", help="Regenerate embeddings even if text hash matches.")
@@ -136,7 +155,7 @@ async def main() -> None:
         processed += len(batch)
         print(f"Embedded {processed}/{len(candidates)} chunks")
 
-    print(f"Imported evidence_chunk_embeddings: {processed}")
+    print(f"Imported Chroma evidence chunk embeddings: {processed}")
 
 
 if __name__ == "__main__":

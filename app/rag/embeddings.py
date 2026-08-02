@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
 
 from app.core.config import settings
 
 
 def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def to_pgvector_literal(values: Iterable[float]) -> str:
-    return "[" + ",".join(f"{value:.10f}" for value in values) + "]"
 
 
 class EmbeddingClient:
