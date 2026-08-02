@@ -1,10 +1,14 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.redis_client import redis_client
-from app.db.session import engine
+from app.db.session import engine, get_db
+from app.rag.retriever import EvidenceRetriever
 
 
 @asynccontextmanager
@@ -20,6 +24,29 @@ app = FastAPI(
 )
 
 
+class RagSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
+    tag_regulatory: bool | None = None
+    tag_privacy: bool | None = None
+    tag_advertising: bool | None = None
+    document_ids: list[str] | None = None
+
+
+class RagSearchResult(BaseModel):
+    chunk_id: str
+    document_id: str
+    title: str
+    doc_type: str
+    section_id: str | None
+    section_title: str | None
+    chunk_text: str
+    source_url: str | None
+    page_start: int | None
+    page_end: int | None
+    similarity: float
+
+
 @app.get("/api/v1/health")
 async def health_check():
     async with engine.connect() as connection:
@@ -32,3 +59,23 @@ async def health_check():
         "postgres": "ok",
         "redis": "ok",
     }
+
+
+@app.post("/api/v1/rag/search", response_model=list[RagSearchResult])
+async def search_rag_evidence(
+    request: RagSearchRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
+
+    retriever = EvidenceRetriever()
+    return await retriever.search(
+        session,
+        request.query,
+        top_k=request.top_k,
+        tag_regulatory=request.tag_regulatory,
+        tag_privacy=request.tag_privacy,
+        tag_advertising=request.tag_advertising,
+        document_ids=request.document_ids,
+    )

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     analysis_ttl_seconds: int = 1800
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_dimensions: int = 1536
+    rag_retrieval_top_k: int = 5
 
     model_config = SettingsConfigDict(
         env_file=".env",
