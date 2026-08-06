@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from app.core.config import settings
 
 
+@lru_cache(maxsize=1)
 def get_evidence_collection():
     """Return the persistent Chroma collection for evidence chunks."""
 

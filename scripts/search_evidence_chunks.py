@@ -8,7 +8,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.db.session import AsyncSessionLocal
 from app.rag.retriever import EvidenceRetriever
 
 
@@ -22,15 +21,13 @@ async def main() -> None:
     args = parser.parse_args()
 
     retriever = EvidenceRetriever()
-    async with AsyncSessionLocal() as session:
-        results = await retriever.search(
-            session,
-            args.query,
-            top_k=args.top_k,
-            tag_regulatory=True if args.regulatory else None,
-            tag_privacy=True if args.privacy else None,
-            tag_advertising=True if args.advertising else None,
-        )
+    results = await retriever.search(
+        args.query,
+        top_k=args.top_k,
+        tag_regulatory=True if args.regulatory else None,
+        tag_privacy=True if args.privacy else None,
+        tag_advertising=True if args.advertising else None,
+    )
 
     for index, result in enumerate(results, start=1):
         print(f"[{index}] {result.similarity:.4f} {result.document_id} {result.section_id or ''}")

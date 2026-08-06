@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.rag.embeddings import EmbeddingClient
@@ -30,7 +29,6 @@ class EvidenceRetriever:
 
     async def search(
         self,
-        session: AsyncSession,
         query: str,
         *,
         top_k: int | None = None,
@@ -49,7 +47,8 @@ class EvidenceRetriever:
         )
 
         collection = get_evidence_collection()
-        result = collection.query(
+        result = await asyncio.to_thread(
+            collection.query,
             query_embeddings=[query_embedding],
             n_results=top_k or settings.rag_retrieval_top_k,
             where=where,
