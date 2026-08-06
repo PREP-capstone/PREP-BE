@@ -5,6 +5,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+data/chroma/
 \docs
 CLAUDE.md
 requirements-win.txt

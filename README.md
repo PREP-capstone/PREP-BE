@@ -1,6 +1,47 @@
 # PREP-BE
 PREP SERVER
 
+## RAG Evidence Vector Search
+
+Postgres stores evidence document/chunk metadata. ChromaDB stores vector embeddings.
+
+### Setup
+
+```bash
+docker compose up -d postgres redis
+.venv/bin/alembic upgrade head
+.venv/bin/python scripts/import_evidence_csv.py
+```
+
+### Generate embeddings
+
+`OPENAI_API_KEY` must be configured before running embedding generation.
+Embeddings are persisted to `CHROMA_PERSIST_DIRECTORY`.
+
+```bash
+.venv/bin/python scripts/embed_evidence_chunks.py --dry-run
+.venv/bin/python scripts/embed_evidence_chunks.py
+```
+
+Useful options:
+
+```bash
+.venv/bin/python scripts/embed_evidence_chunks.py --document-id kr-medical-device-act-rule-annex7-20260701
+.venv/bin/python scripts/embed_evidence_chunks.py --force
+```
+
+### Search
+
+```bash
+.venv/bin/python scripts/search_evidence_chunks.py "허위 과대 광고" --advertising
+```
+
+API endpoint:
+
+```text
+POST /api/v1/rag/search
+```
+
 ## 🚀 Git 컨벤션 규칙
 
 ### Commit 규칙
