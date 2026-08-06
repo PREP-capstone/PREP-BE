@@ -73,12 +73,16 @@ class EvidenceRetriever:
                     section_title=metadata.get("section_title") or None,
                     chunk_text=document,
                     source_url=metadata.get("source_url") or None,
-                    page_start=metadata.get("page_start"),
-                    page_end=metadata.get("page_end"),
+                    page_start=_none_if_sentinel(metadata.get("page_start")),
+                    page_end=_none_if_sentinel(metadata.get("page_end")),
                     similarity=1 - float(distance),
                 )
             )
         return chunks
+
+
+def _none_if_sentinel(value: int | None) -> int | None:
+    return None if value is None or value == -1 else value
 
 
 def _build_where(
