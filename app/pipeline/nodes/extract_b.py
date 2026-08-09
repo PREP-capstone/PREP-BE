@@ -1,4 +1,9 @@
 """Stage B 프롬프트 주입 + LLM 호출. gate_matrix 스키마 구조화 출력.
+
+**"LLM은 data_type/function_type만 판단한다" 원칙의 명시적 예외**: 2026-07-26 복원된
+`acquire_method`·침습적 신호도 LLM이 추출한다(db_구축_설계서.md §3.2). 다만 이것은 LLM이 새 조합을
+판단하는 것이 아니다 — 6칸 표는 여전히 닫힌 확정 표이고, 이 두 값은 표 조회 **이전**에 적용되는
+침습적 하드체크의 입력일 뿐이다. 표의 축은 늘어나지 않는다.
 """
 
 import json
@@ -6,7 +11,14 @@ import json
 from openai import AsyncOpenAI
 
 from app.core.config import settings
-from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, VERDICT_PRIORITY
+from app.pipeline.article_ref import ARTICLE_NOTATION_PROMPT, normalize_article
+from app.pipeline.gate_matrix_table import (
+    GATE_MATRIX_TABLE,
+    HARDCHECK_VERDICT,
+    VERDICT_PRIORITY,
+    detect_invasive,
+    is_invasive_hardcheck,
+)
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -26,6 +38,11 @@ _RESPONSE_SCHEMA = {
                             "enum": ["단순기록", "비교·추이분석", "수치예측·진단"],
                         },
                         "boundary_case": {"type": "boolean"},
+                        "acquire_method": {
+                            "type": "string",
+                            "enum": ["수동입력", "기기연동", "OS연동", "NONE"],
+                        },
+                        "invasive_signal": {"type": "boolean"},
                         "legal_basis": {
                             "type": "object",
                             "properties": {
@@ -36,7 +53,14 @@ _RESPONSE_SCHEMA = {
                             "additionalProperties": False,
                         },
                     },
-                    "required": ["data_type", "function_type", "boundary_case", "legal_basis"],
+                    "required": [
+                        "data_type",
+                        "function_type",
+                        "boundary_case",
+                        "acquire_method",
+                        "invasive_signal",
+                        "legal_basis",
+                    ],
                     "additionalProperties": False,
                 },
             },
@@ -98,10 +122,24 @@ matrix_entries에 넣지 마세요.
 | 라이프스타일 | 수치예측·진단 | CONDITIONAL |
 verdict/exemption_note/priority는 당신이 출력하지 않습니다 — data_type/function_type만 정확히 판단하세요.
 
+## acquire_method / invasive_signal (6칸 표와 무관한 별도 신호)
+이 두 값은 **위 6칸 표 조회에 쓰이지 않습니다.** 표 조회 이전에 별도로 적용되는 "침습적 하드체크"
+전용 신호이므로, 새로운 조합을 만들어내는 축이 아닙니다. 표는 그대로 6칸입니다.
+
+- acquire_method: 그 조문이 다루는 데이터를 **어떻게 얻는지**를 표시하세요.
+  - 수동입력: 사용자가 직접 입력·기록
+  - OS연동: 스마트폰 OS의 건강 데이터(걸음수 등) 연동
+  - 기기연동: 별도 측정기기·센서와 연결해 값을 받아옴
+  - NONE: 조문에 획득 방법이 드러나지 않음
+- invasive_signal: 그 조문이 **침습적** 방식(체내 삽입·피부 관통·체액 채취 등 신체를 침습하는
+  측정)을 다루면 true. 웰니스판단기준(0091-03) III.2.가·나 고위해도 5요소 중 2번(침습적)에
+  해당하는지를 기준으로 판단하세요. 비침습 측정(광학식 심박, 체중계 등)은 false입니다.
+
 ## legal_basis
 - article: 이 조합 판단의 근거가 되는 조문 번호/제목
 - quote: 판단 근거가 되는 원문 문장을 그대로 인용 (반드시 아래 조문 텍스트 안에 실제로 존재하는 문장이어야 함. 지어내지 말 것)
-"""
+
+""" + ARTICLE_NOTATION_PROMPT
 
 
 def _build_client() -> AsyncOpenAI:
@@ -129,8 +167,15 @@ async def extract_B(state: PipelineState) -> dict:
         for item in parsed["matrix_entries"]:
             data_type = item["data_type"]
             function_type = item["function_type"]
+            acquire_method = None if item["acquire_method"] == "NONE" else item["acquire_method"]
+            invasive_signal = item["invasive_signal"] or detect_invasive(chunk["content"])
 
-            if item["boundary_case"]:
+            # 침습적 하드체크는 6칸 표 조회보다 **먼저** 적용된다 — 걸리면 function_type과
+            # 표 조회 결과에 관계없이 FAIL로 오버라이드한다 (db_구축_설계서.md §3.2).
+            if is_invasive_hardcheck(data_type, acquire_method, invasive_signal):
+                verdict = HARDCHECK_VERDICT
+                exemption_note = None
+            elif item["boundary_case"]:
                 # TODO(human_review): 3단계로도 안 풀리는 경계 케이스 — interrupt로 관리자 검수에
                 # 넘겨야 하지만 아직 human_review 노드가 없어 CONDITIONAL로만 표시하고 넘어간다.
                 verdict = "CONDITIONAL"
@@ -142,7 +187,7 @@ async def extract_B(state: PipelineState) -> dict:
 
             legal_basis = {
                 "document_id": state["document_id"],
-                "article": item["legal_basis"]["article"],
+                "article": normalize_article(item["legal_basis"]["article"]),
                 "quote": item["legal_basis"]["quote"],
             }
             fields = {
@@ -150,6 +195,14 @@ async def extract_B(state: PipelineState) -> dict:
                 "function_type": function_type,
                 "verdict": verdict,
                 "exemption_note": exemption_note,
+                "acquire_method": acquire_method,
+                # gate_matrix에 저장되는 컬럼은 아니지만, auto_validate가 하드체크 오버라이드를
+                # 그대로 재현해 검증할 수 있도록 draft에 실어 보낸다.
+                "invasive_signal": invasive_signal,
+                # TODO(D-2): avoidance_* 문구 작성 주체 미정(코드 고정 템플릿 vs LLM 생성).
+                # 결정 전까지 채우지 않는다 — verdict=FAIL이어도 None이다.
+                "avoidance_redesign": None,
+                "avoidance_certification": None,
                 "risk_code": None,  # TODO: GATE01_ENG01~02 연계 코드 미확정 (db_구축_설계서.md §3.2)
                 "priority": VERDICT_PRIORITY[verdict],
                 "legal_basis": legal_basis,
