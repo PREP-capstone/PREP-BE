@@ -1,4 +1,8 @@
 """[4]+[5]+[5.5] Stage C 프롬프트 주입 + LLM 호출 + 파생값 계산 노드.
+
+산출 축은 `regulatory_score`(gate_keywords 조회 파생) · `advertising_score`(LLM 독립추출) **2축**이다.
+privacy_score는 2026-07-28 결정으로 런타임(판정엔진) 계산으로 이관돼 여기서 산출하지 않는다
+(db_구축_설계서.md §3.3.2). 최종 위험등급(3축 최고값) 산출도 같은 이유로 런타임 범위다.
 """
 
 import json
@@ -9,7 +13,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.models import GateKeyword, RuleVersion
 from app.db.session import AsyncSessionLocal
-from app.pipeline.gate_matrix_table import DATA_TYPE_ENUM
+from app.pipeline.article_ref import ARTICLE_NOTATION_PROMPT, normalize_article
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -35,11 +39,6 @@ _RESPONSE_SCHEMA = {
                             "required": ["attachment7_item", "quote"],
                             "additionalProperties": False,
                         },
-                        "data_type_signal": {
-                            "type": "string",
-                            "enum": ["라이프스타일", "생체지표", "NONE"],
-                        },
-                        "consent_mentioned": {"type": "boolean"},
                         "legal_basis": {
                             "type": "object",
                             "properties": {
@@ -55,8 +54,6 @@ _RESPONSE_SCHEMA = {
                         "safe_text",
                         "advertising_score",
                         "advertising_basis",
-                        "data_type_signal",
-                        "consent_mentioned",
                         "legal_basis",
                     ],
                     "additionalProperties": False,
@@ -89,17 +86,15 @@ _SYSTEM_PROMPT = """당신은 의료용 앱 판단 가이드/법령 조문에서
 advertising_basis.attachment7_item에는 위 기준이 해당하는 별표7 항목 번호(1~18)를, quote에는
 그 판단 근거가 되는 원문 문장을 그대로 인용하세요.
 
-## data_type_signal / consent_mentioned (원시 신호만 — 점수는 당신이 매기지 않습니다)
-risky_text가 다루는 데이터가 생체지표(혈당·혈압·심전도 등 측정값)인지 라이프스타일(식단·운동·수면
-등 자가관리 데이터)인지 무엇도 아닌지(NONE)만 표시하세요. 그리고 그 조문에 별도동의·법령근거
-(개인정보보호법 제23조제1항 단서 1·2호 등, 예: "본인의 동의를 받은 경우", "법률에서 구체적으로
-허용된 경우")에 대한 언급이 있으면 consent_mentioned=true로 표시하세요. 최종 privacy_score는
-시스템이 이 두 신호를 조합해 계산하니 점수를 직접 매기지 마세요.
+## 개인정보 민감도는 추출 대상이 아닙니다
+privacy_score는 2026-07-28 결정으로 런타임(판정엔진) 계산으로 이관됐습니다. 값이 위험표현이 아니라
+사용자가 선택한 수집 항목에서 결정되기 때문입니다. 개인정보·동의 관련 신호는 추출하지 마세요.
 
 ## legal_basis
 - article: 이 위험표현 판단의 근거가 되는 조문 번호/제목
 - quote: 판단 근거가 되는 원문 문장을 그대로 인용 (반드시 아래 조문 텍스트 안에 실제로 존재하는 문장이어야 함. 지어내지 말 것)
-"""
+
+""" + ARTICLE_NOTATION_PROMPT
 
 
 def _build_client() -> AsyncOpenAI:
@@ -130,18 +125,16 @@ async def extract_C(state: PipelineState) -> dict:
             regulatory_score, derived_from_keyword_id = _derive_regulatory_score(
                 risky_text, active_keywords
             )
-            privacy_score = _derive_privacy_score(item["data_type_signal"], item["consent_mentioned"])
 
             legal_basis = {
                 "document_id": state["document_id"],
-                "article": item["legal_basis"]["article"],
+                "article": normalize_article(item["legal_basis"]["article"]),
                 "quote": item["legal_basis"]["quote"],
             }
             fields = {
                 "risky_text": risky_text,
                 "safe_text": item["safe_text"],
                 "regulatory_score": regulatory_score,
-                "privacy_score": privacy_score,
                 "advertising_score": item["advertising_score"],
                 "advertising_basis": item["advertising_basis"],
                 "derived_from_keyword_id": derived_from_keyword_id,
@@ -182,11 +175,3 @@ def _derive_regulatory_score(risky_text: str, active_keywords: list[GateKeyword]
                 best_score = score
                 best_keyword_id = str(keyword_row.keyword_id)
     return best_score, best_keyword_id
-
-
-def _derive_privacy_score(data_type_signal: str, consent_mentioned: bool) -> int:
-    if data_type_signal not in DATA_TYPE_ENUM:
-        return 0  # NONE
-    if data_type_signal == "생체지표":
-        return 2 if consent_mentioned else 3
-    return 1  # 라이프스타일
