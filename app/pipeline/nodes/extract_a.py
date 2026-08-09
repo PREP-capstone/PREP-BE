@@ -7,6 +7,7 @@ import json
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.pipeline.article_ref import ARTICLE_NOTATION_PROMPT, normalize_article
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -79,6 +80,15 @@ _SYSTEM_PROMPT = """당신은 의료기기 판단 가이드/법령 조문에서 
 | OTHER | 위 세 가지에 해당하지 않는 경우 | — | — |
 
 TREATMENT는 의료기기법 제2조가 나열한 치료·경감·처치·예방·상해 및 장애의 보정 5가지 목적을 하나로 묶은 범주입니다.
+
+## 약무행위 (약사법 근거, 2026-07-26 추가)
+처방·조제·복약지도·투약 등 **약무행위**는 면허 없이 수행할 수 없는 행위입니다. 이런 표현이 나오면
+`type=PROHIBITED_ACTION`, `keyword_category=TREATMENT`로 분류하세요.
+- 약무행위는 correction_rules의 별도 축을 만들지 않고 regulatory_score에 흡수하기로 확정됐습니다.
+  gate_keywords에 잡히지 않으면 "맞춤형 영양제 처방" 같은 표현이 0점으로 통과해버립니다.
+- keyword_category를 TREATMENT로 두는 이유: 약무행위는 치료 목적의 처치를 지시·유도하는 단계라
+  기존 TREATMENT 정의에 그대로 들어맞습니다(신규 분류를 만들지 않습니다).
+- 예시 키워드: "처방", "조제", "복약지도", "투약", "맞춤형 영양제 처방"
 DIAGNOSIS와 TREATMENT 사이에 weight 차등은 없습니다 — keyword_category는 weight/verdict 판정과 무관하게 관리자 검수 편의를 위한 분류일 뿐이며, 둘 다 아래 weight 척도·FAIL_CONFIRMED 기준을 동일하게 따릅니다.
 
 ## weight 척도 (1~5, 정수만)
@@ -100,9 +110,10 @@ DIAGNOSIS와 TREATMENT 사이에 weight 차등은 없습니다 — keyword_categ
 - CONDITIONAL 방향: "단,", "다만,", "경우에 한하여"
 
 ## legal_basis
-- article: 이 키워드 판단의 근거가 되는 조문 번호/제목 (예: "Ⅲ.2.가", "제24조")
+- article: 이 키워드 판단의 근거가 되는 조문 번호/제목 (예: "III.2.가", "제24조")
 - quote: 판단 근거가 되는 원문 문장을 그대로 인용 (반드시 아래 조문 텍스트 안에 실제로 존재하는 문장이어야 함. 지어내지 말 것)
-"""
+
+""" + ARTICLE_NOTATION_PROMPT
 
 
 def _build_client() -> AsyncOpenAI:
@@ -130,7 +141,7 @@ async def extract_A(state: PipelineState) -> dict:
         for item in parsed["keywords"]:
             legal_basis = {
                 "document_id": state["document_id"],
-                "article": item["legal_basis"]["article"],
+                "article": normalize_article(item["legal_basis"]["article"]),
                 "quote": item["legal_basis"]["quote"],
             }
             fields = {**item, "legal_basis": legal_basis}
