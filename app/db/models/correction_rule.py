@@ -22,7 +22,8 @@ class CorrectionRule(Base):
     risky_text: Mapped[str] = mapped_column(String, nullable=False)
     safe_text: Mapped[str] = mapped_column(String, nullable=False)
     regulatory_score: Mapped[int] = mapped_column(Integer, nullable=False)
-    privacy_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    # privacy_score는 2026-07-28 결정으로 삭제됨 — 값이 룰이 아니라 사용자가 선택한 수집 항목에서
+    # 결정되므로 런타임(판정엔진)이 계산한다. db_구축_설계서.md §3.3.2
     advertising_score: Mapped[int] = mapped_column(Integer, nullable=False)
     derived_from_keyword_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("gate_keywords.keyword_id"), nullable=True
