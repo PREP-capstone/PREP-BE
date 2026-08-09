@@ -1,17 +1,22 @@
 from app.db.models.base import Base
 from app.db.models.correction_rule import CorrectionRule
+from app.db.models.difficulty import CollectionDifficulty, DataDifficulty
 from app.db.models.evidence_chunk import EvidenceChunk
 from app.db.models.evidence_document import EvidenceDocument
 from app.db.models.gate_keyword import GateKeyword
 from app.db.models.gate_matrix import GateMatrix
 from app.db.models.rule_version import RuleVersion
+from app.db.models.signal_config import SignalConfig
 
 __all__ = [
     "Base",
+    "CollectionDifficulty",
     "CorrectionRule",
+    "DataDifficulty",
     "EvidenceChunk",
     "EvidenceDocument",
     "GateKeyword",
     "GateMatrix",
     "RuleVersion",
+    "SignalConfig",
 ]
