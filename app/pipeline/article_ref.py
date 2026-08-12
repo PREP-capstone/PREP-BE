@@ -35,9 +35,26 @@ def normalize_article(article: str | None) -> str | None:
     return normalized.strip(".")
 
 
+def build_chunk_message(chunk: dict) -> str:
+    """청크를 LLM 입력 메시지로 만든다.
+
+    청킹 단계가 계산해 둔 `article_number`(예: `III.2`)를 함께 넘긴다. 이 값을 주지 않으면
+    LLM이 본문만 보고 조문 번호를 추측하게 되고, join 키인 legal_basis_article이 흔들린다.
+    """
+    article_number = chunk.get("article_number")
+    if not article_number:
+        return chunk["content"]
+    return f"[조문 위치] {article_number}\n[본문]\n{chunk['content']}"
+
+
 # Stage A/B/C 프롬프트 공용 — LLM이 처음부터 정규화된 형태로 뱉게 유도한다.
 # (코드에서 normalize_article()로 한 번 더 걸러내므로 이건 1차 방어선이다)
 ARTICLE_NOTATION_PROMPT = """## 조문 표기 규칙 (반드시 지킬 것)
+입력 맨 앞에 `[조문 위치]`가 주어지면 **그 값을 article의 기준으로 삼으세요.** 본문에 하위 항목
+(가/나/다, ①②③ 등)이 명시돼 있고 그 항목이 근거라면 뒤에 이어 붙입니다
+(예: 조문 위치가 `III.2`이고 본문의 "가 위해도판단요소"가 근거면 → `III.2.가`).
+추측으로 새 번호를 만들지 마세요.
+
 article은 아래 형식으로 출력하세요. 이 값은 근거 문서 조회의 join 키라서 표기가 어긋나면
 근거를 찾지 못합니다.
 - 로마숫자는 ASCII 대문자로: `Ⅲ` → `III`, `Ⅳ` → `IV` (유니코드 로마숫자 문자를 쓰지 말 것)

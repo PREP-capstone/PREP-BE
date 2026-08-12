@@ -11,7 +11,11 @@ import json
 from openai import AsyncOpenAI
 
 from app.core.config import settings
-from app.pipeline.article_ref import ARTICLE_NOTATION_PROMPT, normalize_article
+from app.pipeline.article_ref import (
+    ARTICLE_NOTATION_PROMPT,
+    build_chunk_message,
+    normalize_article,
+)
 from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_TABLE,
     HARDCHECK_VERDICT,
@@ -168,7 +172,7 @@ async def extract_B(state: PipelineState) -> dict:
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": chunk["content"]},
+                {"role": "user", "content": build_chunk_message(chunk)},
             ],
             response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
         )

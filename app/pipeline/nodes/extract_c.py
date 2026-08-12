@@ -13,7 +13,11 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.models import GateKeyword, RuleVersion
 from app.db.session import AsyncSessionLocal
-from app.pipeline.article_ref import ARTICLE_NOTATION_PROMPT, normalize_article
+from app.pipeline.article_ref import (
+    ARTICLE_NOTATION_PROMPT,
+    build_chunk_message,
+    normalize_article,
+)
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -114,7 +118,7 @@ async def extract_C(state: PipelineState) -> dict:
             model=settings.openai_model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": chunk["content"]},
+                {"role": "user", "content": build_chunk_message(chunk)},
             ],
             response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
         )
