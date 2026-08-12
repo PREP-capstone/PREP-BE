@@ -180,6 +180,10 @@ def _check_fail_confirmed_condition(draft: ExtractedDraft) -> list[str]:
 
     - type=DOCTOR_REPLACEMENT: 의사 진단·처방 대체는 무조건 의료행위
     - weight=5: 고위해도 5요소 직접 해당
+    - type=PROHIBITED_ACTION AND weight>=4: 무면허 약무행위(처방·조제·복약지도) 반영
+      (2026-08-12 C안 확정). weight 5의 정의를 "고위해도 5요소 전용"으로 유지한 채
+      regulatory_score 3점을 주기 위해 verdict 쪽으로 표현하기로 했으므로, 검증도
+      같이 넓혀야 시드와 파이프라인 산출물이 같은 모양이 된다.
     """
     fields = draft["fields"]
     if fields["verdict"] != "FAIL_CONFIRMED":
@@ -187,6 +191,8 @@ def _check_fail_confirmed_condition(draft: ExtractedDraft) -> list[str]:
     if fields["type"] == "DOCTOR_REPLACEMENT":
         return []
     if fields["weight"] == 5:
+        return []
+    if fields["type"] == "PROHIBITED_ACTION" and fields["weight"] >= 4:
         return []
     return ["값오류"]
 
