@@ -116,6 +116,9 @@ async def extract_C(state: PipelineState) -> dict:
 
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
+            # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
+            temperature=0,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": build_chunk_message(chunk)},

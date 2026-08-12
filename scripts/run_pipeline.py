@@ -28,8 +28,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-if hasattr(sys.stdout, "reconfigure"):  # 한글 출력이 콘솔 코드페이지에 깨지지 않도록
-    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    # encoding: 한글 출력이 콘솔 코드페이지에 깨지지 않도록
+    # line_buffering: 파일로 리다이렉트하면 기본이 블록 버퍼링이라 진행 상황이 한참 뒤에야
+    #   보인다. LLM 호출이 길어 중간에 끊길 수 있으므로 줄 단위로 즉시 내보낸다.
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
 from app.pipeline.nodes.chunk import chunk_document
 from app.pipeline.nodes.extract_a import extract_A
