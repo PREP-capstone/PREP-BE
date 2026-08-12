@@ -9,3 +9,4 @@ data/chroma/
 \docs
 CLAUDE.md
 requirements-win.txt
+data/rule/dump_latest.txt
