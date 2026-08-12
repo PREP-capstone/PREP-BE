@@ -16,6 +16,7 @@ from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_TABLE,
     MATRIX_VERDICT_ENUM,
     is_invasive_hardcheck,
+    needs_invasive_review,
 )
 from app.pipeline.state import ExtractedDraft, PipelineState, ValidationResult
 
@@ -175,7 +176,11 @@ def _check_weight_range(draft: ExtractedDraft) -> list[str]:
 
 
 def _check_fail_confirmed_condition(draft: ExtractedDraft) -> list[str]:
-    """FAIL_CONFIRMED는 type=DOCTOR_REPLACEMENT 또는 weight=5일 때만 구조적으로 인정."""
+    """FAIL_CONFIRMED를 구조적으로 인정하는 조건.
+
+    - type=DOCTOR_REPLACEMENT: 의사 진단·처방 대체는 무조건 의료행위
+    - weight=5: 고위해도 5요소 직접 해당
+    """
     fields = draft["fields"]
     if fields["verdict"] != "FAIL_CONFIRMED":
         return []
@@ -248,13 +253,20 @@ def _check_derived_verdict(draft: ExtractedDraft) -> list[str]:
 
     두 가지 예외를 허용한다.
     - 침습적 하드체크: 표 조회 이전에 FAIL로 오버라이드되므로 표와 달라지는 게 정상이다.
-    - CONDITIONAL: 경계 케이스(3단계 폴백) 결과로도 나올 수 있다.
+    - CONDITIONAL: 경계 케이스(3단계 폴백)나 침습 신호 불일치 결과로도 나올 수 있다.
     """
     fields = draft["fields"]
-    if is_invasive_hardcheck(
-        fields["data_type"], fields.get("acquire_method"), bool(fields.get("invasive_signal"))
-    ):
+    data_type = fields["data_type"]
+    acquire_method = fields.get("acquire_method")
+    invasive_signal = bool(fields.get("invasive_signal"))
+
+    if is_invasive_hardcheck(data_type, acquire_method, invasive_signal):
         return [] if fields["verdict"] == "FAIL" else ["파생값불일치"]
+    if needs_invasive_review(
+        data_type, acquire_method, invasive_signal, bool(fields.get("invasive_keyword_hit"))
+    ):
+        # 불일치 케이스는 검수 대기(CONDITIONAL)로 빠져야 한다 — FAIL도 표 값도 아니다.
+        return [] if fields["verdict"] == "CONDITIONAL" else ["파생값불일치"]
     if fields["verdict"] == "CONDITIONAL":
         return []  # 경계 케이스(3단계 폴백) 결과일 수 있음 — 표 불일치로 보지 않음
     expected = GATE_MATRIX_TABLE.get((fields["data_type"], fields["function_type"]))

@@ -18,6 +18,7 @@ from app.pipeline.gate_matrix_table import (
     VERDICT_PRIORITY,
     detect_invasive,
     is_invasive_hardcheck,
+    needs_invasive_review,
 )
 from app.pipeline.state import ExtractedDraft, PipelineState
 
@@ -131,9 +132,18 @@ verdict/exemption_note/priority는 당신이 출력하지 않습니다 — data_
   - OS연동: 스마트폰 OS의 건강 데이터(걸음수 등) 연동
   - 기기연동: 별도 측정기기·센서와 연결해 값을 받아옴
   - NONE: 조문에 획득 방법이 드러나지 않음
-- invasive_signal: 그 조문이 **침습적** 방식(체내 삽입·피부 관통·체액 채취 등 신체를 침습하는
-  측정)을 다루면 true. 웰니스판단기준(0091-03) III.2.가·나 고위해도 5요소 중 2번(침습적)에
-  해당하는지를 기준으로 판단하세요. 비침습 측정(광학식 심박, 체중계 등)은 false입니다.
+- invasive_signal: **판단 기준은 오직 하나 — "각질층을 관통하는가"입니다.**
+  근거는 웰니스판단기준(0091-03) III.2.가·나 고위해도 5요소 중 2번(침습적)의 문언
+  "피부를 뚫어 혈액을 채취하거나 체내에 삽입"입니다.
+  - true(관통함): 센서를 피하에 삽입해 측정, 바늘·란셋으로 혈액 채취, 체내 삽입·이식,
+    마이크로니들처럼 각질층을 뚫는 구조
+  - false(관통 안 함): 피부 위에서 측정하는 방식 — 광학식 심박, 체중계, 체성분 측정,
+    피부에 붙이기만 하는 심전도 패치 등
+  - ⚠️ **기기의 형태 이름으로 판단하지 마세요.** 특히 "패치"는 그 단어만으로 결정되지 않습니다.
+    단순 부착형 패치는 비침습이고, 마이크로니들 패치는 각질층을 관통하므로 침습입니다.
+    똑같이 "패치"라 불려도 관통 여부가 다르면 판정이 달라집니다.
+  - 조문만으로 관통 여부를 확정할 수 없으면 **invasive_signal=false로 두고 boundary_case=true**로
+    표시하세요. 추측으로 true를 넣지 마세요 — 이 값이 true면 다른 판단과 무관하게 FAIL이 됩니다.
 
 ## legal_basis
 - article: 이 조합 판단의 근거가 되는 조문 번호/제목
@@ -168,12 +178,19 @@ async def extract_B(state: PipelineState) -> dict:
             data_type = item["data_type"]
             function_type = item["function_type"]
             acquire_method = None if item["acquire_method"] == "NONE" else item["acquire_method"]
-            invasive_signal = item["invasive_signal"] or detect_invasive(chunk["content"])
+            invasive_signal = item["invasive_signal"]
+            keyword_hit = detect_invasive(chunk["content"])
 
             # 침습적 하드체크는 6칸 표 조회보다 **먼저** 적용된다 — 걸리면 function_type과
             # 표 조회 결과에 관계없이 FAIL로 오버라이드한다 (db_구축_설계서.md §3.2).
             if is_invasive_hardcheck(data_type, acquire_method, invasive_signal):
                 verdict = HARDCHECK_VERDICT
+                exemption_note = None
+            elif needs_invasive_review(data_type, acquire_method, invasive_signal, keyword_hit):
+                # 코드는 침습 신호를 잡았는데 LLM은 아니라고 한 불일치. detect_invasive는 청크
+                # 전체를 훑어 정밀도가 낮으므로 FAIL로 확정하지 않고 검수 대기로 뺀다.
+                # TODO(human_review): interrupt 연결되면 CONDITIONAL 대신 관리자 검수로 보낼 것.
+                verdict = "CONDITIONAL"
                 exemption_note = None
             elif item["boundary_case"]:
                 # TODO(human_review): 3단계로도 안 풀리는 경계 케이스 — interrupt로 관리자 검수에
@@ -199,6 +216,7 @@ async def extract_B(state: PipelineState) -> dict:
                 # gate_matrix에 저장되는 컬럼은 아니지만, auto_validate가 하드체크 오버라이드를
                 # 그대로 재현해 검증할 수 있도록 draft에 실어 보낸다.
                 "invasive_signal": invasive_signal,
+                "invasive_keyword_hit": keyword_hit,
                 # TODO(D-2): avoidance_* 문구 작성 주체 미정(코드 고정 템플릿 vs LLM 생성).
                 # 결정 전까지 채우지 않는다 — verdict=FAIL이어도 None이다.
                 "avoidance_redesign": None,

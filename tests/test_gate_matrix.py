@@ -13,10 +13,12 @@ from app.pipeline.gate_matrix_table import (
     FUNCTION_TYPE_ENUM,
     GATE_MATRIX_TABLE,
     HARDCHECK_VERDICT,
+    INVASIVE_KEYWORDS,
     MATRIX_VERDICT_ENUM,
     VERDICT_PRIORITY,
     detect_invasive,
     is_invasive_hardcheck,
+    needs_invasive_review,
 )
 
 # §3.2 확정 매핑표 — 표를 코드에서 읽어오지 않고 여기에 독립적으로 다시 적어 대조한다.
@@ -57,6 +59,17 @@ def test_glucose_alarm_example_stays_in_prompt() -> None:
     from app.pipeline.nodes.extract_b import _SYSTEM_PROMPT
 
     assert "혈당 수치값을 표시하고 위험 수치일 때 경고 알람을 제공" in _SYSTEM_PROMPT
+
+
+def test_invasive_criterion_is_stated_in_prompt() -> None:
+    """침습 판단은 키워드 나열이 아니라 "각질층 관통" 기준으로 서술돼야 한다 (D-1).
+
+    키워드만 나열하면 목록에 없는 신규 기기를 놓친다.
+    """
+    from app.pipeline.nodes.extract_b import _SYSTEM_PROMPT
+
+    assert "각질층을 관통하는가" in _SYSTEM_PROMPT
+    assert "마이크로니들" in _SYSTEM_PROMPT  # 패치 분기 예시가 살아 있는지
 
 
 def test_verdict_priority_orders_fail_first() -> None:
@@ -102,9 +115,68 @@ def test_hardcheck_does_not_fire_on_partial_match(
     assert is_invasive_hardcheck(data_type, acquire_method, invasive_signal) is False
 
 
-def test_detect_invasive_is_inert_until_d1_is_decided() -> None:
-    """D-1(침습적 대상 목록) 미확정 상태에서는 코드 측 교차확인이 항상 False다.
+# ---- D-1 침습 판정: "각질층을 관통하는가" (2026-08-12 확정) ----
 
-    목록이 채워지면 이 테스트가 실패하면서 "이제 하드체크 입력이 하나 늘었다"는 신호가 된다.
-    """
-    assert detect_invasive("체내 삽입형 연속혈당측정기로 혈당을 측정한다") is False
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "연속혈당측정기로 혈당을 측정한다",  # 센서를 피하에 삽입
+        "CGM 센서를 부착해 사용한다",
+        "채혈침으로 혈액을 채취한다",
+        "란셋을 이용해 검체를 얻는다",
+        "마이크로니들 패치를 사용한다",  # 패치지만 각질층 관통 → 침습
+        "체내 삽입형 기기로 측정한다",
+        "이식형 센서를 통해 수집한다",
+        "침습적 방법으로 측정하는 경우",
+        "정맥 천자로 채취한 검체",
+    ],
+)
+def test_detect_invasive_matches_stratum_corneum_penetration(text: str) -> None:
+    assert detect_invasive(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "광학식 센서로 심박수를 측정한다",
+        "체중계로 체성분을 측정한다",
+        "심전도 패치를 피부에 부착한다",  # 단순 부착형 → 비침습
+        "패치 형태의 기기를 사용한다",  # "패치"만으로 침습 판정하면 안 된다
+        "비침습적 방법으로 혈당을 추정한다",  # "침습"이 부분 문자열로 들어있는 함정
+        "무침습 측정 기술을 적용한다",
+        "혈당 수치값을 표시하고 위험 수치일 때 경고 알람을 제공",  # 혈당≠연속혈당
+    ],
+)
+def test_detect_invasive_ignores_non_penetrating_cases(text: str) -> None:
+    assert detect_invasive(text) is False
+
+
+def test_invasive_keywords_excludes_bare_patch() -> None:
+    """형태 이름("패치")을 목록에 넣으면 비침습 부착형까지 전부 오탐한다."""
+    assert "패치" not in INVASIVE_KEYWORDS
+
+
+# ---- 안전장치: 코드 ↔ LLM 불일치는 FAIL이 아니라 검수 대기 ----
+
+
+def test_keyword_hit_without_llm_signal_goes_to_review() -> None:
+    """코드만 침습 신호를 잡은 경우 — 청크 단위 매칭이라 FAIL로 확정하지 않는다."""
+    assert needs_invasive_review("생체지표", "기기연동", False, True) is True
+    assert is_invasive_hardcheck("생체지표", "기기연동", False) is False
+
+
+def test_confirmed_hardcheck_is_not_sent_to_review() -> None:
+    """LLM이 침습이라고 한 경우는 이미 FAIL 확정이라 검수 대기로 중복 분기하지 않는다."""
+    assert needs_invasive_review("생체지표", "기기연동", True, True) is False
+
+
+@pytest.mark.parametrize(
+    ("data_type", "acquire_method"),
+    [("라이프스타일", "기기연동"), ("생체지표", "수동입력"), ("생체지표", None)],
+)
+def test_review_valve_requires_same_gate_as_hardcheck(
+    data_type: str, acquire_method: str | None
+) -> None:
+    """검수 대기도 생체지표+기기연동 조합에서만 발동한다 — 무관한 조문을 끌어오지 않는다."""
+    assert needs_invasive_review(data_type, acquire_method, False, True) is False
