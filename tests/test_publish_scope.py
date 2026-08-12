@@ -100,7 +100,11 @@ async def test_stage_b_new_fields_are_persisted(restore_db) -> None:
     await publish({"drafts": [stage_b_draft()], "rule_version_id": None})
 
     async with AsyncSessionLocal() as session:
-        row = await session.scalar(select(GateMatrix).where(GateMatrix.acquire_method.isnot(None)))
+        # 실제 문서를 적재한 DB에는 acquire_method가 채워진 행이 이미 있을 수 있으므로,
+        # 이 테스트가 만든 행(legal_basis_doc="doc-b")으로 좁혀서 조회한다.
+        row = await session.scalar(
+            select(GateMatrix).where(GateMatrix.legal_basis_doc == "doc-b")
+        )
 
     assert row is not None
     assert row.acquire_method == "기기연동"
