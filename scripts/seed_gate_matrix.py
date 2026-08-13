@@ -6,6 +6,9 @@
 verdict/priority는 `GATE_MATRIX_TABLE`에서 그대로 가져온다 — 상수와 DB가 갈라지지 않게 하기 위해
 여기에 verdict를 다시 적어두지 않는다.
 
+적재는 publish()를 거친다 — 누적 발행(B안)으로 바뀐 뒤에는 publish()가 기존 active 행을
+승계하므로, 시드도 같은 경로를 타야 이후 문서 투입 때 자동으로 승계된다.
+
 ⚠️ 시드 적재 후에는 extract_B가 같은 조합을 다시 추출하면 auto_validate에서 "중복후보"로 걸린다.
 6칸 표가 닫힌 확정 표가 된 이후 extract_b의 역할이 "신규 조합 탐지·기존 표 QA"로 좁혀졌으므로
 (구현_현황_정리.md §Stage B) 의도된 동작이다.
@@ -24,9 +27,13 @@ from sqlalchemy import select
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+if hasattr(sys.stdout, "reconfigure"):  # 한글 출력이 콘솔 코드페이지에 깨지지 않도록
+    sys.stdout.reconfigure(encoding="utf-8")
+
 from app.db.models import GateMatrix, RuleVersion
 from app.db.session import AsyncSessionLocal
 from app.pipeline.article_ref import normalize_article
+from app.pipeline.nodes.publish import publish
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, VERDICT_PRIORITY
 
 WELLNESS = "kr-mfds-wellness-0091-03-20260212"  # 웰니스 판단기준 지침서-0091-03
@@ -45,64 +52,64 @@ LEGAL_BASIS: dict[tuple[str, str], tuple[str, str]] = {
 }
 
 
-async def _gate_matrix_rule_version(session) -> RuleVersion:
-    """Stage B 전용 active rule_version을 확보한다 (publish.py의 Stage별 lineage와 동일 원리)."""
-    existing = await session.scalar(
-        select(RuleVersion)
-        .join(GateMatrix, GateMatrix.rule_version_id == RuleVersion.rule_version_id)
-        .where(RuleVersion.status == "active")
-        .limit(1)
-    )
-    if existing:
-        return existing
-
-    version_count = len((await session.scalars(select(RuleVersion.rule_version_id))).all())
-    rule_version = RuleVersion(version=f"v0.{version_count + 1}", status="active")
-    session.add(rule_version)
-    await session.flush()
-    return rule_version
+async def _active_combos() -> set[tuple[str, str]]:
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(GateMatrix.data_type, GateMatrix.function_type)
+            .join(RuleVersion, RuleVersion.rule_version_id == GateMatrix.rule_version_id)
+            .where(RuleVersion.status == "active", GateMatrix.acquire_method.is_(None))
+        )
+        return {(row[0], row[1]) for row in rows.all()}
 
 
 async def seed() -> None:
-    async with AsyncSessionLocal() as session:
-        rule_version = await _gate_matrix_rule_version(session)
-        inserted = 0
+    existing = await _active_combos()
+    missing = [combo for combo in GATE_MATRIX_TABLE if combo not in existing]
 
-        for (data_type, function_type), lookup in GATE_MATRIX_TABLE.items():
-            existing = await session.scalar(
-                select(GateMatrix).where(
-                    GateMatrix.rule_version_id == rule_version.rule_version_id,
-                    GateMatrix.data_type == data_type,
-                    GateMatrix.function_type == function_type,
-                    GateMatrix.acquire_method.is_(None),
-                )
-            )
-            if existing is not None:
-                continue
+    if not missing:
+        print(f"gate_matrix: 이미 active에 {len(GATE_MATRIX_TABLE)}칸 존재 — 변경 없음")
+        return
 
-            legal_basis_doc, legal_basis_article = LEGAL_BASIS[(data_type, function_type)]
-            session.add(
-                GateMatrix(
-                    rule_version_id=rule_version.rule_version_id,
-                    data_type=data_type,
-                    function_type=function_type,
-                    verdict=lookup["verdict"],
-                    exemption_note=lookup["exemption_note"],
-                    # 6칸 기본 조합은 침습적 하드체크 대상이 아니므로 acquire_method를 비워둔다 (§3.2).
-                    acquire_method=None,
+    drafts = []
+    for combo in missing:
+        data_type, function_type = combo
+        lookup = GATE_MATRIX_TABLE[combo]
+        legal_basis_doc, legal_basis_article = LEGAL_BASIS[combo]
+        legal_basis = {
+            "document_id": legal_basis_doc,
+            "article": normalize_article(legal_basis_article),
+            "quote": "",  # gate_matrix는 원문 인용을 저장하지 않는다 (§1.5.1)
+        }
+        drafts.append(
+            {
+                "stage": "B",
+                "fields": {
+                    "data_type": data_type,
+                    "function_type": function_type,
+                    "verdict": lookup["verdict"],
+                    "exemption_note": lookup["exemption_note"],
+                    # 6칸 기본 조합은 침습적 하드체크 대상이 아니므로 비워둔다 (§3.2).
+                    "acquire_method": None,
                     # TODO(D-2): avoidance_* 문구 작성 주체 미정 — FAIL row도 아직 비워둔다.
-                    avoidance_redesign=None,
-                    avoidance_certification=None,
-                    legal_basis_doc=legal_basis_doc,
-                    legal_basis_article=normalize_article(legal_basis_article),
-                    risk_code=None,
-                    priority=VERDICT_PRIORITY[lookup["verdict"]],
-                )
-            )
-            inserted += 1
+                    "avoidance_redesign": None,
+                    "avoidance_certification": None,
+                    "risk_code": None,
+                    "priority": VERDICT_PRIORITY[lookup["verdict"]],
+                    "legal_basis": legal_basis,
+                },
+                "legal_basis": legal_basis,
+            }
+        )
 
-        await session.commit()
-        print(f"gate_matrix: {inserted}행 신규 적재 (rule_version={rule_version.version}, 총 6칸)")
+    result = await publish({"drafts": drafts, "rule_version_id": None})
+
+    async with AsyncSessionLocal() as session:
+        version = await session.scalar(
+            select(RuleVersion.version).where(
+                RuleVersion.rule_version_id == result["rule_version_id"]
+            )
+        )
+    print(f"gate_matrix: {len(drafts)}칸 발행 (신규 rule_version={version}, 기존 active 승계 포함)")
 
 
 if __name__ == "__main__":
