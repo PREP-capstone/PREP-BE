@@ -36,6 +36,10 @@ _NUM_HEADING = re.compile(r"(?<![\d.)])[1-9]\d?\.\s*(?=[가-힣])")
 # 법령 조문 헤딩은 제목 괄호를 동반한다: 제2조(정의). 괄호를 요구해야 본문 인용과 구분된다.
 _ARTICLE_HEADING = re.compile(r"제\s*\d+\s*조(?:의\s*\d+)?(?=\s*\()")
 _CHAPTER_HEADING = re.compile(r"제\s*\d+\s*장(?=\s)")
+# 부칙(附則)은 본문 조문 번호를 제1조부터 다시 매긴다. 챕터 헤딩으로 인식하지 않으면
+# 마지막으로 본 장(예: 제5장) 소속으로 잘못 태깅된다 — 약사법 발췌본에서 부칙
+# 제1~4조가 "제5장.제N조"로 잘못 붙던 걸 실사례로 확인했다(2026-08-13).
+_ADDENDA_HEADING = re.compile(r"(?<![가-힣])부칙(?![가-힣])")
 # 별표 항목: "제1호" 표기와 "1." 표기를 모두 받는다.
 # 실제 별표7 원문은 "제1호"가 아니라 "1.의료기기의…" 형식이었다.
 _ITEM_HEADING = re.compile(r"제\s*\d+\s*호")
@@ -52,7 +56,7 @@ _ANNEX_TITLE_WINDOW = 200
 # 모드별 (레벨, 패턴). 레벨이 작을수록 상위다.
 _MODES = {
     "guideline": [(1, _ROMAN_HEADING), (2, _NUM_HEADING)],
-    "statute": [(1, _CHAPTER_HEADING), (2, _ARTICLE_HEADING)],
+    "statute": [(1, _CHAPTER_HEADING), (1, _ADDENDA_HEADING), (2, _ARTICLE_HEADING)],
     "annex": [(1, _ITEM_HEADING), (1, _ANNEX_ITEM_HEADING)],
 }
 

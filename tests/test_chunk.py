@@ -99,3 +99,48 @@ def test_statute_mode_uses_chapter_and_article() -> None:
     numbers = [c["article_number"] for c in chunks]
     assert "제1장.제2조" in numbers
     assert "제4장.제24조" in numbers
+
+
+# 부칙(附則)은 본문 조문과 별개로 제1조부터 번호를 다시 매긴다. 챕터 헤딩으로 인식하지
+# 않으면 마지막 장 소속으로 잘못 태깅되거나(하위 조문이 있는 경우) 직전 조문 내용에
+# 그대로 이어 붙는다(짧은 단문뿐인 경우) — 약사법 발췌본에서 실제로 확인된 버그다.
+STATUTE_WITH_ADDENDA_SUBARTICLES = (
+    "제1장 총칙\n"
+    "제2조(정의) 이 법에서 사용하는 용어의 뜻은 다음과 같다.\n"
+    "제3조(적용범위) 이 법은 의약품에 대하여 적용한다.\n"
+    "제5장 의약품등의 제조 및 수입 등\n"
+    "제44조(의약품 판매) 약국 개설자가 아니면 의약품을 판매할 수 없다.\n"
+    "부칙 <제21109호,2025. 11. 11.>\n"
+    "제1조(시행일) 이 법은 공포 후 1년이 경과한 날부터 시행한다.\n"
+    "제2조(경과조치) 종전의 규정에 따른다.\n"
+)
+
+STATUTE_WITH_ADDENDA_SENTENCE_ONLY = (
+    "제1장 총칙\n"
+    "제2조(정의) 이 법에서 사용하는 용어의 뜻은 다음과 같다.\n"
+    "제3조(적용범위) 이 법은 의약품에 대하여 적용한다.\n"
+    "제5장 벌칙\n"
+    "제57조(과태료) 다음 각 호의 어느 하나에 해당하는 자는 과태료를 부과한다.\n"
+    "부칙 <제21524호,2026. 4. 7.> 이 법은 공포한 날부터 시행한다.\n"
+)
+
+
+def test_addenda_with_sub_articles_is_not_attributed_to_previous_chapter() -> None:
+    chunks = chunk_document(
+        {"raw_text": STATUTE_WITH_ADDENDA_SUBARTICLES, "document_id": "d"}
+    )["chunks"]
+    numbers = [c["article_number"] for c in chunks]
+    assert "부칙.제1조" in numbers
+    assert "부칙.제2조" in numbers
+    assert "제5장.제1조" not in numbers  # 회귀: 이전엔 "제5장" 소속으로 잘못 붙었다
+    assert "제5장.제2조" not in numbers
+
+
+def test_addenda_without_sub_articles_does_not_contaminate_prior_article() -> None:
+    """조문 형식이 없는 짧은 부칙 문장은 직전 조문에 이어붙지 않고 별도 청크가 된다."""
+    chunks = chunk_document(
+        {"raw_text": STATUTE_WITH_ADDENDA_SENTENCE_ONLY, "document_id": "d"}
+    )["chunks"]
+    by_number = {c["article_number"]: c["content"] for c in chunks}
+    assert "공포한 날부터 시행한다" not in by_number["제5장.제57조"]
+    assert "공포한 날부터 시행한다" in by_number["부칙"]
