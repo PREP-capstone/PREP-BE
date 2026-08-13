@@ -221,12 +221,14 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
         if stage_filter in (None, "C"):
             rows = (
                 await session.execute(
-                    select(CorrectionRule).order_by(CorrectionRule.risky_text)
+                    select(CorrectionRule, RuleVersion.version, RuleVersion.status)
+                    .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
+                    .order_by(RuleVersion.status, CorrectionRule.risky_text)
                 )
-            ).scalars().all()
+            ).all()
             print_table(
                 "correction_rules (Stage C)",
-                ["risky_text", "safe_text", "reg", "adv", "legal_basis_doc", "article"],
+                ["risky_text", "safe_text", "reg", "adv", "legal_basis_doc", "article", "ver", "status"],
                 [
                     [
                         r.risky_text,
@@ -242,6 +244,16 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
                 ],
                 max_width,
             )
+            for label, column in [
+                ("regulatory_score 분포", CorrectionRule.regulatory_score),
+                ("advertising_score 분포", CorrectionRule.advertising_score),
+            ]:
+                pairs = (
+                    await session.execute(
+                        select(column, func.count()).group_by(column).order_by(column)
+                    )
+                ).all()
+                print_distribution(label, [(p[0], p[1]) for p in pairs])
 
         emit()
 
