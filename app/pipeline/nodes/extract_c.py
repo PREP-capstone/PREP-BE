@@ -118,6 +118,9 @@ async def extract_C(state: PipelineState) -> dict:
             model=settings.openai_model,
             # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
             # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
+            # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
+            # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
+            # 검증·중복판정 단계가 흡수한다.
             temperature=0,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
