@@ -49,7 +49,7 @@ from app.pipeline.article_ref import normalize_article
 WELLNESS = "kr-mfds-wellness-0091-03-20260212"
 MEDICAL_ACT = "kr-medical-act-20260407"
 DEVICE_ACT = "kr-medical-device-act-20260701"
-# 약사법은 usage=PENDING(파일 미확보) — 서지정보는 있으나 조문 번호를 확정 못해 비운다.
+# 약사법 발췌본(2026-08-13 확보) — 전문이 아니라 제2·23·24·44조만 포함.
 PHARM_ACT = "kr-pharmaceutical-affairs-act-20260621"
 
 ROWS: list[dict] = [
@@ -102,30 +102,31 @@ ROWS: list[dict] = [
         "legal_basis_doc": WELLNESS, "legal_basis_article": "IV.2.가",
     },
     # ---- PHARM (3) — standalone, 명사와 조합하지 않음 ----
+    # 약사법 확보 완료(2026-08-13, 발췌본 kr-pharmaceutical-affairs-act-20260621).
+    # 원문 대조 결과: 제23조(의약품 조제) 표제가 "조제"와 정확히 일치. 제24조는
+    # 표제가 "(의무 및 준수 사항)"이지만 **제4항**이 실질 근거 — "약사는 의약품을
+    # 조제하면...필요한 복약지도(服藥指導)를...하여야 한다."
     {
         "verb": "조제", "verb_category": "PHARM",
         "safe_verb": "대체 표현 없음 — 약사 전속 업무이므로 기능 자체를 제외해야 함",
         "noun_classes": "", "standalone": True,
-        # correction_rules.legal_basis_article은 NOT NULL이라 None을 못 넣는다.
-        # 약사법(PENDING) 조문 번호를 아직 모른다는 뜻으로 빈 문자열을 쓴다 —
-        # 파일이 확보되면 채워 넣을 자리표시자다.
-        "legal_basis_doc": PHARM_ACT, "legal_basis_article": "",
+        "legal_basis_doc": PHARM_ACT, "legal_basis_article": "제23조",
     },
     {
+        # ⚠️ "투약"은 약사법 발췌본에 0회 등장 — 법률 용어가 아니다. 제2조제1호가
+        # "약사(藥事)"의 정의에서 "판매[수여(授與)를 포함한다]"라고 규정해, 제44조
+        # (의약품 판매)가 "수여"(약을 건네는 행위)까지 포섭한다. 무면허 투약(교부)의
+        # 가장 가까운 법적 근거로 잠정 채택 — 전문 확보 시 재확인 필요.
+        # legal_basis_article은 §1.5.1 표기 규칙(RAG join 키)을 지키기 위해
+        # 조문 번호만 담고, 이 잠정 근거는 코드 주석으로만 남긴다.
         "verb": "투약", "verb_category": "PHARM", "safe_verb": "복용 기록",
         "noun_classes": "", "standalone": True,
-        # correction_rules.legal_basis_article은 NOT NULL이라 None을 못 넣는다.
-        # 약사법(PENDING) 조문 번호를 아직 모른다는 뜻으로 빈 문자열을 쓴다 —
-        # 파일이 확보되면 채워 넣을 자리표시자다.
-        "legal_basis_doc": PHARM_ACT, "legal_basis_article": "",
+        "legal_basis_doc": PHARM_ACT, "legal_basis_article": "제44조",
     },
     {
         "verb": "복약지도", "verb_category": "PHARM", "safe_verb": "복약 정보 제공",
         "noun_classes": "", "standalone": True,
-        # correction_rules.legal_basis_article은 NOT NULL이라 None을 못 넣는다.
-        # 약사법(PENDING) 조문 번호를 아직 모른다는 뜻으로 빈 문자열을 쓴다 —
-        # 파일이 확보되면 채워 넣을 자리표시자다.
-        "legal_basis_doc": PHARM_ACT, "legal_basis_article": "",
+        "legal_basis_doc": PHARM_ACT, "legal_basis_article": "제24조",
     },
 ]
 

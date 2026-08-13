@@ -97,14 +97,15 @@ async def _load_active_keywords() -> list[GateKeyword]:
         return list(result.scalars().all())
 
 
-async def _existing_active_risky_texts() -> set[str]:
+async def _existing_active_rows() -> dict[str, CorrectionRule]:
+    """risky_text(소문자) → 현재 active row. 필드가 바뀌었는지 비교하는 데 쓴다."""
     async with AsyncSessionLocal() as session:
         rows = await session.scalars(
-            select(func.lower(CorrectionRule.risky_text))
+            select(CorrectionRule)
             .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
             .where(RuleVersion.status == "active")
         )
-        return set(rows.all())
+        return {row.risky_text.lower(): row for row in rows.all()}
 
 
 def combos(verb: VerbSubstitution, pools: dict[str, list[str]]):
@@ -120,11 +121,20 @@ def combos(verb: VerbSubstitution, pools: dict[str, list[str]]):
             yield f"{noun} {verb.verb}", safe_text
 
 
+_COMPARE_FIELDS = (
+    "safe_text",
+    "regulatory_score",
+    "advertising_score",
+    "legal_basis_doc",
+    "legal_basis_article",
+)
+
+
 async def generate(out_path: Path, do_publish: bool) -> None:
     pools = await _load_noun_pools()
     verbs = await _load_verbs()
     active_keywords = await _load_active_keywords()
-    existing = await _existing_active_risky_texts()
+    existing = await _existing_active_rows()
 
     if not verbs:
         print("verb_substitution이 비어 있습니다 — scripts/seed_verb_substitution.py를 먼저 실행하세요.")
@@ -132,48 +142,79 @@ async def generate(out_path: Path, do_publish: bool) -> None:
 
     print(f"명사 풀: 질병명 {len(pools['질병명'])}개, 생체지표 {len(pools['생체지표'])}개")
 
-    rows: list[dict] = []
-    skipped_existing = 0
+    new_rows: list[dict] = []
+    changed_rows: list[dict] = []
+    all_rows: list[dict] = []
+    unchanged = 0
+
     for verb in verbs:
         for risky_text, safe_text in combos(verb, pools):
-            if risky_text.lower() in existing:
-                skipped_existing += 1
-                continue
             regulatory_score, derived_from_keyword_id = _derive_regulatory_score(
                 risky_text, active_keywords
             )
-            rows.append(
-                {
-                    "risky_text": risky_text,
-                    "safe_text": safe_text,
-                    "regulatory_score": regulatory_score,
-                    # 이 갈래는 의료행위·약무행위 표현이지 광고 표현이 아니다. 광고 축은
-                    # 별표7 갈래(별도 스크립트/프롬프트)에서만 채운다.
-                    "advertising_score": 0,
-                    "derived_from_keyword_id": derived_from_keyword_id,
-                    "legal_basis_doc": verb.legal_basis_doc,
-                    "legal_basis_article": verb.legal_basis_article,
-                    "source_verb": verb.verb,
-                }
-            )
+            candidate = {
+                "risky_text": risky_text,
+                "safe_text": safe_text,
+                "regulatory_score": regulatory_score,
+                # 이 갈래는 의료행위·약무행위 표현이지 광고 표현이 아니다. 광고 축은
+                # 별표7 갈래(별도 스크립트/프롬프트)에서만 채운다.
+                "advertising_score": 0,
+                "derived_from_keyword_id": derived_from_keyword_id,
+                "legal_basis_doc": verb.legal_basis_doc,
+                "legal_basis_article": verb.legal_basis_article,
+                "source_verb": verb.verb,
+            }
+            all_rows.append(candidate)
+
+            existing_row = existing.get(risky_text.lower())
+            if existing_row is None:
+                new_rows.append(candidate)
+            elif any(getattr(existing_row, f) != candidate[f] for f in _COMPARE_FIELDS):
+                changed_rows.append(candidate)
+            else:
+                unchanged += 1
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(all_rows)
 
-    print(f"생성 {len(rows)}행 (기존 active와 중복 {skipped_existing}건 제외) → {out_path}")
-    if rows:
-        zero_score = sum(1 for r in rows if r["regulatory_score"] == 0)
+    print(
+        f"생성 {len(all_rows)}행 (신규 {len(new_rows)} / 갱신 {len(changed_rows)} / "
+        f"변경없음 {unchanged}) → {out_path}"
+    )
+    if all_rows:
+        zero_score = sum(1 for r in all_rows if r["regulatory_score"] == 0)
         print(f"  regulatory_score=0인 행: {zero_score}건 (명사·동사 둘 다 gate_keywords 매칭 실패 — 점검 필요)")
 
     if not do_publish:
         print("--publish 없이 종료 — CSV만 생성했습니다. 검토 후 --publish로 재실행하세요.")
         return
-    if not rows:
-        print("적재할 신규 행이 없습니다.")
+
+    if changed_rows:
+        # 필드만 바뀐 기존 행은 새 rule_version을 만들지 않고 in-place UPDATE한다.
+        # publish()는 이전 active 전체를 무조건 승계 복제하므로, 여기서 먼저 고쳐두지
+        # 않으면 옛 값(예: 빈 legal_basis_article)이 그대로 새 버전에 복제된다.
+        async with AsyncSessionLocal() as session:
+            for candidate in changed_rows:
+                row = await session.scalar(
+                    select(CorrectionRule)
+                    .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
+                    .where(
+                        RuleVersion.status == "active",
+                        func.lower(CorrectionRule.risky_text) == candidate["risky_text"].lower(),
+                    )
+                )
+                for field in _COMPARE_FIELDS:
+                    setattr(row, field, candidate[field])
+            await session.commit()
+        print(f"기존 active {len(changed_rows)}행 in-place 갱신 완료 (새 버전 생성 없음)")
+
+    if not new_rows:
+        print("신규 발행할 행이 없습니다.")
         return
+    rows = new_rows
 
     drafts = [
         {
