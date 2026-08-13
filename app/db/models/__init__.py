@@ -7,6 +7,7 @@ from app.db.models.gate_keyword import GateKeyword
 from app.db.models.gate_matrix import GateMatrix
 from app.db.models.rule_version import RuleVersion
 from app.db.models.signal_config import SignalConfig
+from app.db.models.verb_substitution import VerbSubstitution
 
 __all__ = [
     "Base",
@@ -19,4 +20,5 @@ __all__ = [
     "GateMatrix",
     "RuleVersion",
     "SignalConfig",
+    "VerbSubstitution",
 ]
