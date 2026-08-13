@@ -193,10 +193,11 @@ async def run(args: argparse.Namespace) -> None:
     submitted = len(state["drafts"])
     state.update(await auto_validate(state))
     passed = len(state["drafts"])
-    failed = state["validation"]["failed_checks"]
+    counts = state["validation"].get("failed_counts") or {}
     print(f"통과 {passed} / 탈락 {submitted - passed}")
-    if failed:
-        print(f"      탈락 사유: {', '.join(failed)}")
+    if counts:
+        breakdown = ", ".join(f"{reason} {count}건" for reason, count in counts.items())
+        print(f"      탈락 사유: {breakdown}")
 
     print_drafts(state["drafts"])
 

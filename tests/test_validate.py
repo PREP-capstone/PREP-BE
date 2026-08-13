@@ -5,6 +5,7 @@
 
 from app.pipeline.nodes.validate import (
     _check_avoidance_fields,
+    _check_citation,
     _check_derived_verdict,
     _check_enums_b,
     _check_required_fields_c,
@@ -147,3 +148,37 @@ def test_stage_c_score_range_ignores_privacy_score() -> None:
 def test_stage_c_rejects_out_of_range_scores() -> None:
     assert _check_score_range_c({"fields": stage_c_fields(regulatory_score=4)}) == ["값오류"]
     assert _check_score_range_c({"fields": stage_c_fields(advertising_score=-1)}) == ["값오류"]
+
+
+# ---- 인용 대조: pypdf 추출 특성 흡수 ----
+
+
+def test_citation_matches_across_mid_word_line_break() -> None:
+    """회귀: 2단 편집 법령 PDF는 단어 중간에 줄바꿈이 들어간다("성생\n활").
+
+    그대로 비교하면 LLM이 원문을 정확히 인용해도 전부 인용미확인으로 걸러져,
+    실제로 1패스에서 법령 문서가 통째로 0행 적재됐다.
+    """
+    chunk = {"content": "개인정보처리자는 건강, 성생\n활 등에 관한 정보를 처리하여서는 아니 된다."}
+    draft = {"fields": stage_b_fields(legal_basis={
+        "document_id": "d", "article": "제23조", "quote": "건강, 성생활 등에 관한 정보",
+    })}
+    assert _check_citation(draft, [chunk]) == []
+
+
+def test_citation_matches_when_extraction_drops_all_spaces() -> None:
+    """별표7은 반대로 공백이 아예 없이 추출된다 — 이쪽도 통과해야 한다."""
+    chunk = {"content": "1.의료기기의명칭ㆍ제조방법ㆍ성능이나효능및효과에관한거짓또는과대광고"}
+    draft = {"fields": stage_b_fields(legal_basis={
+        "document_id": "d", "article": "별표7.제1호", "quote": "의료기기의 명칭ㆍ제조방법ㆍ성능",
+    })}
+    assert _check_citation(draft, [chunk]) == []
+
+
+def test_citation_still_rejects_fabricated_quote() -> None:
+    """공백을 무시해도 원문에 없는 문장은 잡아내야 한다."""
+    chunk = {"content": "개인정보처리자는 건강에 관한 정보를 처리하여서는 아니 된다."}
+    draft = {"fields": stage_b_fields(legal_basis={
+        "document_id": "d", "article": "제23조", "quote": "이 법은 2030년부터 시행한다",
+    })}
+    assert _check_citation(draft, [chunk]) == ["인용미확인"]

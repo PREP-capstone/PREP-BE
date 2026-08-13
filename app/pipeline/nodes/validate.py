@@ -5,6 +5,8 @@ Stage C: 필수필드/점수범위(0~3, regulatory·advertising 2축)/인용(leg
          중복(risky_text) + derived_from_keyword_id가 실제 gate_keywords row를 가리키는지 검증
 """
 
+import re
+
 from sqlalchemy import func, select
 
 from app.db.models import CorrectionRule, GateKeyword, GateMatrix
@@ -80,9 +82,14 @@ async def auto_validate(state: PipelineState) -> dict:
             else:
                 seen_risky_texts.add(draft["fields"]["risky_text"].strip().lower())
 
+    counts: dict[str, int] = {}
+    for reason in failed_checks:
+        counts[reason] = counts.get(reason, 0) + 1
+
     validation: ValidationResult = {
         "passed": len(failed_checks) == 0,
         "failed_checks": sorted(set(failed_checks)),
+        "failed_counts": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
     }
     return {"drafts": valid_drafts, "validation": validation}
 
@@ -117,12 +124,27 @@ def _normalize_keyword(keyword: str) -> str:
     return keyword.strip().lower()
 
 
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _compact(text: str) -> str:
+    """인용 대조용 정규화 — 공백을 전부 제거한다.
+
+    pypdf가 2단 편집 법령 PDF를 뽑을 때 **단어 중간에 줄바꿈을 넣는다**("성생\\n활").
+    의료법 최장 청크에서 12회, 의료기기법에서 9회 발생했다. LLM이 원문을 정확히
+    인용해도 그대로 비교하면 전부 "인용미확인"으로 걸러진다 — 실제로 1패스에서
+    법령 문서가 통째로 0행 적재됐다. 반대로 별표7은 공백이 아예 없이 추출된다.
+    양쪽 다 공백을 지우고 비교하면 해결된다.
+    """
+    return _WHITESPACE.sub("", text)
+
+
 def _check_citation(draft: ExtractedDraft, chunks: list) -> list[str]:
-    quote = draft["fields"]["legal_basis"]["quote"].strip()
+    quote = _compact(draft["fields"]["legal_basis"]["quote"])
     if not quote:
         return ["인용미확인"]
     for chunk in chunks:
-        if quote in chunk["content"]:
+        if quote in _compact(chunk["content"]):
             return []
     return ["인용미확인"]
 
@@ -385,11 +407,11 @@ def _check_citation_c(draft: ExtractedDraft, chunks: list) -> list[str]:
     if checks:
         return checks
 
-    quote = draft["fields"]["advertising_basis"]["quote"].strip()
+    quote = _compact(draft["fields"]["advertising_basis"]["quote"])
     if not quote:
         return ["인용미확인"]
     for chunk in chunks:
-        if quote in chunk["content"]:
+        if quote in _compact(chunk["content"]):
             return []
     return ["인용미확인"]
 
