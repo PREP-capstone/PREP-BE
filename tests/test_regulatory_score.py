@@ -91,9 +91,41 @@ def test_validator_still_rejects_low_weight_fail_confirmed() -> None:
     draft = {
         "fields": {
             "type": "PROHIBITED_ACTION",
-            "keyword": "기록",
+            "keyword": "처방",
             "weight": 2,
             "verdict": "FAIL_CONFIRMED",
         }
     }
     assert _check_fail_confirmed_condition(draft) == ["값오류"]
+
+
+@pytest.mark.parametrize("keyword", ["자가 측정", "진단·치료", "치료법을 피드백", "모니터링"])
+def test_validator_rejects_non_pharmacy_fail_confirmed(keyword: str) -> None:
+    """약무행위가 아닌 키워드는 weight 4로 FAIL_CONFIRMED를 받을 수 없다.
+
+    완화 조건을 `PROHIBITED_ACTION AND weight>=4`로 넓게 뒀더니 LLM이 이런 표현까지
+    FAIL_CONFIRMED로 발급해 적재분 전부가 3점(높음)으로 쏠렸다. 그 회귀를 막는 가드다.
+    """
+    draft = {
+        "fields": {
+            "type": "PROHIBITED_ACTION",
+            "keyword": keyword,
+            "weight": 4,
+            "verdict": "FAIL_CONFIRMED",
+        }
+    }
+    assert _check_fail_confirmed_condition(draft) == ["값오류"]
+
+
+@pytest.mark.parametrize("keyword", ["처방", "맞춤형 영양제 처방", "복약지도", "투약 안내"])
+def test_validator_accepts_pharmacy_compound_keywords(keyword: str) -> None:
+    """복합어로 등장하는 약무행위도 인정한다 — 애초에 이걸 잡으려고 시딩했다."""
+    draft = {
+        "fields": {
+            "type": "PROHIBITED_ACTION",
+            "keyword": keyword,
+            "weight": 4,
+            "verdict": "FAIL_CONFIRMED",
+        }
+    }
+    assert _check_fail_confirmed_condition(draft) == []

@@ -35,12 +35,11 @@ sys.path.insert(0, str(ROOT))
 from app.db.models import GateKeyword, RuleVersion
 from app.db.session import AsyncSessionLocal
 
-PHARMACY_KEYWORDS = [
-    {"keyword": "처방", "weight": 4},
-    {"keyword": "조제", "weight": 4},
-    {"keyword": "복약지도", "weight": 4},
-    {"keyword": "투약", "weight": 4},
-]
+from app.pipeline.pharmacy_actions import PHARMACY_ACTION_KEYWORDS
+
+# 키워드 목록은 app/pipeline/pharmacy_actions.py가 단일 출처다 — validate.py의
+# FAIL_CONFIRMED 인정 범위와 어긋나면 시드가 검증을 통과하지 못한다.
+PHARMACY_KEYWORDS = [{"keyword": keyword, "weight": 4} for keyword in PHARMACY_ACTION_KEYWORDS]
 
 COMMON_FIELDS = {
     "type": "PROHIBITED_ACTION",

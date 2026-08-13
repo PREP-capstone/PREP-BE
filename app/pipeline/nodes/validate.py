@@ -18,6 +18,7 @@ from app.pipeline.gate_matrix_table import (
     is_invasive_hardcheck,
     needs_invasive_review,
 )
+from app.pipeline.pharmacy_actions import is_pharmacy_action
 from app.pipeline.state import ExtractedDraft, PipelineState, ValidationResult
 
 _TYPE_ENUM = {"DISEASE", "PROHIBITED_ACTION", "DOCTOR_REPLACEMENT"}
@@ -180,10 +181,14 @@ def _check_fail_confirmed_condition(draft: ExtractedDraft) -> list[str]:
 
     - type=DOCTOR_REPLACEMENT: 의사 진단·처방 대체는 무조건 의료행위
     - weight=5: 고위해도 5요소 직접 해당
-    - type=PROHIBITED_ACTION AND weight>=4: 무면허 약무행위(처방·조제·복약지도) 반영
-      (2026-08-12 C안 확정). weight 5의 정의를 "고위해도 5요소 전용"으로 유지한 채
-      regulatory_score 3점을 주기 위해 verdict 쪽으로 표현하기로 했으므로, 검증도
-      같이 넓혀야 시드와 파이프라인 산출물이 같은 모양이 된다.
+    - **약무행위 키워드** AND type=PROHIBITED_ACTION AND weight>=4 (2026-08-12 C안):
+      weight 5의 정의를 "고위해도 5요소 전용"으로 유지한 채 regulatory_score 3점을 주기 위해
+      verdict 쪽으로 표현하기로 했으므로, 검증도 같이 열어야 시드와 파이프라인 산출물이
+      같은 모양이 된다.
+
+      단 범위는 화이트리스트로 좁힌다. 처음엔 `PROHIBITED_ACTION AND weight>=4`로 넓게
+      열었는데, LLM이 "자가 측정"·"진단·치료"까지 FAIL_CONFIRMED로 발급해 적재분 전부가
+      3점(높음)으로 쏠렸다. 예외는 약무행위에만 준다.
     """
     fields = draft["fields"]
     if fields["verdict"] != "FAIL_CONFIRMED":
@@ -192,7 +197,11 @@ def _check_fail_confirmed_condition(draft: ExtractedDraft) -> list[str]:
         return []
     if fields["weight"] == 5:
         return []
-    if fields["type"] == "PROHIBITED_ACTION" and fields["weight"] >= 4:
+    if (
+        is_pharmacy_action(fields.get("keyword"))
+        and fields["type"] == "PROHIBITED_ACTION"
+        and fields["weight"] >= 4
+    ):
         return []
     return ["값오류"]
 
