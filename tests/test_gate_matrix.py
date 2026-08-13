@@ -180,3 +180,42 @@ def test_review_valve_requires_same_gate_as_hardcheck(
 ) -> None:
     """검수 대기도 생체지표+기기연동 조합에서만 발동한다 — 무관한 조문을 끌어오지 않는다."""
     assert needs_invasive_review(data_type, acquire_method, False, True) is False
+
+
+# ---- acquire_method 저장 조건 (§3.2: 하드체크 오버라이드 전용 필드) ----
+
+
+def _stored_acquire_method(
+    data_type: str, acquire_method: str | None, invasive_signal: bool, keyword_hit: bool
+) -> str | None:
+    """extract_b의 저장 조건을 그대로 재현한다."""
+    fired = is_invasive_hardcheck(data_type, acquire_method, invasive_signal) or (
+        needs_invasive_review(data_type, acquire_method, invasive_signal, keyword_hit)
+    )
+    return acquire_method if fired else None
+
+
+def test_acquire_method_stored_only_when_hardcheck_fires() -> None:
+    assert _stored_acquire_method("생체지표", "기기연동", True, False) == "기기연동"
+
+
+def test_acquire_method_stored_when_review_fires() -> None:
+    assert _stored_acquire_method("생체지표", "기기연동", False, True) == "기기연동"
+
+
+@pytest.mark.parametrize(
+    ("data_type", "acquire_method"),
+    [
+        ("생체지표", "단순기록"),
+        ("생체지표", "수동입력"),
+        ("생체지표", "OS연동"),
+        ("라이프스타일", "기기연동"),
+        ("라이프스타일", "수동입력"),
+    ],
+)
+def test_acquire_method_blank_for_ordinary_combos(data_type: str, acquire_method: str) -> None:
+    """발동하지 않는 일반 조합은 비워둔다.
+
+    무조건 저장하면 생체지표×단순기록 같은 평범한 칸이 획득방법만 다른 중복 행으로 쌓인다.
+    """
+    assert _stored_acquire_method(data_type, acquire_method, False, False) is None

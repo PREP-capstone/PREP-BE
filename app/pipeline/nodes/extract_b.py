@@ -191,12 +191,21 @@ async def extract_B(state: PipelineState) -> dict:
             invasive_signal = item["invasive_signal"]
             keyword_hit = detect_invasive(chunk["content"])
 
+            hardcheck_fired = is_invasive_hardcheck(data_type, acquire_method, invasive_signal)
+            review_fired = needs_invasive_review(
+                data_type, acquire_method, invasive_signal, keyword_hit
+            )
+            # §3.2: acquire_method는 "침습적 하드체크 오버라이드 전용 필드"이고 해당 없는 일반
+            # 조합은 비워둔다. 무조건 저장하면 생체지표×단순기록 같은 평범한 칸이 획득방법만
+            # 다른 중복 행으로 쌓인다. 실제로 판정을 바꾼 경우에만 남긴다.
+            stored_acquire_method = acquire_method if (hardcheck_fired or review_fired) else None
+
             # 침습적 하드체크는 6칸 표 조회보다 **먼저** 적용된다 — 걸리면 function_type과
             # 표 조회 결과에 관계없이 FAIL로 오버라이드한다 (db_구축_설계서.md §3.2).
-            if is_invasive_hardcheck(data_type, acquire_method, invasive_signal):
+            if hardcheck_fired:
                 verdict = HARDCHECK_VERDICT
                 exemption_note = None
-            elif needs_invasive_review(data_type, acquire_method, invasive_signal, keyword_hit):
+            elif review_fired:
                 # 코드는 침습 신호를 잡았는데 LLM은 아니라고 한 불일치. detect_invasive는 청크
                 # 전체를 훑어 정밀도가 낮으므로 FAIL로 확정하지 않고 검수 대기로 뺀다.
                 # TODO(human_review): interrupt 연결되면 CONDITIONAL 대신 관리자 검수로 보낼 것.
@@ -222,7 +231,7 @@ async def extract_B(state: PipelineState) -> dict:
                 "function_type": function_type,
                 "verdict": verdict,
                 "exemption_note": exemption_note,
-                "acquire_method": acquire_method,
+                "acquire_method": stored_acquire_method,
                 # gate_matrix에 저장되는 컬럼은 아니지만, auto_validate가 하드체크 오버라이드를
                 # 그대로 재현해 검증할 수 있도록 draft에 실어 보낸다.
                 "invasive_signal": invasive_signal,
