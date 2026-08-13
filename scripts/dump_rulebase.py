@@ -173,10 +173,14 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
             ]:
                 pairs = (
                     await session.execute(
-                        select(column, func.count()).group_by(column).order_by(column)
+                        select(column, func.count())
+                        .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
+                        .where(RuleVersion.status == "active")
+                        .group_by(column)
+                        .order_by(column)
                     )
                 ).all()
-                print_distribution(label, [(p[0], p[1]) for p in pairs])
+                print_distribution(f"{label} (active만)", [(p[0], p[1]) for p in pairs])
 
         # ---- gate_matrix ----
         if stage_filter in (None, "B"):
@@ -250,10 +254,14 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
             ]:
                 pairs = (
                     await session.execute(
-                        select(column, func.count()).group_by(column).order_by(column)
+                        select(column, func.count())
+                        .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
+                        .where(RuleVersion.status == "active")
+                        .group_by(column)
+                        .order_by(column)
                     )
                 ).all()
-                print_distribution(label, [(p[0], p[1]) for p in pairs])
+                print_distribution(f"{label} (active만)", [(p[0], p[1]) for p in pairs])
 
         emit()
 
