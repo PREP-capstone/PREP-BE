@@ -149,14 +149,19 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
         # ---- gate_keywords ----
         if stage_filter in (None, "A"):
             rows = (
-                await session.execute(select(GateKeyword).order_by(GateKeyword.keyword))
-            ).scalars().all()
+                await session.execute(
+                    select(GateKeyword, RuleVersion.version, RuleVersion.status)
+                    .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
+                    .order_by(RuleVersion.status, GateKeyword.keyword)
+                )
+            ).all()
             print_table(
                 "gate_keywords (Stage A)",
-                ["keyword", "type", "category", "focus", "verdict", "w"],
+                ["keyword", "type", "category", "focus", "verdict", "w", "ver", "status"],
                 [
-                    [r.keyword, r.type, r.keyword_category, r.data_type_focus, r.verdict, r.weight]
-                    for r in rows
+                    [r.keyword, r.type, r.keyword_category, r.data_type_focus, r.verdict, r.weight,
+                     version, status]
+                    for r, version, status in rows
                 ],
                 max_width,
             )
@@ -177,9 +182,11 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
         if stage_filter in (None, "B"):
             rows = (
                 await session.execute(
-                    select(GateMatrix).order_by(GateMatrix.data_type, GateMatrix.function_type)
+                    select(GateMatrix, RuleVersion.version, RuleVersion.status)
+                    .join(RuleVersion, RuleVersion.rule_version_id == GateMatrix.rule_version_id)
+                    .order_by(RuleVersion.status, GateMatrix.data_type, GateMatrix.function_type)
                 )
-            ).scalars().all()
+            ).all()
             print_table(
                 "gate_matrix (Stage B)",
                 [
@@ -190,6 +197,8 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
                     "acquire",
                     "legal_basis_doc",
                     "article",
+                    "ver",
+                    "status",
                 ],
                 [
                     [
@@ -200,8 +209,10 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
                         r.acquire_method,
                         r.legal_basis_doc,
                         r.legal_basis_article,
+                        version,
+                        status,
                     ]
-                    for r in rows
+                    for r, version, status in rows
                 ],
                 max_width,
             )
@@ -224,8 +235,10 @@ async def dump(stage_filter: str | None, max_width: int) -> None:
                         r.advertising_score,
                         r.legal_basis_doc,
                         r.legal_basis_article,
+                        version,
+                        status,
                     ]
-                    for r in rows
+                    for r, version, status in rows
                 ],
                 max_width,
             )
