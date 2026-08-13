@@ -36,14 +36,24 @@ _NUM_HEADING = re.compile(r"(?<![\d.)])[1-9]\d?\.\s*(?=[가-힣])")
 # 법령 조문 헤딩은 제목 괄호를 동반한다: 제2조(정의). 괄호를 요구해야 본문 인용과 구분된다.
 _ARTICLE_HEADING = re.compile(r"제\s*\d+\s*조(?:의\s*\d+)?(?=\s*\()")
 _CHAPTER_HEADING = re.compile(r"제\s*\d+\s*장(?=\s)")
-# 별표 항목: 제1호 ~ 제18호
+# 별표 항목: "제1호" 표기와 "1." 표기를 모두 받는다.
+# 실제 별표7 원문은 "제1호"가 아니라 "1.의료기기의…" 형식이었다.
 _ITEM_HEADING = re.compile(r"제\s*\d+\s*호")
+# 별표 안에서는 "N."이 곧 항목 번호라 앞 글자를 따지지 않는다. `(?<!\d)`만 둬서 "18."을
+# "8."로 쪼개는 것만 막는다. _NUM_HEADING의 `(?<![\d.)])`를 그대로 쓰면 ")1."(제1호)과
+# "다.7."(제7호)처럼 앞 항목이 괄호·마침표로 끝난 경우를 놓친다.
+_ANNEX_ITEM_HEADING = re.compile(r"(?<!\d)[1-9]\d?\.\s*(?=[가-힣])")
+# 별표 문서 표식: "[별표 7]". **제목 위치에 있을 때만** 별표 문서로 본다.
+# 다른 지침서도 본문에서 "[별표 7]"을 인용하므로(모바일앱지침은 2752번째 글자에 등장),
+# 위치를 따지지 않으면 일반 지침서가 별표로 오분류돼 문단이 잘게 부서진다.
+_ANNEX_MARKER = re.compile(r"\[\s*별표")
+_ANNEX_TITLE_WINDOW = 200
 
 # 모드별 (레벨, 패턴). 레벨이 작을수록 상위다.
 _MODES = {
     "guideline": [(1, _ROMAN_HEADING), (2, _NUM_HEADING)],
     "statute": [(1, _CHAPTER_HEADING), (2, _ARTICLE_HEADING)],
-    "annex": [(1, _ITEM_HEADING)],
+    "annex": [(1, _ITEM_HEADING), (1, _ANNEX_ITEM_HEADING)],
 }
 
 
@@ -60,6 +70,11 @@ def _detect_mode(text: str) -> str:
     지침서(로마숫자 목차)와 법령(제N조)은 같은 문자열을 정반대 의미로 쓴다 — 지침서의 `제2조`는
     인용이고, 법령의 `제2조(정의)`는 헤딩이다. 문서 유형을 잘못 잡으면 조용히 오분할된다.
     """
+    # 별표 표식을 가장 먼저 본다. 별표 본문에도 로마숫자·조문 인용이 섞일 수 있어
+    # 뒤로 미루면 다른 모드로 잘못 잡힌다(별표7이 실제로 guideline으로 분류됐었다).
+    annex_marker = _ANNEX_MARKER.search(text)
+    if annex_marker and annex_marker.start() < _ANNEX_TITLE_WINDOW:
+        return "annex"
     if len(_ROMAN_HEADING.findall(text)) >= 3:
         return "guideline"
     if len(_ARTICLE_HEADING.findall(text)) >= 3:
