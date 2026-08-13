@@ -6,6 +6,7 @@
 from app.pipeline.nodes.validate import (
     _check_avoidance_fields,
     _check_citation,
+    _check_citation_c,
     _check_derived_verdict,
     _check_enums_b,
     _check_required_fields_c,
@@ -182,3 +183,48 @@ def test_citation_still_rejects_fabricated_quote() -> None:
         "document_id": "d", "article": "제23조", "quote": "이 법은 2030년부터 시행한다",
     })}
     assert _check_citation(draft, [chunk]) == ["인용미확인"]
+
+
+# ---- advertising_score=0("해당 없음")일 때 advertising_basis.quote 요구 면제 ----
+# 회귀: 실제 약사법 추출("조현병 조제", advertising_score=0)이 quote=""라는 이유로
+# 전량 필드누락 탈락했다. 0점은 인용할 별표7 항목 자체가 없는 게 정상이다(2026-08-14).
+
+
+def test_stage_c_zero_ad_score_does_not_require_quote() -> None:
+    draft = {
+        "fields": stage_c_fields(
+            advertising_score=0,
+            advertising_basis={"attachment7_item": 0, "quote": ""},
+        )
+    }
+    assert _check_required_fields_c(draft) == []
+
+
+def test_stage_c_nonzero_ad_score_still_requires_quote() -> None:
+    draft = {
+        "fields": stage_c_fields(
+            advertising_score=2,
+            advertising_basis={"attachment7_item": 3, "quote": ""},
+        )
+    }
+    assert _check_required_fields_c(draft) == ["필드누락"]
+
+
+def test_stage_c_citation_skips_ad_basis_when_score_zero() -> None:
+    draft = {
+        "fields": stage_c_fields(
+            advertising_score=0,
+            advertising_basis={"attachment7_item": 0, "quote": ""},
+        )
+    }
+    assert _check_citation_c(draft, [{"content": CHUNK_TEXT}]) == []
+
+
+def test_stage_c_citation_still_checked_when_score_nonzero() -> None:
+    draft = {
+        "fields": stage_c_fields(
+            advertising_score=1,
+            advertising_basis={"attachment7_item": 12, "quote": "지어낸 문장"},
+        )
+    }
+    assert _check_citation_c(draft, [{"content": CHUNK_TEXT}]) == ["인용미확인"]

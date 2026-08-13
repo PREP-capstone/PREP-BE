@@ -378,7 +378,10 @@ def _check_required_fields_c(draft: ExtractedDraft) -> list[str]:
     for legal_field in ("document_id", "article", "quote"):
         if not legal_basis.get(legal_field):
             return ["필드누락"]
-    if not fields["advertising_basis"].get("quote"):
+    # advertising_basis.quote는 별표7 항목 인용이다 — advertising_score=0("해당 없음")이면
+    # 인용할 항목 자체가 없다. 실제 문서 추출에서 이 조합(예: "조현병 조제")이 나왔는데
+    # quote를 무조건 요구해 전량 필드누락으로 탈락하던 버그였다(2026-08-14).
+    if fields["advertising_score"] > 0 and not fields["advertising_basis"].get("quote"):
         return ["필드누락"]
     return []
 
@@ -406,6 +409,9 @@ def _check_citation_c(draft: ExtractedDraft, chunks: list) -> list[str]:
     checks = _check_citation(draft, chunks)  # legal_basis.quote
     if checks:
         return checks
+
+    if draft["fields"]["advertising_score"] == 0:
+        return []  # 해당 없음 — 인용할 별표7 항목이 없다
 
     quote = _compact(draft["fields"]["advertising_basis"]["quote"])
     if not quote:
