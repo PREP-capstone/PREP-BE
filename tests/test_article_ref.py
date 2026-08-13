@@ -44,3 +44,31 @@ def test_normalize_article_is_idempotent() -> None:
 @pytest.mark.parametrize("empty", [None, ""])
 def test_normalize_article_passes_through_empty(empty) -> None:
     assert normalize_article(empty) == empty
+
+
+# ---- 법령 장(章) 접두어 제거 ----
+# 회귀: 약사법 실전 추출에서 LLM이 청킹 내부 계층("제1장.제2조")을 그대로 베껴 써서
+# "질병 진단"/"질병 치료"/"질병 예방" 3건이 §1.5.1 형태(제2조)가 아닌 "제1장.제2조"로
+# 발행됐다(2026-08-14). §1.5.1 표(의료기기법 | 제2조, 제24조)는 장 접두어가 없다.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("제1장.제2조", "제2조"),
+        ("제5장.제27조의2", "제27조의2"),
+        ("제4장.제44조", "제44조"),
+    ],
+)
+def test_normalize_article_strips_chapter_prefix(raw: str, expected: str) -> None:
+    assert normalize_article(raw) == expected
+
+
+def test_normalize_article_keeps_bare_chapter_reference() -> None:
+    """뒤에 아무것도 없는 "제N장" 단독 값은(드물지만) 건드리지 않는다."""
+    assert normalize_article("제5장") == "제5장"
+
+
+def test_normalize_article_keeps_addenda_prefix() -> None:
+    """부칙은 장이 아니다 — 본문과 조문 번호가 겹치므로 접두어를 지우면 안 된다."""
+    assert normalize_article("부칙.제1조") == "부칙.제1조"

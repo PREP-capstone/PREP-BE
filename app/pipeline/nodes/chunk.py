@@ -20,7 +20,7 @@
 import re
 import uuid
 
-from app.pipeline.article_ref import normalize_article
+from app.pipeline.article_ref import _normalize_symbols
 from app.pipeline.state import Chunk, PipelineState
 
 _ROMAN = "ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ"
@@ -126,7 +126,9 @@ def chunk_document(state: PipelineState) -> dict:
         if not content:
             continue
 
-        article_number = normalize_article(".".join(stack[d] for d in sorted(stack)))
+        # 기호만 정리한다(장 접두어는 유지) — 최종 인용용 정리는 extract_a/b/c.py가
+        # LLM 출력에 normalize_article()을 적용할 때 한다 (article_ref.py 참조).
+        article_number = _normalize_symbols(".".join(stack[d] for d in sorted(stack)))
         chunks.append(_build_chunk(state, article_number=article_number, content=content))
 
     return {"chunks": chunks}

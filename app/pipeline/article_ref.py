@@ -8,7 +8,11 @@
 - 로마숫자: 유니코드 로마숫자(Ⅲ, U+2162)를 ASCII 대문자로 통일 (`Ⅲ` → `III`)
 - 구분자: 마침표 `.`로 통일, 끝에 마침표 없음
 - 공백: 제거하되 구분자가 없던 자리는 마침표로 대체 (`부록2 Q11` → `부록2.Q11`)
-- 조문은 `제23조`, 별표는 `별표7.제8호` 형태 유지
+- 조문은 `제23조`, 별표는 `별표7.제8호` 형태 유지 — **법령(statute) 조문은 장(章) 접두어를
+  붙이지 않는다.** §1.5.1 예시 표(`의료기기법 | 제2조, 제24조`)가 이미 이 형태다.
+  chunk.py의 청크 계층("제1장.제2조")은 청킹 내부용이고, 최종 인용 표기는 아니다.
+  약사법 실전 추출에서 LLM이 조문 위치 힌트를 그대로 베껴 "제1장.제2조"를 낸 사례가
+  있어(2026-08-14), 코드에서 장 접두어를 무조건 제거한다.
 """
 
 import re
@@ -24,15 +28,36 @@ _ROMAN_TRANSLATION = {
 # "Ⅲ. 2. 가." → "III.2.가.", "부록2 Q11" → "부록2.Q11"
 _SEPARATOR_RUN = re.compile(r"[\s.]+")
 
+# 법령 조문의 장(章) 접두어. 청킹 내부 계층("제1장.제2조")을 LLM이 그대로 베껴 쓰는
+# 경우가 있어 코드에서 제거한다. 뒤에 뭔가 이어질 때만 지운다 — "제5장" 단독 값은
+# (장 전체를 가리키는 드문 케이스) 건드리지 않는다.
+_CHAPTER_PREFIX = re.compile(r"^제\d+장\.(?=.)")
 
-def normalize_article(article: str | None) -> str | None:
-    """조문 표기를 §1.5.1 규칙대로 정규화한다. None/빈 문자열은 그대로 통과시킨다."""
-    if not article:
-        return article
 
+def _normalize_symbols(article: str) -> str:
+    """로마숫자·구분자·공백만 정리한다. 장 접두어는 그대로 둔다.
+
+    chunk.py가 내부 계층 라벨("제1장.제2조")을 만들 때 쓴다 — 이 값은 최종 인용이
+    아니라 LLM 프롬프트 힌트일 뿐이라 장 정보를 남겨둬야 한다(§4.6 법령 개정 대응 등
+    상위 구조 추적에 쓰일 수 있다).
+    """
     normalized = article.translate(_ROMAN_TRANSLATION)
     normalized = _SEPARATOR_RUN.sub(".", normalized)
     return normalized.strip(".")
+
+
+def normalize_article(article: str | None) -> str | None:
+    """조문 표기를 §1.5.1 규칙대로 정규화한다. None/빈 문자열은 그대로 통과시킨다.
+
+    LLM이 반환한 article(extract_a/b/c.py)이나 수기 입력값(seed 스크립트)에 쓴다.
+    `_normalize_symbols`에 더해 법령 장 접두어까지 제거해 **최종 인용 표기**를 만든다.
+    """
+    if not article:
+        return article
+
+    normalized = _normalize_symbols(article)
+    normalized = _CHAPTER_PREFIX.sub("", normalized)
+    return normalized
 
 
 def build_chunk_message(chunk: dict) -> str:
