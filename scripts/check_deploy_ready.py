@@ -68,6 +68,40 @@ async def check_evidence_tables() -> CheckResult:
         )
 
 
+async def check_reference_tables() -> CheckResult:
+    table_names = [
+        "signal_config",
+        "data_difficulty",
+        "collection_difficulty",
+        "data_sensitivity",
+        "public_data_catalog",
+        "api_catalog",
+        "trend_signal_config",
+        "action_templates",
+        "mvp_strategy_templates",
+        "competitors",
+        "bm_mapping",
+    ]
+    try:
+        async with engine.connect() as connection:
+            counts = {
+                table_name: await connection.scalar(text(f"select count(*) from {table_name}"))
+                for table_name in table_names
+            }
+
+        return CheckResult(
+            name="reference_tables",
+            ok=True,
+            detail=", ".join(f"{table_name}={count}" for table_name, count in counts.items()),
+        )
+    except Exception as exc:  # noqa: BLE001 - deployment diagnostics should show missing tables or connection failures.
+        return CheckResult(
+            "reference_tables",
+            False,
+            f"{type(exc).__name__}: run alembic and seed/import scripts first if tables are missing",
+        )
+
+
 async def check_redis() -> CheckResult:
     try:
         await redis_client.ping()
@@ -112,6 +146,7 @@ async def main() -> int:
     results = [
         await check_postgres(),
         await check_evidence_tables(),
+        await check_reference_tables(),
     ]
 
     if not args.skip_redis:

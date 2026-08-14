@@ -43,12 +43,26 @@ Run from the project root after `.env` points at the RDS endpoint.
 .venv/bin/python scripts/check_deploy_ready.py --skip-chroma
 .venv/bin/alembic upgrade head
 .venv/bin/python scripts/import_evidence_csv.py
+.venv/bin/python scripts/seed_reference_data.py
+.venv/bin/python scripts/import_postgres_seed_data.py
 .venv/bin/python scripts/embed_evidence_chunks.py
 .venv/bin/python scripts/check_deploy_ready.py
 ```
 
-The first readiness check can fail on `evidence_tables` before migrations and
-CSV import have run. After bootstrapping, all checks should pass.
+The first readiness check can fail on `evidence_tables` and `reference_tables`
+before migrations, RAG CSV import, reference seed import, and Postgres catalog import have run. After bootstrapping,
+all checks should pass.
+
+Postgres catalog seed workbooks are read from `data/postgres/`:
+
+```bash
+.venv/bin/python scripts/import_postgres_seed_data.py --dry-run
+.venv/bin/python scripts/import_postgres_seed_data.py
+```
+
+This imports `data_sensitivity`, `public_data_catalog`, `api_catalog`,
+`trend_signal_config`, `action_templates`, `mvp_strategy_templates`,
+`competitors`, and `bm_mapping`.
 
 ## ChromaDB Deployment
 
