@@ -7,7 +7,7 @@
 import pytest
 from sqlalchemy import func, select
 
-from app.db.models import GateKeyword, GateMatrix, RuleVersion
+from app.db.models import CorrectionRule, GateKeyword, GateMatrix, RuleVersion
 from app.db.session import AsyncSessionLocal
 from app.pipeline.nodes.publish import publish
 
@@ -118,3 +118,61 @@ async def test_inheritance_does_not_leak_across_stages(restore_db) -> None:
             .where(RuleVersion.status == "active")
         )
     assert active_matrix_rows >= 1, "Stage A 발행이 Stage B의 active 행을 날렸다"
+
+
+def correction_draft(derived_from_keyword_id: str) -> dict:
+    legal_basis = {"document_id": "doc-c", "article": "제27조", "quote": QUOTE}
+    return {
+        "stage": "C",
+        "fields": {
+            "risky_text": "테스트키워드1 진단",
+            "safe_text": "테스트키워드1 확인",
+            "regulatory_score": 2,
+            "advertising_score": 0,
+            "derived_from_keyword_id": derived_from_keyword_id,
+            "legal_basis": legal_basis,
+        },
+        "legal_basis": legal_basis,
+    }
+
+
+async def _correction_rule_derived_id(risky_text: str) -> str:
+    async with AsyncSessionLocal() as session:
+        return await session.scalar(
+            select(CorrectionRule.derived_from_keyword_id)
+            .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
+            .where(RuleVersion.status == "active", CorrectionRule.risky_text == risky_text)
+        )
+
+
+async def test_stage_a_republish_reconnects_derived_keyword_id(restore_db) -> None:
+    """D-12 회귀: Stage A를 승계 재발행하면 keyword_id가 새로 발급되는데,
+    이미 published된 correction_rules.derived_from_keyword_id가 낡은(곧 deprecated될)
+    행을 계속 가리키면 안 된다 — 최신 active 키워드를 가리키도록 함께 갱신돼야 한다.
+    """
+    await publish({"drafts": [keyword_draft("테스트키워드1")], "rule_version_id": None})
+    async with AsyncSessionLocal() as session:
+        original_keyword_id = await session.scalar(
+            select(GateKeyword.keyword_id)
+            .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
+            .where(RuleVersion.status == "active", GateKeyword.keyword == "테스트키워드1")
+        )
+
+    await publish(
+        {"drafts": [correction_draft(str(original_keyword_id))], "rule_version_id": None}
+    )
+    assert str(await _correction_rule_derived_id("테스트키워드1 진단")) == str(original_keyword_id)
+
+    # Stage A 재발행 — "테스트키워드1"이 승계되며 keyword_id가 새로 발급된다.
+    await publish({"drafts": [keyword_draft("테스트키워드2")], "rule_version_id": None})
+
+    async with AsyncSessionLocal() as session:
+        new_keyword_id = await session.scalar(
+            select(GateKeyword.keyword_id)
+            .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
+            .where(RuleVersion.status == "active", GateKeyword.keyword == "테스트키워드1")
+        )
+    assert new_keyword_id != original_keyword_id, "승계 시 keyword_id가 재발급되지 않았다(전제 확인)"
+
+    reconnected = await _correction_rule_derived_id("테스트키워드1 진단")
+    assert str(reconnected) == str(new_keyword_id), "낡은 keyword_id를 계속 가리키고 있다"
