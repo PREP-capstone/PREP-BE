@@ -7,6 +7,11 @@ import json
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.pipeline.article_ref import (
+    ARTICLE_NOTATION_PROMPT,
+    build_chunk_message,
+    normalize_article,
+)
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -70,6 +75,18 @@ _SYSTEM_PROMPT = """당신은 의료기기 판단 가이드/법령 조문에서 
 주어진 조문 텍스트를 읽고, 의료기기 해당 여부 판단에 쓰일 키워드 후보를 0개 이상 추출하세요.
 관련 키워드가 없으면 keywords를 빈 배열로 반환하세요.
 
+## type 분류 기준 (db_구축_설계서.md §3.2)
+키워드가 **무엇인지**에 따라 고르세요. 아래 셋 중 하나입니다.
+| type | 정의 | 예시 키워드 |
+|---|---|---|
+| DISEASE | 질병명·생체지표 등 **명사**가 그대로 키워드인 경우 | "당뇨", "부정맥", "혈당", "혈압", "심전도" |
+| PROHIBITED_ACTION | 면허 없이 하면 안 되는 **행위**를 가리키는 경우 | "진단", "처방", "조제", "치료법 제공" |
+| DOCTOR_REPLACEMENT | 의사의 진단·처방을 **대체한다**고 명시한 경우 | "전문의 없이", "의사 상담 없이 처방" |
+
+⚠️ 셋 중 PROHIBITED_ACTION만 반복해서 쓰지 마세요. 조문에서 뽑히는 키워드는 대부분
+질병명·생체지표(DISEASE)이거나 판단 대상 데이터입니다. 행위를 가리키는 키워드일 때만
+PROHIBITED_ACTION을 고르고, 의사 대체를 명시한 경우에만 DOCTOR_REPLACEMENT를 고르세요.
+
 ## keyword_category 분류 기준
 | keyword_category | 정의 | 의료기기법 제2조 대응 목적 | 예시 키워드 |
 |---|---|---|---|
@@ -79,6 +96,38 @@ _SYSTEM_PROMPT = """당신은 의료기기 판단 가이드/법령 조문에서 
 | OTHER | 위 세 가지에 해당하지 않는 경우 | — | — |
 
 TREATMENT는 의료기기법 제2조가 나열한 치료·경감·처치·예방·상해 및 장애의 보정 5가지 목적을 하나로 묶은 범주입니다.
+
+⚠️ **의료기기법 제2조의 "질병을 진단·치료·경감·처치 또는 예방"에서 DIAGNOSIS는 `진단` 하나뿐입니다.**
+`치료`·`경감`·`처치`·`예방`은 전부 TREATMENT입니다. 문장 전체가 진단을 언급한다고 해서
+뒤따르는 치료·경감·처치·예방까지 DIAGNOSIS로 묶지 마세요.
+
+## keyword는 "짧고 매칭 가능한 표현"이어야 합니다
+추출된 keyword는 나중에 **사용자가 쓴 서비스 설명 안에 그대로 들어 있는지**를 부분문자열로
+검사하는 데 쓰입니다. 그래서 두 방향 모두 실패합니다.
+- 너무 길면(조문 구절을 통째로 옮긴 경우) 어떤 설명과도 매칭되지 않습니다
+- 너무 잘게 쪼개면 근거·인용이 똑같은 룰만 여러 건 쌓입니다
+
+**목표: 2~10자 내외의, 사람이 서비스 설명에 실제로 쓸 법한 표현.**
+
+나열형 정의 문장은 아래처럼 처리하세요.
+
+| 조문 | ❌ 이렇게 하지 마세요 | ✅ 이렇게 하세요 |
+|---|---|---|
+| "질병을 진단·치료·경감·처치 또는 예방할 목적으로 사용되는 제품" | `진단`/`치료`/`경감`/`처치`/`예방` 5건으로 분해 (근거·인용이 전부 동일) | `질병 진단`(DIAGNOSIS), `질병 치료`(TREATMENT) 2건 |
+| 〃 | `진단ㆍ치료ㆍ경감ㆍ처치 또는 예방` 한 덩어리 (너무 길어 매칭 불가) | 〃 |
+
+즉 **의미 단위로 묶되 표현은 짧게** 가져가고, 진단 계열과 치료 계열은 keyword_category가 다르므로
+각각 따로 뽑으세요.
+
+### 좁은 예외 — 약무행위 (약사법 근거)
+**아래 4개 낱말이 실제로 등장할 때만** 적용하는 예외입니다: `처방` · `조제` · `복약지도` · `투약`
+(예: "맞춤형 영양제 처방"). 이 경우에만 `type=PROHIBITED_ACTION`, `keyword_category=TREATMENT`로
+분류하세요. 약무행위는 별도 축을 만들지 않고 regulatory_score에 흡수하기로 확정돼, 여기서
+잡히지 않으면 0점으로 통과하기 때문입니다.
+
+⚠️ 이 예외를 넓게 적용하지 마세요. "자가 측정", "진단·치료", "모니터링"처럼 약을 다루지 않는
+표현은 약무행위가 **아닙니다** — 위의 일반 type/keyword_category 기준으로 판단하세요.
+
 DIAGNOSIS와 TREATMENT 사이에 weight 차등은 없습니다 — keyword_category는 weight/verdict 판정과 무관하게 관리자 검수 편의를 위한 분류일 뿐이며, 둘 다 아래 weight 척도·FAIL_CONFIRMED 기준을 동일하게 따릅니다.
 
 ## weight 척도 (1~5, 정수만)
@@ -100,9 +149,10 @@ DIAGNOSIS와 TREATMENT 사이에 weight 차등은 없습니다 — keyword_categ
 - CONDITIONAL 방향: "단,", "다만,", "경우에 한하여"
 
 ## legal_basis
-- article: 이 키워드 판단의 근거가 되는 조문 번호/제목 (예: "Ⅲ.2.가", "제24조")
+- article: 이 키워드 판단의 근거가 되는 조문 번호/제목 (예: "III.2.가", "제24조")
 - quote: 판단 근거가 되는 원문 문장을 그대로 인용 (반드시 아래 조문 텍스트 안에 실제로 존재하는 문장이어야 함. 지어내지 말 것)
-"""
+
+""" + ARTICLE_NOTATION_PROMPT
 
 
 def _build_client() -> AsyncOpenAI:
@@ -119,9 +169,15 @@ async def extract_A(state: PipelineState) -> dict:
 
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
+            # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
+            # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
+            # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
+            # 검증·중복판정 단계가 흡수한다.
+            temperature=0,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": chunk["content"]},
+                {"role": "user", "content": build_chunk_message(chunk)},
             ],
             response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
         )
@@ -130,7 +186,7 @@ async def extract_A(state: PipelineState) -> dict:
         for item in parsed["keywords"]:
             legal_basis = {
                 "document_id": state["document_id"],
-                "article": item["legal_basis"]["article"],
+                "article": normalize_article(item["legal_basis"]["article"]),
                 "quote": item["legal_basis"]["quote"],
             }
             fields = {**item, "legal_basis": legal_basis}

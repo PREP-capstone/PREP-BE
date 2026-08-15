@@ -1,4 +1,8 @@
 """[4]+[5]+[5.5] Stage C 프롬프트 주입 + LLM 호출 + 파생값 계산 노드.
+
+산출 축은 `regulatory_score`(gate_keywords 조회 파생) · `advertising_score`(LLM 독립추출) **2축**이다.
+privacy_score는 2026-07-28 결정으로 런타임(판정엔진) 계산으로 이관돼 여기서 산출하지 않는다
+(db_구축_설계서.md §3.3.2). 최종 위험등급(3축 최고값) 산출도 같은 이유로 런타임 범위다.
 """
 
 import json
@@ -9,7 +13,11 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.models import GateKeyword, RuleVersion
 from app.db.session import AsyncSessionLocal
-from app.pipeline.gate_matrix_table import DATA_TYPE_ENUM
+from app.pipeline.article_ref import (
+    ARTICLE_NOTATION_PROMPT,
+    build_chunk_message,
+    normalize_article,
+)
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -35,11 +43,6 @@ _RESPONSE_SCHEMA = {
                             "required": ["attachment7_item", "quote"],
                             "additionalProperties": False,
                         },
-                        "data_type_signal": {
-                            "type": "string",
-                            "enum": ["라이프스타일", "생체지표", "NONE"],
-                        },
-                        "consent_mentioned": {"type": "boolean"},
                         "legal_basis": {
                             "type": "object",
                             "properties": {
@@ -55,8 +58,6 @@ _RESPONSE_SCHEMA = {
                         "safe_text",
                         "advertising_score",
                         "advertising_basis",
-                        "data_type_signal",
-                        "consent_mentioned",
                         "legal_basis",
                     ],
                     "additionalProperties": False,
@@ -74,10 +75,15 @@ _SYSTEM_PROMPT = """당신은 의료용 앱 판단 가이드/법령 조문에서
 
 ## risky_text 후보 힌트 (위험 표현 목록)
 - 동사(진단단계): 진단하다, 검사하다, 판별하다, 측정하다(질환 맥락)
-- 동사(치료단계): 치료하다, 처방하다, 예방하다, 개선하다, 완화하다, 처치하다, 보정하다
+- 동사(치료단계): 치료하다, 처방하다, 개선하다, 완화하다, 처치하다
 - 명사: 질병명(예: 당뇨, 암, 부정맥 등 DISEASE류 키워드), 생체지표(예: 혈당, 혈압, 심전도, 산소포화도)
 - risky_text는 이 동사×명사 결합 형태로 뽑으세요 (예: "당뇨 진단", "혈압 치료"). safe_text는 의료
   행위 표현을 웰니스 범위로 바꾼 대체 표현을 제시하세요 (예: "당뇨 진단" → "혈당 변화 확인").
+- ⚠️ **"예방하다"·"보정하다"는 위험 동사에 넣지 마세요.** 웰니스판단기준 0091-03 원문이
+  이 두 단어를 PASS(웰니스 허용) 예시로 직접 쓰고 있습니다 — "만성질환을 예방하거나
+  관리에 도움을 주기 위한 앱"(IV.2.가), "낙상 위험도 측정을 통해 보행교정이 가능하도록
+  도와주는 제품"(IV.1.나). "질병을 예방한다"·"자세를 보정한다" 같은 표현은 risky_text
+  후보로 뽑지 마세요.
 
 ## advertising_score (별표7 기반, 당신이 직접 판단하는 유일한 축)
 의료기기법 제24조제2항("누구든지")+시행규칙 제45조+별표7 기준으로 0~3점을 직접 매기세요.
@@ -87,19 +93,18 @@ _SYSTEM_PROMPT = """당신은 의료용 앱 판단 가이드/법령 조문에서
 - 1점: 암시적 방법(암시적 기사·사진·도안, 사용전후 비교암시)
 - 0점: 해당 없음
 advertising_basis.attachment7_item에는 위 기준이 해당하는 별표7 항목 번호(1~18)를, quote에는
-그 판단 근거가 되는 원문 문장을 그대로 인용하세요.
+그 판단 근거가 되는 원문 문장을 그대로 인용하세요. **0점(해당 없음)이면 attachment7_item=0,
+quote=""로 두세요** — 인용할 항목 자체가 없으므로 지어내지 마세요.
 
-## data_type_signal / consent_mentioned (원시 신호만 — 점수는 당신이 매기지 않습니다)
-risky_text가 다루는 데이터가 생체지표(혈당·혈압·심전도 등 측정값)인지 라이프스타일(식단·운동·수면
-등 자가관리 데이터)인지 무엇도 아닌지(NONE)만 표시하세요. 그리고 그 조문에 별도동의·법령근거
-(개인정보보호법 제23조제1항 단서 1·2호 등, 예: "본인의 동의를 받은 경우", "법률에서 구체적으로
-허용된 경우")에 대한 언급이 있으면 consent_mentioned=true로 표시하세요. 최종 privacy_score는
-시스템이 이 두 신호를 조합해 계산하니 점수를 직접 매기지 마세요.
+## 개인정보 민감도는 추출 대상이 아닙니다
+privacy_score는 2026-07-28 결정으로 런타임(판정엔진) 계산으로 이관됐습니다. 값이 위험표현이 아니라
+사용자가 선택한 수집 항목에서 결정되기 때문입니다. 개인정보·동의 관련 신호는 추출하지 마세요.
 
 ## legal_basis
 - article: 이 위험표현 판단의 근거가 되는 조문 번호/제목
 - quote: 판단 근거가 되는 원문 문장을 그대로 인용 (반드시 아래 조문 텍스트 안에 실제로 존재하는 문장이어야 함. 지어내지 말 것)
-"""
+
+""" + ARTICLE_NOTATION_PROMPT
 
 
 def _build_client() -> AsyncOpenAI:
@@ -117,9 +122,15 @@ async def extract_C(state: PipelineState) -> dict:
 
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
+            # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
+            # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
+            # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
+            # 검증·중복판정 단계가 흡수한다.
+            temperature=0,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": chunk["content"]},
+                {"role": "user", "content": build_chunk_message(chunk)},
             ],
             response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
         )
@@ -130,18 +141,16 @@ async def extract_C(state: PipelineState) -> dict:
             regulatory_score, derived_from_keyword_id = _derive_regulatory_score(
                 risky_text, active_keywords
             )
-            privacy_score = _derive_privacy_score(item["data_type_signal"], item["consent_mentioned"])
 
             legal_basis = {
                 "document_id": state["document_id"],
-                "article": item["legal_basis"]["article"],
+                "article": normalize_article(item["legal_basis"]["article"]),
                 "quote": item["legal_basis"]["quote"],
             }
             fields = {
                 "risky_text": risky_text,
                 "safe_text": item["safe_text"],
                 "regulatory_score": regulatory_score,
-                "privacy_score": privacy_score,
                 "advertising_score": item["advertising_score"],
                 "advertising_basis": item["advertising_basis"],
                 "derived_from_keyword_id": derived_from_keyword_id,
@@ -182,11 +191,3 @@ def _derive_regulatory_score(risky_text: str, active_keywords: list[GateKeyword]
                 best_score = score
                 best_keyword_id = str(keyword_row.keyword_id)
     return best_score, best_keyword_id
-
-
-def _derive_privacy_score(data_type_signal: str, consent_mentioned: bool) -> int:
-    if data_type_signal not in DATA_TYPE_ENUM:
-        return 0  # NONE
-    if data_type_signal == "생체지표":
-        return 2 if consent_mentioned else 3
-    return 1  # 라이프스타일
