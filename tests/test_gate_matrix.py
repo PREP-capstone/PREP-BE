@@ -130,6 +130,7 @@ def test_hardcheck_does_not_fire_on_partial_match(
         "이식형 센서를 통해 수집한다",
         "침습적 방법으로 측정하는 경우",
         "정맥 천자로 채취한 검체",
+        "피부를 침투하여 혈액을 채취하는 제품",  # 웰니스판단기준 0091-03 고위해도 예시 원문
     ],
 )
 def test_detect_invasive_matches_stratum_corneum_penetration(text: str) -> None:
@@ -146,6 +147,8 @@ def test_detect_invasive_matches_stratum_corneum_penetration(text: str) -> None:
         "비침습적 방법으로 혈당을 추정한다",  # "침습"이 부분 문자열로 들어있는 함정
         "무침습 측정 기술을 적용한다",
         "혈당 수치값을 표시하고 위험 수치일 때 경고 알람을 제공",  # 혈당≠연속혈당
+        "비침습적 및 비이식형 방법으로 측정한 혈압값을 표시한다",  # 웰니스판단기준 0091-03 원문
+        "비삽입형 센서를 사용한다",  # "삽입형"이 부분 문자열로 들어있는 함정
     ],
 )
 def test_detect_invasive_ignores_non_penetrating_cases(text: str) -> None:
