@@ -1,4 +1,14 @@
 from app.db.models.base import Base
+from app.db.models.catalog import (
+    ActionTemplate,
+    ApiCatalog,
+    BmMapping,
+    Competitor,
+    DataSensitivity,
+    MvpStrategyTemplate,
+    PublicDataCatalog,
+    TrendSignalConfig,
+)
 from app.db.models.correction_rule import CorrectionRule
 from app.db.models.difficulty import CollectionDifficulty, DataDifficulty
 from app.db.models.evidence_chunk import EvidenceChunk
@@ -10,15 +20,23 @@ from app.db.models.signal_config import SignalConfig
 from app.db.models.verb_substitution import VerbSubstitution
 
 __all__ = [
+    "ActionTemplate",
+    "ApiCatalog",
     "Base",
+    "BmMapping",
     "CollectionDifficulty",
+    "Competitor",
     "CorrectionRule",
     "DataDifficulty",
+    "DataSensitivity",
     "EvidenceChunk",
     "EvidenceDocument",
     "GateKeyword",
     "GateMatrix",
+    "MvpStrategyTemplate",
+    "PublicDataCatalog",
     "RuleVersion",
     "SignalConfig",
+    "TrendSignalConfig",
     "VerbSubstitution",
 ]
