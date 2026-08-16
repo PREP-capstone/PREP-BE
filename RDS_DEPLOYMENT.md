@@ -43,7 +43,7 @@ Run from the project root after `.env` points at the RDS endpoint.
 .venv/bin/python scripts/check_deploy_ready.py --skip-chroma
 .venv/bin/alembic upgrade head
 .venv/bin/python scripts/import_evidence_csv.py
-.venv/bin/python scripts/seed_reference_data.py
+.venv/bin/python scripts/seed_reference_tables.py
 .venv/bin/python scripts/import_postgres_seed_data.py
 .venv/bin/python scripts/embed_evidence_chunks.py
 .venv/bin/python scripts/check_deploy_ready.py

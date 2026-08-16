@@ -1,7 +1,7 @@
 """add postgres catalog seed tables
 
 Revision ID: f1c2d3e4a5b6
-Revises: e4b2a1c9d8f0
+Revises: d72baa5ee860
 Create Date: 2026-08-15 02:10:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "f1c2d3e4a5b6"
-down_revision: Union[str, Sequence[str], None] = "e4b2a1c9d8f0"
+down_revision: Union[str, Sequence[str], None] = "d72baa5ee860"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -10,30 +10,33 @@ from app.db.models.catalog import (
     TrendSignalConfig,
 )
 from app.db.models.correction_rule import CorrectionRule
+from app.db.models.difficulty import CollectionDifficulty, DataDifficulty
 from app.db.models.evidence_chunk import EvidenceChunk
 from app.db.models.evidence_document import EvidenceDocument
 from app.db.models.gate_keyword import GateKeyword
 from app.db.models.gate_matrix import GateMatrix
-from app.db.models.reference import CollectionDifficulty, DataDifficulty, SignalConfig
 from app.db.models.rule_version import RuleVersion
+from app.db.models.signal_config import SignalConfig
+from app.db.models.verb_substitution import VerbSubstitution
 
 __all__ = [
-    "Base",
-    "TrendSignalConfig",
-    "PublicDataCatalog",
-    "MvpStrategyTemplate",
-    "DataSensitivity",
-    "Competitor",
-    "BmMapping",
-    "ApiCatalog",
     "ActionTemplate",
+    "ApiCatalog",
+    "Base",
+    "BmMapping",
     "CollectionDifficulty",
+    "Competitor",
     "CorrectionRule",
     "DataDifficulty",
+    "DataSensitivity",
     "EvidenceChunk",
     "EvidenceDocument",
     "GateKeyword",
     "GateMatrix",
+    "MvpStrategyTemplate",
+    "PublicDataCatalog",
     "RuleVersion",
     "SignalConfig",
+    "TrendSignalConfig",
+    "VerbSubstitution",
 ]
