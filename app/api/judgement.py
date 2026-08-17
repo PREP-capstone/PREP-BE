@@ -51,31 +51,29 @@ _SOURCE_TO_ACQUIRE_METHOD = {
     "os_sync": "OS연동",
 }
 
-# service_actions → function_type. 여러 액션이 섞이면 가장 위험도가 높은 쪽을 채택한다
-# (db_구축_설계서.md §3.2의 "복수 조합 시 FAIL 우선" 원칙과 같은 방향).
+# 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
 _ACTION_PRIORITY: list[tuple[set[str], str]] = [
     ({"predict", "diagnose", "alert"}, "수치예측·진단"),
     ({"visualize_trend"}, "비교·추이분석"),
     ({"record"}, "단순기록"),
 ]
 
-# acquire_method 우선순위 — 기기연동이어야 침습적 하드체크가 발동하므로 가장 위험한 것을 채택.
+# 기기연동이어야 침습적 하드체크가 발동하므로 최우선.
 _ACQUIRE_METHOD_PRIORITY = ("기기연동", "OS연동", "수동입력")
+
+_ACTIVE_RULE_VERSION_IDS = (
+    select(RuleVersion.rule_version_id).where(RuleVersion.status == "active").scalar_subquery()
+)
 
 
 async def _biomarker_keywords() -> set[str]:
-    """gate_keywords의 DATA_TYPE 분류 키워드를 생체지표 판별 사전으로 재사용한다.
-
-    새 키워드 목록을 따로 만들지 않는다 — 실제 법령 문서에서 검증된 키워드가 이미
-    gate_keywords에 있고, 파이프라인이 문서를 더 넣으면 이 목록도 자동으로 늘어난다.
-    심박수·체중 등 문서에 아직 안 뽑힌 흔한 생체지표는 correction_terms.BIOMARKER_EXTRA로 보충한다
-    (Stage C가 같은 이유로 이미 쓰고 있는 목록).
-    """
+    """생체지표 판별 사전 = gate_keywords(DATA_TYPE) + BIOMARKER_EXTRA(Stage C와 공유, 미등록 지표 보충)."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(GateKeyword.keyword)
-            .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
-            .where(RuleVersion.status == "active", GateKeyword.keyword_category == "DATA_TYPE")
+            select(GateKeyword.keyword).where(
+                GateKeyword.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS),
+                GateKeyword.keyword_category == "DATA_TYPE",
+            )
         )
         return set(result.scalars().all()) | set(BIOMARKER_EXTRA)
 
@@ -168,9 +166,7 @@ async def _signal_thresholds() -> dict[str, tuple[int, int]]:
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(SignalConfig)
-                .join(RuleVersion, RuleVersion.rule_version_id == SignalConfig.rule_version_id)
-                .where(RuleVersion.status == "active")
+                select(SignalConfig).where(SignalConfig.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
     return {row.axis: (row.threshold_low, row.threshold_mid) for row in rows}
@@ -181,7 +177,7 @@ class CorrectionMatch(BaseModel):
     safe_text: str
     regulatory_score: int
     advertising_score: int
-    legal_basis: LegalBasis   
+    legal_basis: LegalBasis
     exact_phrase_match: bool
 
 
@@ -197,18 +193,11 @@ def _keyword_score(keyword_row: GateKeyword) -> int:
 
 
 async def _match_gate_keywords(service_description: str) -> list[GateKeyword]:
-    """gate_keywords(68개, 단어 단위)를 service_description에서 직접 매칭한다.
-
-    correction_rules.risky_text(104개, 완성된 문구)는 정확하지만 문구가 조금만
-    달라도 놓친다("혈당 수치값을" vs "혈당 수치를"). gate_keywords는 "혈당"처럼 훨씬
-    잘게 쪼개진 단위라 자연스러운 서술문에서도 더 잘 걸린다.
-    """
+    """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다."""
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(GateKeyword)
-                .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
-                .where(RuleVersion.status == "active")
+                select(GateKeyword).where(GateKeyword.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
     return [row for row in rows if row.keyword and row.keyword in service_description]
@@ -219,21 +208,15 @@ async def _match_correction_rules(
 ) -> list[CorrectionMatch]:
     """correction_rules를 두 경로로 매칭해 합친다(rule_id 기준 중복 제거).
 
-    ① risky_text 문구 그대로 포함 — 정확하지만 문구가 조금만 달라도 놓친다.
-    ② correction_rules.derived_from_keyword_id로 matched_keywords와 연결 — 이 컬럼은
-       원래 경로①(코드 조합 생성)이 "어떤 gate_keywords에서 나온 문구인지" 추적하려고
-       만든 FK인데, 그 관계를 거꾸로 타면 "이 키워드가 텍스트에 있으니 여기서 파생된
-       correction_rules도 관련 있다"는 훨씬 관대한 매칭이 된다. 활성 104건 중 95건이
-       이 FK를 갖고 있어 커버리지가 크다.
+    ① risky_text 문구 포함 ② derived_from_keyword_id로 matched_keywords와 역참조 연결
+    (원래 반대 방향 추적용 FK를 거꾸로 탄, 더 관대한 매칭).
     """
     matched_keyword_ids = {row.keyword_id for row in matched_keywords}
 
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(CorrectionRule)
-                .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
-                .where(RuleVersion.status == "active")
+                select(CorrectionRule).where(CorrectionRule.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
 
@@ -255,11 +238,9 @@ async def _match_correction_rules(
 
 
 async def _match_privacy_score(items: list[HealthDataItem]) -> int:
-    """health_data_items[].name을 data_sensitivity.item_label과 매칭해 최댓값을 채택한다.
+    """health_data_items[].name을 data_sensitivity.item_label과 부분매칭해 최댓값 채택.
 
-    ⚠️ item_label은 프론트 Step2 UI 옵션 문자열과 글자 단위로 일치해야 한다 — 안 맞으면
-    조용히 누락된다(에러 없음). 지금은 부분 문자열 매칭이라 완전 일치보다 관대하지만,
-    실제 UI 표기가 확정되면(작업 #6) 정확히 맞춰야 한다.
+    ⚠️ 프론트 표기와 안 맞으면 조용히 0점 처리됨 — 확정되면(작업 #6) 정확히 맞출 것.
     """
     async with AsyncSessionLocal() as session:
         rows = (await session.execute(select(DataSensitivity))).scalars().all()
@@ -277,23 +258,25 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
 
 @router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
 async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
-    thresholds = await _signal_thresholds()
+    # matches는 matched_keywords에 의존해 이후 실행, 나머지 셋은 독립적이라 병렬 조회.
+    thresholds, matched_keywords, privacy_score = await asyncio.gather(
+        _signal_thresholds(),
+        _match_gate_keywords(request.service_description),
+        _match_privacy_score(request.health_data_items),
+    )
     missing_axes = [axis for axis in _AXIS_TO_SCORE_FIELD if axis not in thresholds]
     if missing_axes:
         raise HTTPException(
             status_code=500,
             detail=f"signal_config에 활성 임계값이 없는 축: {missing_axes}",
         )
-    matched_keywords = await _match_gate_keywords(request.service_description)
     matches = await _match_correction_rules(request.service_description, matched_keywords)
-    # correction_rules는 완성된 문구라 정확하지만 놓치기 쉽고, gate_keywords는 단어
-    # 단위라 recall이 더 높다 — 둘 중 더 높은 점수를 채택해 어느 한쪽이 놓친 걸 보강한다.
+    # 키워드/문구 두 매칭 중 더 높은 점수 채택 — 한쪽이 놓친 걸 다른 쪽으로 보강.
     keyword_score = max((_keyword_score(row) for row in matched_keywords), default=0)
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
     regulatory_score = max(regulatory_score, keyword_score)
     advertising_score = max((m.advertising_score for m in matches), default=0)
     matched_rules = [m.legal_basis for m in matches]
-    privacy_score = await _match_privacy_score(request.health_data_items)
 
     scores = {
         "regulatory_score": regulatory_score,
