@@ -251,7 +251,10 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
         if not name:
             continue
         for row in rows:
-            if row.item_label in name or name in row.item_label:
+            label = row.item_label.strip()
+            if not label:
+                continue
+            if label in name or name in label:
                 best = max(best, row.sensitivity_level)
     return best
 
