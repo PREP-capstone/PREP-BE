@@ -6,14 +6,19 @@ analysis-sessions API가 아직 없어 요청 스키마는 역할분담표 §6 �
 data_type과 이름만 같고 뜻이 다름) 필드를 다시 맞춰야 한다.
 """
 
-from fastapi import APIRouter
+import asyncio
+import uuid
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.db.models import GateKeyword, RuleVersion
+from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
+from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS, resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
-from app.pipeline.correction_terms import BIOMARKER_EXTRA
+from app.pipeline.correction_terms import BIOMARKER_EXTRA, keyword_score
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
+from app.schemas.common import LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
 
@@ -48,33 +53,28 @@ _SOURCE_TO_ACQUIRE_METHOD = {
     "os_sync": "OS연동",
 }
 
-# service_actions → function_type. 여러 액션이 섞이면 가장 위험도가 높은 쪽을 채택한다
-# (db_구축_설계서.md §3.2의 "복수 조합 시 FAIL 우선" 원칙과 같은 방향).
+# 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
 _ACTION_PRIORITY: list[tuple[set[str], str]] = [
     ({"predict", "diagnose", "alert"}, "수치예측·진단"),
     ({"visualize_trend"}, "비교·추이분석"),
     ({"record"}, "단순기록"),
 ]
 
-# acquire_method 우선순위 — 기기연동이어야 침습적 하드체크가 발동하므로 가장 위험한 것을 채택.
+# 기기연동이어야 침습적 하드체크가 발동하므로 최우선.
 _ACQUIRE_METHOD_PRIORITY = ("기기연동", "OS연동", "수동입력")
 
 
 async def _biomarker_keywords() -> set[str]:
-    """gate_keywords의 DATA_TYPE 분류 키워드를 생체지표 판별 사전으로 재사용한다.
-
-    새 키워드 목록을 따로 만들지 않는다 — 실제 법령 문서에서 검증된 키워드가 이미
-    gate_keywords에 있고, 파이프라인이 문서를 더 넣으면 이 목록도 자동으로 늘어난다.
-    심박수·체중 등 문서에 아직 안 뽑힌 흔한 생체지표는 correction_terms.BIOMARKER_EXTRA로 보충한다
-    (Stage C가 같은 이유로 이미 쓰고 있는 목록).
-    """
+    """생체지표 판별 사전 = gate_keywords(DATA_TYPE) + BIOMARKER_EXTRA(Stage C와 공유, 미등록 지표 보충)."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(GateKeyword.keyword)
-            .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
-            .where(RuleVersion.status == "active", GateKeyword.keyword_category == "DATA_TYPE")
+            select(GateKeyword.keyword).where(
+                GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS),
+                GateKeyword.keyword_category == "DATA_TYPE",
+            )
         )
-        return set(result.scalars().all()) | set(BIOMARKER_EXTRA)
+        keywords = {keyword for keyword in result.scalars().all() if keyword}
+        return keywords | set(BIOMARKER_EXTRA)
 
 
 def _classify_data_type(items: list[HealthDataItem], biomarker_keywords: set[str]) -> str:
@@ -101,8 +101,11 @@ def _classify_acquire_method(items: list[HealthDataItem]) -> str | None:
 
 
 def _detect_invasive_signal(request: GateRequest) -> bool:
-    text = request.service_description + " " + " ".join(item.name for item in request.health_data_items)
-    return detect_invasive(text)
+    # detect_invasive()는 내부에서 공백을 전부 지우고 매칭한다 — 서로 다른 필드를
+    # 이어붙이면 경계가 사라져 부정표현/키워드가 필드를 가로질러 엉뚱하게 매칭된다.
+    # 그래서 필드별로 따로 검사해 OR로 합친다.
+    texts = [request.service_description] + [item.name for item in request.health_data_items]
+    return any(detect_invasive(text) for text in texts)
 
 
 @router.post("/gate", response_model=GateResponse)
@@ -131,4 +134,214 @@ async def judge_gate(request: GateRequest) -> GateResponse:
         invasive_signal=invasive_signal,
         verdict=cell["verdict"],
         hardcheck_fired=False,
+    )
+
+
+# ---- judgement/regulatory-risk ----
+
+_AXIS_TO_SCORE_FIELD = {
+    "의료행위표현": "regulatory_score",
+    "개인정보민감도": "privacy_score",
+    "광고표현위험": "advertising_score",
+}
+
+
+class MatchedRule(BaseModel):
+    legal_basis: LegalBasis
+    exact_phrase_match: bool
+
+
+class RegulatoryRiskResponse(BaseModel):
+    regulatory_score: int
+    regulatory_grade: str
+    privacy_score: int
+    privacy_grade: str
+    advertising_score: int
+    advertising_grade: str
+    matched_rules: list[MatchedRule]
+
+
+def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
+    if score <= threshold_low:
+        return "낮음"
+    if score <= threshold_mid:
+        return "중간"
+    return "높음"
+
+
+async def _signal_thresholds(rule_version_ids: list[uuid.UUID]) -> dict[str, tuple[int, int]]:
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(SignalConfig).where(SignalConfig.rule_version_id.in_(rule_version_ids))
+            )
+        ).scalars().all()
+    thresholds: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        if row.axis in thresholds:
+            raise HTTPException(
+                status_code=500,
+                detail=f"signal_config에 축 '{row.axis}'의 활성 임계값이 중복됩니다",
+            )
+        thresholds[row.axis] = (row.threshold_low, row.threshold_mid)
+    return thresholds
+
+
+class CorrectionMatch(BaseModel):
+    risky_text: str
+    safe_text: str
+    regulatory_score: int
+    advertising_score: int
+    legal_basis: LegalBasis
+    exact_phrase_match: bool
+
+
+async def _match_gate_keywords(service_description: str, rule_version_ids: list[uuid.UUID]) -> list[GateKeyword]:
+    """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다."""
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(GateKeyword).where(GateKeyword.rule_version_id.in_(rule_version_ids))
+            )
+        ).scalars().all()
+    return [row for row in rows if row.keyword and row.keyword in service_description]
+
+
+async def _match_correction_rules(
+    service_description: str, matched_keywords: list[GateKeyword], rule_version_ids: list[uuid.UUID]
+) -> list[CorrectionMatch]:
+    """correction_rules를 두 경로로 매칭해 합친다(rule_id 기준 중복 제거).
+
+    ① risky_text 문구 포함 ② derived_from_keyword_id로 matched_keywords와 역참조 연결
+    (원래 반대 방향 추적용 FK를 거꾸로 탄, 더 관대한 매칭).
+    """
+    matched_keyword_ids = {row.keyword_id for row in matched_keywords}
+
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(CorrectionRule).where(CorrectionRule.rule_version_id.in_(rule_version_ids))
+            )
+        ).scalars().all()
+
+    matched: dict[str, CorrectionMatch] = {}
+    for row in rows:
+        phrase_hit = row.risky_text and row.risky_text in service_description
+        keyword_hit = row.derived_from_keyword_id in matched_keyword_ids
+        if not (phrase_hit or keyword_hit):
+            continue
+        matched[str(row.rule_id)] = CorrectionMatch(
+            risky_text=row.risky_text,
+            safe_text=row.safe_text,
+            regulatory_score=row.regulatory_score,
+            advertising_score=row.advertising_score,
+            legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
+            exact_phrase_match=bool(phrase_hit),
+        )
+    return list(matched.values())
+
+
+async def _match_privacy_score(items: list[HealthDataItem]) -> int:
+    """health_data_items[].name을 data_sensitivity.item_label과 부분매칭해 최댓값 채택.
+
+    ⚠️ 프론트 표기와 안 맞으면 조용히 0점 처리됨 — 확정되면(작업 #6) 정확히 맞출 것.
+    """
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(select(DataSensitivity))).scalars().all()
+
+    best = 0
+    for item in items:
+        name = item.name.strip()
+        if not name:
+            continue
+        for row in rows:
+            label = row.item_label.strip()
+            if not label:
+                continue
+            if label in name or name in label:
+                best = max(best, row.sensitivity_level)
+    return best
+
+
+@router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
+async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
+    # 활성 rule_version_id를 한 번만 확정해서 이후 모든 쿼리에 그대로 넘긴다 — 각 쿼리가
+    # 따로 "활성"을 다시 판단하면 그 사이 publish()가 끼어들 때 스냅샷이 어긋날 수 있다.
+    rule_version_ids = await resolve_active_rule_version_ids()
+
+    # thresholds부터 먼저 확인한다 — signal_config에 축이 빠져 있으면 어차피 500인데,
+    # gate_keywords/data_sensitivity 전체 스캔 같은 비싼 쿼리를 먼저 하고 버리지 않는다.
+    thresholds = await _signal_thresholds(rule_version_ids)
+    missing_axes = [axis for axis in _AXIS_TO_SCORE_FIELD if axis not in thresholds]
+    if missing_axes:
+        raise HTTPException(
+            status_code=500,
+            detail=f"signal_config에 활성 임계값이 없는 축: {missing_axes}",
+        )
+
+    # matches는 matched_keywords에 의존해 이후 실행, 나머지 둘은 독립적이라 병렬 조회.
+    matched_keywords, privacy_score = await asyncio.gather(
+        _match_gate_keywords(request.service_description, rule_version_ids),
+        _match_privacy_score(request.health_data_items),
+    )
+    matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
+    # 키워드/문구 두 매칭 중 더 높은 점수 채택 — 한쪽이 놓친 걸 다른 쪽으로 보강.
+    keyword_match_score = max((keyword_score(row) for row in matched_keywords), default=0)
+    regulatory_score = max((m.regulatory_score for m in matches), default=0)
+    regulatory_score = max(regulatory_score, keyword_match_score)
+    advertising_score = max((m.advertising_score for m in matches), default=0)
+    matched_rules = [
+        MatchedRule(legal_basis=m.legal_basis, exact_phrase_match=m.exact_phrase_match) for m in matches
+    ]
+
+    scores = {
+        "regulatory_score": regulatory_score,
+        "privacy_score": privacy_score,
+        "advertising_score": advertising_score,
+    }
+    grades: dict[str, str] = {}
+    for axis, score_field in _AXIS_TO_SCORE_FIELD.items():
+        low, mid = thresholds[axis]
+        grades[score_field] = _grade(scores[score_field], low, mid)
+
+    return RegulatoryRiskResponse(
+        regulatory_score=regulatory_score,
+        regulatory_grade=grades["regulatory_score"],
+        privacy_score=privacy_score,
+        privacy_grade=grades["privacy_score"],
+        advertising_score=advertising_score,
+        advertising_grade=grades["advertising_score"],
+        matched_rules=matched_rules,
+    )
+
+
+# ---- judgement/correction-candidates ----
+
+
+class CorrectionCandidate(BaseModel):
+    risky_text: str
+    safe_text: str
+    legal_basis: LegalBasis
+    exact_phrase_match: bool
+
+
+class CorrectionCandidatesResponse(BaseModel):
+    candidates: list[CorrectionCandidate]
+
+
+@router.post("/correction-candidates", response_model=CorrectionCandidatesResponse)
+async def judge_correction_candidates(request: GateRequest) -> CorrectionCandidatesResponse:
+    rule_version_ids = await resolve_active_rule_version_ids()
+    matched_keywords = await _match_gate_keywords(request.service_description, rule_version_ids)
+    matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
+    return CorrectionCandidatesResponse(
+        candidates=[
+            CorrectionCandidate(
+                risky_text=m.risky_text,
+                safe_text=m.safe_text,
+                legal_basis=m.legal_basis,
+                exact_phrase_match=m.exact_phrase_match,
+            )
+            for m in matches
+        ]
     )

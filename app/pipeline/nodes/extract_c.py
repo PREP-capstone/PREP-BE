@@ -11,13 +11,15 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.db.models import GateKeyword, RuleVersion
+from app.db.models import GateKeyword
+from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS
 from app.db.session import AsyncSessionLocal
 from app.pipeline.article_ref import (
     ARTICLE_NOTATION_PROMPT,
     build_chunk_message,
     normalize_article,
 )
+from app.pipeline.correction_terms import keyword_score
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 _RESPONSE_SCHEMA = {
@@ -164,21 +166,9 @@ async def extract_C(state: PipelineState) -> dict:
 async def _load_active_keywords() -> list[GateKeyword]:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(GateKeyword)
-            .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
-            .where(RuleVersion.status == "active")
+            select(GateKeyword).where(GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
         )
         return list(result.scalars().all())
-
-
-def _keyword_score(keyword_row: GateKeyword) -> int:
-    if keyword_row.weight == 5 or keyword_row.verdict == "FAIL_CONFIRMED":
-        return 3
-    if keyword_row.weight in (3, 4):
-        return 2
-    if keyword_row.weight in (1, 2):
-        return 1
-    return 0
 
 
 def _derive_regulatory_score(risky_text: str, active_keywords: list[GateKeyword]) -> tuple[int, str | None]:
@@ -186,7 +176,7 @@ def _derive_regulatory_score(risky_text: str, active_keywords: list[GateKeyword]
     best_keyword_id = None
     for keyword_row in active_keywords:
         if keyword_row.keyword and keyword_row.keyword in risky_text:
-            score = _keyword_score(keyword_row)
+            score = keyword_score(keyword_row)
             if score > best_score:
                 best_score = score
                 best_keyword_id = str(keyword_row.keyword_id)
