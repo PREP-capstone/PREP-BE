@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app.api.judgement import router as judgement_router
 from app.core.config import settings
 from app.core.redis_client import redis_client
 from app.db.session import engine
@@ -21,6 +22,7 @@ app = FastAPI(
     title="PREP API",
     lifespan=lifespan,
 )
+app.include_router(judgement_router)
 
 
 class RagSearchRequest(BaseModel):
