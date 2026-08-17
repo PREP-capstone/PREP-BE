@@ -144,6 +144,11 @@ _AXIS_TO_SCORE_FIELD = {
 }
 
 
+class MatchedRule(BaseModel):
+    legal_basis: LegalBasis
+    exact_phrase_match: bool
+
+
 class RegulatoryRiskResponse(BaseModel):
     regulatory_score: int
     regulatory_grade: str
@@ -151,7 +156,7 @@ class RegulatoryRiskResponse(BaseModel):
     privacy_grade: str
     advertising_score: int
     advertising_grade: str
-    matched_rules: list[LegalBasis]
+    matched_rules: list[MatchedRule]
 
 
 def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
@@ -287,7 +292,9 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
     regulatory_score = max(regulatory_score, keyword_score)
     advertising_score = max((m.advertising_score for m in matches), default=0)
-    matched_rules = [m.legal_basis for m in matches]
+    matched_rules = [
+        MatchedRule(legal_basis=m.legal_basis, exact_phrase_match=m.exact_phrase_match) for m in matches
+    ]
 
     scores = {
         "regulatory_score": regulatory_score,
