@@ -1,0 +1,81 @@
+{
+  "_note": "2번(analysis-sessions)이 아직 없어 judgement API 개발용으로 미리 만든 mock 요청 모음. 실제 API 요청 형식은 역할분담표 §6 예시를 기준으로 함. health_data_items[].data_type 필드명이 내 GATE_MATRIX_TABLE의 data_type(라이프스타일/생체지표) enum과 이름이 겹치지만 뜻이 다르니(여기선 numeric/text 등 값 타입) 헷갈리지 말 것 — 나중에 실제 analysis-sessions API가 정해지면 이름 충돌 여부 다시 확인.",
+
+  "라이프스타일_단순기록_PASS": {
+    "service_name": "걸음수 기록 앱",
+    "service_description": "사용자가 하루 걸음수를 기록하고 주간 통계를 확인할 수 있다.",
+    "health_data_items": [
+      {"name": "걸음수", "data_type": "numeric", "unit": "steps", "source": "user_input", "is_sensitive": false}
+    ],
+    "service_actions": ["record"]
+  },
+
+  "생체지표_단순기록_PASS": {
+    "service_name": "심박수 기록 앱",
+    "service_description": "사용자가 측정한 심박수를 기록하고 히스토리로 조회한다.",
+    "health_data_items": [
+      {"name": "심박수", "data_type": "numeric", "unit": "bpm", "source": "user_input", "is_sensitive": false}
+    ],
+    "service_actions": ["record"]
+  },
+
+  "생체지표_비교추이분석_CONDITIONAL": {
+    "service_name": "혈압 변화 추이 앱",
+    "service_description": "사용자가 입력한 혈압 수치의 변화 추이를 그래프로 시각화한다.",
+    "health_data_items": [
+      {"name": "혈압", "data_type": "numeric", "unit": "mmHg", "source": "user_input", "is_sensitive": false}
+    ],
+    "service_actions": ["record", "visualize_trend"]
+  },
+
+  "생체지표_수치예측진단_FAIL": {
+    "service_name": "혈당 관리 앱",
+    "service_description": "혈당 수치값을 표시하고 위험 수치일 때 경고 알람을 제공한다.",
+    "health_data_items": [
+      {"name": "공복혈당", "data_type": "numeric", "unit": "mg/dL", "source": "user_input", "is_sensitive": true}
+    ],
+    "service_actions": ["record", "alert"],
+    "_note": "gate_matrix_table.py 회귀 케이스 문구 그대로 사용 — extract_b.py 시스템 프롬프트 참조"
+  },
+
+  "라이프스타일_수치예측진단_CONDITIONAL": {
+    "service_name": "생활습관 기반 위험도 예측 앱",
+    "service_description": "걸음수와 식단 기록을 바탕으로 향후 질환 발생 위험도를 예측해 알려준다.",
+    "health_data_items": [
+      {"name": "걸음수", "data_type": "numeric", "unit": "steps", "source": "user_input", "is_sensitive": false},
+      {"name": "식단", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": false}
+    ],
+    "service_actions": ["record", "predict"]
+  },
+
+  "침습적_하드체크_FAIL": {
+    "service_name": "연속혈당측정 앱",
+    "service_description": "CGM 연속혈당측정기와 연동해 혈당을 실시간으로 기록한다.",
+    "health_data_items": [
+      {"name": "연속혈당", "data_type": "numeric", "unit": "mg/dL", "source": "device_sync", "is_sensitive": true}
+    ],
+    "service_actions": ["record"],
+    "_note": "acquire_method=기기연동 매핑 확인용 — is_invasive_hardcheck 발동 케이스"
+  },
+
+  "비침습_함정_PASS": {
+    "service_name": "비침습 혈당 추정 앱",
+    "service_description": "비침습적 방법으로 혈당을 추정해 표시한다.",
+    "health_data_items": [
+      {"name": "혈당(추정)", "data_type": "numeric", "unit": "mg/dL", "source": "device_sync", "is_sensitive": true}
+    ],
+    "service_actions": ["record"],
+    "_note": "'침습'이 부분 문자열로 들어있는 부정표현 함정 케이스 — FAIL로 오판정되면 안 됨"
+  },
+
+  "민감정보_포함_케이스": {
+    "service_name": "만성질환 관리 앱",
+    "service_description": "사용자의 복용약물과 과거 병력을 기록하고 관리한다.",
+    "health_data_items": [
+      {"name": "복용약물", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": true},
+      {"name": "과거병력", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": true}
+    ],
+    "service_actions": ["record"],
+    "_note": "regulatory-risk API의 privacy_score(data_sensitivity 매칭) 테스트용 — sensitivity_level=3 기대"
+  }
+}
