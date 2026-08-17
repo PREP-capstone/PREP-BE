@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import csv
+import os
 import re
 import subprocess
 import sys
@@ -20,13 +22,10 @@ MEDICAL_ACT_DOC_ID = "kr-medical-act-20260407"
 NONMEDICAL_2022_DOC_ID = "kr-mohw-nonmedical-health-guide-202209"
 NONMEDICAL_2019_DOC_ID = "kr-mohw-nonmedical-healthcare-guide-20190521"
 
-WELLNESS_PDF = Path(
-    "/Users/munchaerin/Desktop/졸프 data/의료기기와+개인용+건강관리(웰니스)제품+판단기준(지침).pdf"
-)
-MEDICAL_ACT_PDF = Path("/Users/munchaerin/Desktop/졸프 data/의료법(법률)(제21524호)(20260407).pdf")
-NONMEDICAL_2022_PDF = Path(
-    "/Users/munchaerin/Desktop/졸프 data/비의료 건강관리서비스 가이드라인_및_사례집(2차).pdf"
-)
+DEFAULT_SOURCE_DIR = ROOT / "data" / "rag" / "source_documents"
+WELLNESS_FILE_NAME = "의료기기와+개인용+건강관리(웰니스)제품+판단기준(지침).pdf"
+MEDICAL_ACT_FILE_NAME = "의료법(법률)(제21524호)(20260407).pdf"
+NONMEDICAL_2022_FILE_NAME = "비의료 건강관리서비스 가이드라인_및_사례집(2차).pdf"
 
 
 @dataclass
@@ -115,8 +114,8 @@ def wellness_marker(line: str, chapter: str | None, number: str | None) -> tuple
     return None
 
 
-def build_wellness_chunks() -> list[Chunk]:
-    lines = iter_lines_with_pages(extract_pdf_text(WELLNESS_PDF))
+def build_wellness_chunks(wellness_pdf: Path) -> list[Chunk]:
+    lines = iter_lines_with_pages(extract_pdf_text(wellness_pdf))
     chunks: list[tuple[str, str, list[TextLine]]] = []
     current_id: str | None = None
     current_title = ""
@@ -167,7 +166,7 @@ def build_wellness_chunks() -> list[Chunk]:
                 page_start=min(line.page for line in section_lines),
                 page_end=max(line.page for line in section_lines),
                 source_url="https://www.mfds.go.kr/brd/m_210/view.do?Data_stts_gubun=C1004&company_cd=&company_nm=&itm_seq_1=0&itm_seq_2=0&multi_itm_seq=0&page=4&seq=15229&srchFr=&srchTo=&srchTp=0&srchWord=",
-                local_file_path=str(WELLNESS_PDF),
+                local_file_path=source_document_label(wellness_pdf),
                 tag_advertising=True,
             )
         )
@@ -179,9 +178,9 @@ def article_marker(line: str) -> str | None:
     return match.group(1) if match else None
 
 
-def build_medical_act_chunks() -> list[Chunk]:
+def build_medical_act_chunks(medical_act_pdf: Path) -> list[Chunk]:
     target_articles = {"제2조", "제27조", "제56조"}
-    lines = iter_lines_with_pages(extract_pdf_text(MEDICAL_ACT_PDF))
+    lines = iter_lines_with_pages(extract_pdf_text(medical_act_pdf))
     chunks: list[tuple[str, str, list[TextLine]]] = []
     current_article: str | None = None
     current_title = ""
@@ -215,7 +214,7 @@ def build_medical_act_chunks() -> list[Chunk]:
                 page_start=min(line.page for line in article_lines),
                 page_end=max(line.page for line in article_lines),
                 source_url="https://www.law.go.kr/LSW/lsLawLinkInfo.do?chrClsCd=010202&lsId=001788&lsJoLnkSeq=1000180469&print=print",
-                local_file_path=str(MEDICAL_ACT_PDF),
+                local_file_path=source_document_label(medical_act_pdf),
             )
         )
     return output
@@ -290,7 +289,7 @@ def upsert_nonmedical_2022_document() -> None:
     write_csv(DOCUMENTS_CSV, fieldnames, rows)
 
 
-def upsert_nonmedical_2022_queue() -> None:
+def upsert_nonmedical_2022_queue(nonmedical_2022_pdf: Path) -> None:
     fieldnames, rows = read_csv(QUEUE_CSV)
     if any(row["document_id"] == NONMEDICAL_2022_DOC_ID for row in rows):
         return
@@ -307,7 +306,7 @@ def upsert_nonmedical_2022_queue() -> None:
             "default_action": "needs_source",
             "chunk_unit": "장/절/Q&A 단위",
             "pages": "",
-            "local_file_path": str(NONMEDICAL_2022_PDF),
+            "local_file_path": source_document_label(nonmedical_2022_pdf),
             "note": "룰베이스 correction_rules 29건 인용 문서. 2019년 1차본과 판본 불일치 방지를 위해 2차본 공식 PDF 확보 후 청킹.",
         }
     )
@@ -327,7 +326,7 @@ def annotate_nonmedical_2019_document() -> None:
     write_csv(DOCUMENTS_CSV, fieldnames, rows)
 
 
-def rebuild_chunks() -> None:
+def rebuild_chunks(wellness_pdf: Path, medical_act_pdf: Path) -> None:
     fieldnames, rows = read_csv(CHUNKS_CSV)
     rows = [
         row
@@ -335,7 +334,7 @@ def rebuild_chunks() -> None:
         if row["document_id"] not in {WELLNESS_DOC_ID, MEDICAL_ACT_DOC_ID}
     ]
 
-    generated = build_wellness_chunks() + build_medical_act_chunks()
+    generated = build_wellness_chunks(wellness_pdf) + build_medical_act_chunks(medical_act_pdf)
     start_order_by_doc: dict[str, int] = {}
     for chunk in generated:
         order = start_order_by_doc.get(chunk.document_id, 0) + 1
@@ -348,11 +347,43 @@ def rebuild_chunks() -> None:
     print(f"total chunks: {len(rows)}")
 
 
+def default_source_dir() -> Path:
+    return Path(os.environ.get("RAG_SOURCE_DIR", DEFAULT_SOURCE_DIR)).expanduser()
+
+
+def resolve_source_path(source_dir: Path, override: Path | None, file_name: str) -> Path:
+    return (override or source_dir / file_name).expanduser()
+
+
+def source_document_label(path: Path) -> str:
+    return str(Path("data") / "rag" / "source_documents" / path.name)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Rebuild RAG chunks needed by rulebase evidence lookup.")
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        default=default_source_dir(),
+        help="Directory containing source PDFs. Can also be set with RAG_SOURCE_DIR.",
+    )
+    parser.add_argument("--wellness-pdf", type=Path, help="Override wellness guide PDF path.")
+    parser.add_argument("--medical-act-pdf", type=Path, help="Override Medical Act PDF path.")
+    parser.add_argument("--nonmedical-2022-pdf", type=Path, help="Override nonmedical guide 2nd edition PDF path.")
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
+    source_dir = args.source_dir.expanduser()
+    wellness_pdf = resolve_source_path(source_dir, args.wellness_pdf, WELLNESS_FILE_NAME)
+    medical_act_pdf = resolve_source_path(source_dir, args.medical_act_pdf, MEDICAL_ACT_FILE_NAME)
+    nonmedical_2022_pdf = resolve_source_path(source_dir, args.nonmedical_2022_pdf, NONMEDICAL_2022_FILE_NAME)
+
     try:
-        rebuild_chunks()
+        rebuild_chunks(wellness_pdf, medical_act_pdf)
         upsert_nonmedical_2022_document()
-        upsert_nonmedical_2022_queue()
+        upsert_nonmedical_2022_queue(nonmedical_2022_pdf)
         annotate_nonmedical_2019_document()
     except Exception as exc:  # noqa: BLE001 - data repair script should surface parse failures.
         print(f"failed: {type(exc).__name__}: {exc}", file=sys.stderr)

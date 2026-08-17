@@ -172,9 +172,9 @@ async def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--force", action="store_true", help="Regenerate embeddings even if text hash matches.")
     parser.add_argument(
-        "--sync-delete-stale",
+        "--keep-stale",
         action="store_true",
-        help="Delete Chroma embeddings that no longer exist as active DB evidence_chunks.",
+        help="Keep Chroma embeddings even when they no longer exist as active DB evidence_chunks.",
     )
     parser.add_argument("--dry-run", action="store_true", help="List candidate count without OpenAI calls.")
     args = parser.parse_args()
@@ -189,7 +189,7 @@ async def main() -> None:
     if args.dry_run:
         print(f"Active DB chunks: {len(active_chunk_ids)}")
         print(f"Embedding candidates: {len(candidates)}")
-        if args.sync_delete_stale:
+        if not args.keep_stale:
             collection = get_evidence_collection()
             where = {"embedding_model": settings.openai_embedding_model}
             if args.document_id:
@@ -208,7 +208,7 @@ async def main() -> None:
         print(f"Embedded {processed}/{len(candidates)} chunks")
 
     deleted = 0
-    if args.sync_delete_stale:
+    if not args.keep_stale:
         deleted = delete_stale_embeddings(
             active_chunk_ids=active_chunk_ids,
             document_id=args.document_id,
@@ -216,7 +216,9 @@ async def main() -> None:
         )
 
     print(f"Imported Chroma evidence chunk embeddings: {processed}")
-    if args.sync_delete_stale:
+    if args.keep_stale:
+        print("Kept stale Chroma embeddings")
+    else:
         print(f"Deleted stale Chroma embeddings: {deleted}")
 
 

@@ -159,9 +159,9 @@ async def main() -> None:
     parser.add_argument("--chunks-csv", type=Path, default=DEFAULT_CHUNKS_CSV)
     parser.add_argument("--dry-run", action="store_true", help="Parse CSV files without DB writes.")
     parser.add_argument(
-        "--sync-delete-stale-chunks",
+        "--keep-stale-chunks",
         action="store_true",
-        help="Delete existing DB chunks for imported documents when they are absent from the chunks CSV.",
+        help="Keep existing DB chunks even when they are absent from the chunks CSV.",
     )
     args = parser.parse_args()
 
@@ -176,12 +176,14 @@ async def main() -> None:
     await upsert_documents(document_rows)
     await upsert_chunks(chunk_rows)
     deleted_chunks = 0
-    if args.sync_delete_stale_chunks:
+    if not args.keep_stale_chunks:
         deleted_chunks = await delete_stale_chunks(chunk_rows)
 
     print(f"Imported evidence_documents: {len(document_rows)}")
     print(f"Imported evidence_chunks: {len(chunk_rows)}")
-    if args.sync_delete_stale_chunks:
+    if args.keep_stale_chunks:
+        print("Kept stale evidence_chunks")
+    else:
         print(f"Deleted stale evidence_chunks: {deleted_chunks}")
 
 
