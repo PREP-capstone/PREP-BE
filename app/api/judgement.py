@@ -72,7 +72,8 @@ async def _biomarker_keywords() -> set[str]:
                 GateKeyword.keyword_category == "DATA_TYPE",
             )
         )
-        return set(result.scalars().all()) | set(BIOMARKER_EXTRA)
+        keywords = {keyword for keyword in result.scalars().all() if keyword}
+        return keywords | set(BIOMARKER_EXTRA)
 
 
 def _classify_data_type(items: list[HealthDataItem], biomarker_keywords: set[str]) -> str:
