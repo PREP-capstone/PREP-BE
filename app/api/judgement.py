@@ -7,13 +7,14 @@ data_type과 이름만 같고 뜻이 다름) 필드를 다시 맞춰야 한다.
 """
 
 import asyncio
+import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
-from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS
+from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS, resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
 from app.pipeline.correction_terms import BIOMARKER_EXTRA, keyword_score
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
@@ -168,11 +169,11 @@ def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
     return "높음"
 
 
-async def _signal_thresholds() -> dict[str, tuple[int, int]]:
+async def _signal_thresholds(rule_version_ids: list[uuid.UUID]) -> dict[str, tuple[int, int]]:
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(SignalConfig).where(SignalConfig.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
+                select(SignalConfig).where(SignalConfig.rule_version_id.in_(rule_version_ids))
             )
         ).scalars().all()
     thresholds: dict[str, tuple[int, int]] = {}
@@ -195,19 +196,19 @@ class CorrectionMatch(BaseModel):
     exact_phrase_match: bool
 
 
-async def _match_gate_keywords(service_description: str) -> list[GateKeyword]:
+async def _match_gate_keywords(service_description: str, rule_version_ids: list[uuid.UUID]) -> list[GateKeyword]:
     """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다."""
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(GateKeyword).where(GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
+                select(GateKeyword).where(GateKeyword.rule_version_id.in_(rule_version_ids))
             )
         ).scalars().all()
     return [row for row in rows if row.keyword and row.keyword in service_description]
 
 
 async def _match_correction_rules(
-    service_description: str, matched_keywords: list[GateKeyword]
+    service_description: str, matched_keywords: list[GateKeyword], rule_version_ids: list[uuid.UUID]
 ) -> list[CorrectionMatch]:
     """correction_rules를 두 경로로 매칭해 합친다(rule_id 기준 중복 제거).
 
@@ -219,7 +220,7 @@ async def _match_correction_rules(
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(CorrectionRule).where(CorrectionRule.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
+                select(CorrectionRule).where(CorrectionRule.rule_version_id.in_(rule_version_ids))
             )
         ).scalars().all()
 
@@ -264,10 +265,13 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
 
 @router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
 async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
+    # 활성 rule_version_id를 한 번만 확정해서 이후 모든 쿼리에 그대로 넘긴다 — 각 쿼리가
+    # 따로 "활성"을 다시 판단하면 그 사이 publish()가 끼어들 때 스냅샷이 어긋날 수 있다.
+    rule_version_ids = await resolve_active_rule_version_ids()
     # matches는 matched_keywords에 의존해 이후 실행, 나머지 셋은 독립적이라 병렬 조회.
     thresholds, matched_keywords, privacy_score = await asyncio.gather(
-        _signal_thresholds(),
-        _match_gate_keywords(request.service_description),
+        _signal_thresholds(rule_version_ids),
+        _match_gate_keywords(request.service_description, rule_version_ids),
         _match_privacy_score(request.health_data_items),
     )
     missing_axes = [axis for axis in _AXIS_TO_SCORE_FIELD if axis not in thresholds]
@@ -276,7 +280,7 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
             status_code=500,
             detail=f"signal_config에 활성 임계값이 없는 축: {missing_axes}",
         )
-    matches = await _match_correction_rules(request.service_description, matched_keywords)
+    matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
     # 키워드/문구 두 매칭 중 더 높은 점수 채택 — 한쪽이 놓친 걸 다른 쪽으로 보강.
     keyword_match_score = max((keyword_score(row) for row in matched_keywords), default=0)
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
@@ -323,8 +327,9 @@ class CorrectionCandidatesResponse(BaseModel):
 
 @router.post("/correction-candidates", response_model=CorrectionCandidatesResponse)
 async def judge_correction_candidates(request: GateRequest) -> CorrectionCandidatesResponse:
-    matched_keywords = await _match_gate_keywords(request.service_description)
-    matches = await _match_correction_rules(request.service_description, matched_keywords)
+    rule_version_ids = await resolve_active_rule_version_ids()
+    matched_keywords = await _match_gate_keywords(request.service_description, rule_version_ids)
+    matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
     return CorrectionCandidatesResponse(
         candidates=[
             CorrectionCandidate(
