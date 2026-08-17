@@ -99,8 +99,11 @@ def _classify_acquire_method(items: list[HealthDataItem]) -> str | None:
 
 
 def _detect_invasive_signal(request: GateRequest) -> bool:
-    text = request.service_description + " " + " ".join(item.name for item in request.health_data_items)
-    return detect_invasive(text)
+    # detect_invasive()는 내부에서 공백을 전부 지우고 매칭한다 — 서로 다른 필드를
+    # 이어붙이면 경계가 사라져 부정표현/키워드가 필드를 가로질러 엉뚱하게 매칭된다.
+    # 그래서 필드별로 따로 검사해 OR로 합친다.
+    texts = [request.service_description] + [item.name for item in request.health_data_items]
+    return any(detect_invasive(text) for text in texts)
 
 
 @router.post("/gate", response_model=GateResponse)
