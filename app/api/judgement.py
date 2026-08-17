@@ -10,10 +10,11 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.db.models import GateKeyword, RuleVersion
+from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, RuleVersion, SignalConfig
 from app.db.session import AsyncSessionLocal
 from app.pipeline.correction_terms import BIOMARKER_EXTRA
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
+from app.schemas.common import LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
 
@@ -131,4 +132,128 @@ async def judge_gate(request: GateRequest) -> GateResponse:
         invasive_signal=invasive_signal,
         verdict=cell["verdict"],
         hardcheck_fired=False,
+    )
+
+
+# ---- judgement/regulatory-risk ----
+
+_AXIS_TO_SCORE_FIELD = {
+    "의료행위표현": "regulatory_score",
+    "개인정보민감도": "privacy_score",
+    "광고표현위험": "advertising_score",
+}
+
+
+class RegulatoryRiskResponse(BaseModel):
+    regulatory_score: int
+    regulatory_grade: str
+    privacy_score: int
+    privacy_grade: str
+    advertising_score: int
+    advertising_grade: str
+    matched_rules: list[LegalBasis]
+
+
+def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
+    if score <= threshold_low:
+        return "낮음"
+    if score <= threshold_mid:
+        return "중간"
+    return "높음"
+
+
+async def _signal_thresholds() -> dict[str, tuple[int, int]]:
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(SignalConfig)
+                .join(RuleVersion, RuleVersion.rule_version_id == SignalConfig.rule_version_id)
+                .where(RuleVersion.status == "active")
+            )
+        ).scalars().all()
+    return {row.axis: (row.threshold_low, row.threshold_mid) for row in rows}
+
+
+class CorrectionMatch(BaseModel):
+    risky_text: str
+    safe_text: str
+    regulatory_score: int
+    advertising_score: int
+    legal_basis: LegalBasis
+
+
+async def _match_correction_rules(service_description: str) -> list[CorrectionMatch]:
+    """correction_rules.risky_text가 service_description에 포함되는지 매칭한다.
+
+    extract_c.py._derive_regulatory_score의 오프라인 매칭(키워드 in 텍스트, 최고점 채택)과
+    같은 패턴을 런타임에 적용한다. regulatory-risk와 correction-candidates 둘 다 이 결과를
+    그대로 재사용한다 — 매칭 로직을 두 번 짜지 않는다.
+    """
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(CorrectionRule)
+                .join(RuleVersion, RuleVersion.rule_version_id == CorrectionRule.rule_version_id)
+                .where(RuleVersion.status == "active")
+            )
+        ).scalars().all()
+
+    return [
+        CorrectionMatch(
+            risky_text=row.risky_text,
+            safe_text=row.safe_text,
+            regulatory_score=row.regulatory_score,
+            advertising_score=row.advertising_score,
+            legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
+        )
+        for row in rows
+        if row.risky_text and row.risky_text in service_description
+    ]
+
+
+async def _match_privacy_score(items: list[HealthDataItem]) -> int:
+    """health_data_items[].name을 data_sensitivity.item_label과 매칭해 최댓값을 채택한다.
+
+    ⚠️ item_label은 프론트 Step2 UI 옵션 문자열과 글자 단위로 일치해야 한다 — 안 맞으면
+    조용히 누락된다(에러 없음). 지금은 부분 문자열 매칭이라 완전 일치보다 관대하지만,
+    실제 UI 표기가 확정되면(작업 #6) 정확히 맞춰야 한다.
+    """
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(select(DataSensitivity))).scalars().all()
+
+    best = 0
+    for item in items:
+        for row in rows:
+            if row.item_label in item.name or item.name in row.item_label:
+                best = max(best, row.sensitivity_level)
+    return best
+
+
+@router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
+async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
+    thresholds = await _signal_thresholds()
+    matches = await _match_correction_rules(request.service_description)
+    regulatory_score = max((m.regulatory_score for m in matches), default=0)
+    advertising_score = max((m.advertising_score for m in matches), default=0)
+    matched_rules = [m.legal_basis for m in matches]
+    privacy_score = await _match_privacy_score(request.health_data_items)
+
+    scores = {
+        "regulatory_score": regulatory_score,
+        "privacy_score": privacy_score,
+        "advertising_score": advertising_score,
+    }
+    grades: dict[str, str] = {}
+    for axis, score_field in _AXIS_TO_SCORE_FIELD.items():
+        low, mid = thresholds[axis]
+        grades[score_field] = _grade(scores[score_field], low, mid)
+
+    return RegulatoryRiskResponse(
+        regulatory_score=regulatory_score,
+        regulatory_grade=grades["regulatory_score"],
+        privacy_score=privacy_score,
+        privacy_grade=grades["privacy_score"],
+        advertising_score=advertising_score,
+        advertising_grade=grades["advertising_score"],
+        matched_rules=matched_rules,
     )
