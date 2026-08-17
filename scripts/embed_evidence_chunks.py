@@ -16,6 +16,18 @@ from app.rag.embeddings import EmbeddingClient, content_hash
 from app.rag.vector_store import get_evidence_collection
 
 
+SELECT_ACTIVE_IDS_SQL = """
+SELECT ec.chunk_id
+FROM evidence_chunks ec
+JOIN evidence_documents ed ON ed.document_id = ec.document_id
+WHERE ec.status = 'active'
+  AND ed.status = 'active'
+  AND ed.usage_scope IN ('RAG', 'BOTH')
+  {document_filter}
+ORDER BY ec.document_id, ec.chunk_order
+"""
+
+
 SELECT_CANDIDATES_SQL = """
 SELECT
     ec.chunk_id,
@@ -88,6 +100,31 @@ def _existing_hashes(chunk_ids: list[str]) -> dict[str, str]:
     return existing
 
 
+async def load_active_chunk_ids(document_id: str | None) -> set[str]:
+    document_filter = "AND ec.document_id = :document_id" if document_id else ""
+    query = SELECT_ACTIVE_IDS_SQL.format(document_filter=document_filter)
+    params = {}
+    if document_id:
+        params["document_id"] = document_id
+
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(text(query), params)).scalars().all()
+    return set(rows)
+
+
+def delete_stale_embeddings(active_chunk_ids: set[str], document_id: str | None, embedding_model: str) -> int:
+    collection = get_evidence_collection()
+    where = {"embedding_model": embedding_model}
+    if document_id:
+        where = {"$and": [where, {"document_id": document_id}]}
+
+    result = collection.get(where=where, include=["metadatas"])
+    stale_ids = [chunk_id for chunk_id in result.get("ids", []) if chunk_id not in active_chunk_ids]
+    if stale_ids:
+        collection.delete(ids=stale_ids)
+    return len(stale_ids)
+
+
 async def load_candidate_chunks(document_id: str | None, embedding_model: str, force: bool) -> list[dict]:
     document_filter = "AND ec.document_id = :document_id" if document_id else ""
     query = SELECT_CANDIDATES_SQL.format(document_filter=document_filter)
@@ -134,9 +171,15 @@ async def main() -> None:
     parser.add_argument("--document-id", help="Embed one evidence document only.")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--force", action="store_true", help="Regenerate embeddings even if text hash matches.")
+    parser.add_argument(
+        "--keep-stale",
+        action="store_true",
+        help="Keep Chroma embeddings even when they no longer exist as active DB evidence_chunks.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="List candidate count without OpenAI calls.")
     args = parser.parse_args()
 
+    active_chunk_ids = await load_active_chunk_ids(args.document_id)
     candidates = await load_candidate_chunks(
         document_id=args.document_id,
         embedding_model=settings.openai_embedding_model,
@@ -144,7 +187,16 @@ async def main() -> None:
     )
 
     if args.dry_run:
+        print(f"Active DB chunks: {len(active_chunk_ids)}")
         print(f"Embedding candidates: {len(candidates)}")
+        if not args.keep_stale:
+            collection = get_evidence_collection()
+            where = {"embedding_model": settings.openai_embedding_model}
+            if args.document_id:
+                where = {"$and": [where, {"document_id": args.document_id}]}
+            result = collection.get(where=where, include=["metadatas"])
+            stale_count = len([chunk_id for chunk_id in result.get("ids", []) if chunk_id not in active_chunk_ids])
+            print(f"Stale Chroma embeddings: {stale_count}")
         return
 
     client = EmbeddingClient()
@@ -155,7 +207,19 @@ async def main() -> None:
         processed += len(batch)
         print(f"Embedded {processed}/{len(candidates)} chunks")
 
+    deleted = 0
+    if not args.keep_stale:
+        deleted = delete_stale_embeddings(
+            active_chunk_ids=active_chunk_ids,
+            document_id=args.document_id,
+            embedding_model=settings.openai_embedding_model,
+        )
+
     print(f"Imported Chroma evidence chunk embeddings: {processed}")
+    if args.keep_stale:
+        print("Kept stale Chroma embeddings")
+    else:
+        print(f"Deleted stale Chroma embeddings: {deleted}")
 
 
 if __name__ == "__main__":

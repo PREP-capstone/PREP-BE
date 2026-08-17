@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,11 +134,35 @@ async def upsert_chunks(rows: list[dict[str, Any]]) -> None:
         await session.commit()
 
 
+async def delete_stale_chunks(rows: list[dict[str, Any]]) -> int:
+    """Delete DB chunks for imported documents that are no longer present in the CSV."""
+
+    if not rows:
+        return 0
+
+    document_ids = {row["document_id"] for row in rows}
+    chunk_ids = {row["chunk_id"] for row in rows}
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            delete(EvidenceChunk)
+            .where(EvidenceChunk.document_id.in_(document_ids))
+            .where(EvidenceChunk.chunk_id.not_in(chunk_ids))
+        )
+        await session.commit()
+    return int(result.rowcount or 0)
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Import RAG evidence CSV files into Postgres.")
     parser.add_argument("--documents-csv", type=Path, default=DEFAULT_DOCUMENTS_CSV)
     parser.add_argument("--chunks-csv", type=Path, default=DEFAULT_CHUNKS_CSV)
     parser.add_argument("--dry-run", action="store_true", help="Parse CSV files without DB writes.")
+    parser.add_argument(
+        "--keep-stale-chunks",
+        action="store_true",
+        help="Keep existing DB chunks even when they are absent from the chunks CSV.",
+    )
     args = parser.parse_args()
 
     document_rows = [document_values(row) for row in load_csv(args.documents_csv)]
@@ -150,9 +175,16 @@ async def main() -> None:
 
     await upsert_documents(document_rows)
     await upsert_chunks(chunk_rows)
+    deleted_chunks = 0
+    if not args.keep_stale_chunks:
+        deleted_chunks = await delete_stale_chunks(chunk_rows)
 
     print(f"Imported evidence_documents: {len(document_rows)}")
     print(f"Imported evidence_chunks: {len(chunk_rows)}")
+    if args.keep_stale_chunks:
+        print("Kept stale evidence_chunks")
+    else:
+        print(f"Deleted stale evidence_chunks: {deleted_chunks}")
 
 
 if __name__ == "__main__":
