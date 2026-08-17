@@ -182,13 +182,49 @@ class CorrectionMatch(BaseModel):
     legal_basis: LegalBasis
 
 
-async def _match_correction_rules(service_description: str) -> list[CorrectionMatch]:
-    """correction_rules.risky_text가 service_description에 포함되는지 매칭한다.
+def _keyword_score(keyword_row: GateKeyword) -> int:
+    """extract_c.py._keyword_score와 동일한 weight→score 변환. 오프라인/런타임 점수를 맞춘다."""
+    if keyword_row.weight == 5 or keyword_row.verdict == "FAIL_CONFIRMED":
+        return 3
+    if keyword_row.weight in (3, 4):
+        return 2
+    if keyword_row.weight in (1, 2):
+        return 1
+    return 0
 
-    extract_c.py._derive_regulatory_score의 오프라인 매칭(키워드 in 텍스트, 최고점 채택)과
-    같은 패턴을 런타임에 적용한다. regulatory-risk와 correction-candidates 둘 다 이 결과를
-    그대로 재사용한다 — 매칭 로직을 두 번 짜지 않는다.
+
+async def _match_gate_keywords(service_description: str) -> list[GateKeyword]:
+    """gate_keywords(68개, 단어 단위)를 service_description에서 직접 매칭한다.
+
+    correction_rules.risky_text(104개, 완성된 문구)는 정확하지만 문구가 조금만
+    달라도 놓친다("혈당 수치값을" vs "혈당 수치를"). gate_keywords는 "혈당"처럼 훨씬
+    잘게 쪼개진 단위라 자연스러운 서술문에서도 더 잘 걸린다.
     """
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(GateKeyword)
+                .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
+                .where(RuleVersion.status == "active")
+            )
+        ).scalars().all()
+    return [row for row in rows if row.keyword and row.keyword in service_description]
+
+
+async def _match_correction_rules(
+    service_description: str, matched_keywords: list[GateKeyword]
+) -> list[CorrectionMatch]:
+    """correction_rules를 두 경로로 매칭해 합친다(rule_id 기준 중복 제거).
+
+    ① risky_text 문구 그대로 포함 — 정확하지만 문구가 조금만 달라도 놓친다.
+    ② correction_rules.derived_from_keyword_id로 matched_keywords와 연결 — 이 컬럼은
+       원래 경로①(코드 조합 생성)이 "어떤 gate_keywords에서 나온 문구인지" 추적하려고
+       만든 FK인데, 그 관계를 거꾸로 타면 "이 키워드가 텍스트에 있으니 여기서 파생된
+       correction_rules도 관련 있다"는 훨씬 관대한 매칭이 된다. 활성 104건 중 95건이
+       이 FK를 갖고 있어 커버리지가 크다.
+    """
+    matched_keyword_ids = {row.keyword_id for row in matched_keywords}
+
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
@@ -198,17 +234,20 @@ async def _match_correction_rules(service_description: str) -> list[CorrectionMa
             )
         ).scalars().all()
 
-    return [
-        CorrectionMatch(
+    matched: dict[str, CorrectionMatch] = {}
+    for row in rows:
+        phrase_hit = row.risky_text and row.risky_text in service_description
+        keyword_hit = row.derived_from_keyword_id in matched_keyword_ids
+        if not (phrase_hit or keyword_hit):
+            continue
+        matched[str(row.rule_id)] = CorrectionMatch(
             risky_text=row.risky_text,
             safe_text=row.safe_text,
             regulatory_score=row.regulatory_score,
             advertising_score=row.advertising_score,
             legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
         )
-        for row in rows
-        if row.risky_text and row.risky_text in service_description
-    ]
+    return list(matched.values())
 
 
 async def _match_privacy_score(items: list[HealthDataItem]) -> int:
@@ -232,8 +271,13 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
 @router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
 async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
     thresholds = await _signal_thresholds()
-    matches = await _match_correction_rules(request.service_description)
+    matched_keywords = await _match_gate_keywords(request.service_description)
+    matches = await _match_correction_rules(request.service_description, matched_keywords)
+    # correction_rules는 완성된 문구라 정확하지만 놓치기 쉽고, gate_keywords는 단어
+    # 단위라 recall이 더 높다 — 둘 중 더 높은 점수를 채택해 어느 한쪽이 놓친 걸 보강한다.
+    keyword_score = max((_keyword_score(row) for row in matched_keywords), default=0)
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
+    regulatory_score = max(regulatory_score, keyword_score)
     advertising_score = max((m.advertising_score for m in matches), default=0)
     matched_rules = [m.legal_basis for m in matches]
     privacy_score = await _match_privacy_score(request.health_data_items)
@@ -274,7 +318,8 @@ class CorrectionCandidatesResponse(BaseModel):
 
 @router.post("/correction-candidates", response_model=CorrectionCandidatesResponse)
 async def judge_correction_candidates(request: GateRequest) -> CorrectionCandidatesResponse:
-    matches = await _match_correction_rules(request.service_description)
+    matched_keywords = await _match_gate_keywords(request.service_description)
+    matches = await _match_correction_rules(request.service_description, matched_keywords)
     return CorrectionCandidatesResponse(
         candidates=[
             CorrectionCandidate(risky_text=m.risky_text, safe_text=m.safe_text, legal_basis=m.legal_basis)
