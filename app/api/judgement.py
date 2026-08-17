@@ -257,3 +257,27 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
         advertising_grade=grades["advertising_score"],
         matched_rules=matched_rules,
     )
+
+
+# ---- judgement/correction-candidates ----
+
+
+class CorrectionCandidate(BaseModel):
+    risky_text: str
+    safe_text: str
+    legal_basis: LegalBasis
+
+
+class CorrectionCandidatesResponse(BaseModel):
+    candidates: list[CorrectionCandidate]
+
+
+@router.post("/correction-candidates", response_model=CorrectionCandidatesResponse)
+async def judge_correction_candidates(request: GateRequest) -> CorrectionCandidatesResponse:
+    matches = await _match_correction_rules(request.service_description)
+    return CorrectionCandidatesResponse(
+        candidates=[
+            CorrectionCandidate(risky_text=m.risky_text, safe_text=m.safe_text, legal_basis=m.legal_basis)
+            for m in matches
+        ]
+    )
