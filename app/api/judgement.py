@@ -268,18 +268,22 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
     # 활성 rule_version_id를 한 번만 확정해서 이후 모든 쿼리에 그대로 넘긴다 — 각 쿼리가
     # 따로 "활성"을 다시 판단하면 그 사이 publish()가 끼어들 때 스냅샷이 어긋날 수 있다.
     rule_version_ids = await resolve_active_rule_version_ids()
-    # matches는 matched_keywords에 의존해 이후 실행, 나머지 셋은 독립적이라 병렬 조회.
-    thresholds, matched_keywords, privacy_score = await asyncio.gather(
-        _signal_thresholds(rule_version_ids),
-        _match_gate_keywords(request.service_description, rule_version_ids),
-        _match_privacy_score(request.health_data_items),
-    )
+
+    # thresholds부터 먼저 확인한다 — signal_config에 축이 빠져 있으면 어차피 500인데,
+    # gate_keywords/data_sensitivity 전체 스캔 같은 비싼 쿼리를 먼저 하고 버리지 않는다.
+    thresholds = await _signal_thresholds(rule_version_ids)
     missing_axes = [axis for axis in _AXIS_TO_SCORE_FIELD if axis not in thresholds]
     if missing_axes:
         raise HTTPException(
             status_code=500,
             detail=f"signal_config에 활성 임계값이 없는 축: {missing_axes}",
         )
+
+    # matches는 matched_keywords에 의존해 이후 실행, 나머지 둘은 독립적이라 병렬 조회.
+    matched_keywords, privacy_score = await asyncio.gather(
+        _match_gate_keywords(request.service_description, rule_version_ids),
+        _match_privacy_score(request.health_data_items),
+    )
     matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
     # 키워드/문구 두 매칭 중 더 높은 점수 채택 — 한쪽이 놓친 걸 다른 쪽으로 보강.
     keyword_match_score = max((keyword_score(row) for row in matched_keywords), default=0)
