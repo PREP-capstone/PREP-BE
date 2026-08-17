@@ -169,7 +169,15 @@ async def _signal_thresholds() -> dict[str, tuple[int, int]]:
                 select(SignalConfig).where(SignalConfig.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
-    return {row.axis: (row.threshold_low, row.threshold_mid) for row in rows}
+    thresholds: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        if row.axis in thresholds:
+            raise HTTPException(
+                status_code=500,
+                detail=f"signal_config에 축 '{row.axis}'의 활성 임계값이 중복됩니다",
+            )
+        thresholds[row.axis] = (row.threshold_low, row.threshold_mid)
+    return thresholds
 
 
 class CorrectionMatch(BaseModel):
