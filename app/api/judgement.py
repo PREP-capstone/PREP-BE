@@ -6,6 +6,8 @@ analysis-sessions API가 아직 없어 요청 스키마는 역할분담표 §6 �
 data_type과 이름만 같고 뜻이 다름) 필드를 다시 맞춰야 한다.
 """
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -264,8 +266,11 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
 
     best = 0
     for item in items:
+        name = item.name.strip()
+        if not name:
+            continue
         for row in rows:
-            if row.item_label in item.name or item.name in row.item_label:
+            if row.item_label in name or name in row.item_label:
                 best = max(best, row.sensitivity_level)
     return best
 
