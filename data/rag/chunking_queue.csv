@@ -38,3 +38,4 @@
 37,phase_4_expand,kr-food-labeling-ad-act-future-20261127,식품 등의 표시·광고에 관한 법률,future,SUPPORTING_REVISION_TEXT,selective_chunk,개정 항목 단위,,/Users/munchaerin/Desktop/졸프 data/식품 등의 표시ㆍ광고에 관한 법률_개정문개정이유.txt,future 본문 PDF는 없음. 개정문/개정이유만 보조로 연결
 38,phase_4_expand,kr-medical-act-decree-20260210,의료법 시행령,active,SUPPORTING_REVISION_TEXT,selective_chunk,개정 항목 단위,,/Users/munchaerin/Desktop/졸프 data/의료법 시행령_개정문개정이유.txt,시행령 본문이 아니라 개정문/개정이유. 본문 추가 확보 권장
 39,phase_4_expand,kr-ai-basic-act-20260122,인공지능 발전과 신뢰 기반 조성 등에 관한 기본법,active,PRIMARY_TEXT,primary_chunk,조문 단위,15,/Users/munchaerin/Desktop/졸프 data/인공지능 발전과 신뢰 기반 조성 등에 관한 기본법(법률)(제21311호)(20260122).pdf,조문 단위 chunk 가능
+40,phase_1_core,kr-mohw-nonmedical-health-guide-202209,비의료 건강관리서비스 가이드라인 및 사례집(2차),pending_source,PRIMARY_TEXT,needs_source,장/절/Q&A 단위,,/Users/munchaerin/Desktop/졸프 data/비의료 건강관리서비스 가이드라인_및_사례집(2차).pdf,룰베이스 correction_rules 29건 인용 문서. 2019년 1차본과 판본 불일치 방지를 위해 2차본 공식 PDF 확보 후 청킹.
