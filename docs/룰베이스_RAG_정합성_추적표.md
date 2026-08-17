@@ -1,10 +1,15 @@
 # 룰베이스 ↔ RAG 정합성 추적표
 
-> 버전: v1.2 | 2026-08-17
+> 버전: v1.3 | 2026-08-17
 > 목적: 룰베이스(`gate_matrix`/`correction_rules`의 `legal_basis_doc`/`legal_basis_article`)와
 > RAG(`evidence_documents.document_id`/`evidence_chunks.section_id`)가 **같은 문서·같은 조문을
 > 가리키는지** 양쪽 담당자가 함께 보고 관리하는 기준표.
 > 재검증 주기: RAG 쪽 문서 추가/재청킹이 있을 때마다, 또는 판정 API(`judgement/*`) 배포 전 필수 1회.
+> v1.3 변경: **웰니스판단기준·의료법 재청킹 반영 (RAG PR #25)** — 조문 단위로 재청킹 완료 확인,
+> 실제 원문(page 17~18)과 대조해 청킹 구조가 정확함을 검증. 이 과정에서 **룰베이스 자체 오류
+> 2건 발견·수정**: gate_matrix의 `legal_basis_article`이 `III.가`/`III.다`로 돼 있었는데, 실제
+> 문서 구조는 `III` → `2.` → `가/나/다`라 `III.2.가`/`III.2.다`가 맞음(§1.5.1 표기 규칙 위반).
+> 운영 DB(로컬+RDS) 수정 완료.
 > v1.2 변경: **표 3 신설** — `RAG_데이터수집_최종보고서.md`(2026-07-29) 기준 RAG 적재 문서
 > 37건 전체를 실데이터(`evidence_documents_draft.csv`/`evidence_chunks_draft.csv`)로 재확인해
 > 청킹 상태와 함께 정리. 룰베이스 미인용 29건도 포함(향후 참고용). 실제 청킹 완료는 8건뿐임을
@@ -21,13 +26,13 @@
 
 | 문서명 | 판본/발행일 | 룰베이스 document_id | RAG document_id | 일치 여부 | section_id 체계 | 영향 행 수 | 상태 | 최종 확인일 | 비고 |
 |---|---|---|---|---|---|---|---|---|---|
-| 웰니스판단기준 0091-03 | 2026.2 개정 | `kr-mfds-wellness-0091-03-20260212` | `kr-mfds-wellness-0091-03-20260212` | ✅ 일치 | ❌ **페이지 단위**(`p10`~`p31`) — §1.5.1(2026-07-28 확정) 조문 단위 합의와 불일치 | gate_matrix 6 + correction_rules 54 = **60건** | 🔴 조치 필요 | 2026-08-17 | 룰베이스 최다 인용 문서. 조문 단위 재청킹 요청함 |
+| 웰니스판단기준 0091-03 | 2026.2 개정 | `kr-mfds-wellness-0091-03-20260212` | `kr-mfds-wellness-0091-03-20260212` | ✅ 일치 | ✅ **조문 단위로 재청킹 완료** (PR #25) — 원문 17~18쪽과 대조해 구조 확인(`III.2.가` 등) | gate_matrix 6 + correction_rules 54 = **60건** | ✅ 해소 | 2026-08-17 | 재청킹 검증 과정에서 gate_matrix 2건(`III.가`→`III.2.가`, `III.다`→`III.2.다`)의 자체 표기 오류 발견·수정. correction_rules 54건(`IV.1~3` 계열)은 전부 정상 확인 |
 | 모바일 의료용 앱 안전관리 지침 | 2020.2 개정 | `kr-mfds-mobile-medical-app-guide-20200225` (2026-08-17 수정, 구 `kr-mobile-medical-app-guide-20200221`) | `kr-mfds-mobile-medical-app-guide-20200225` | ✅ **일치 확정** | 미확인 (RAG 청킹 대상에 이 문서 chunk 없음 — 확인 필요) | gate_matrix 1건 | ✅ 정상(document_id) / 🟡 청킹 확인 필요 | 2026-08-17 | 로컬 PDF(`kr-mobile-medical-app-guide-20200221.pdf`) 표지·제개정이력서 직접 확인 — "2020.2.21."은 문서 자체에 인쇄된 공식 승인일자(제·개정 이력서 2번 항목). PDF 파일 CreationDate는 2020-02-24. RAG의 2020-02-25는 MFDS 홈페이지 게시일로 추정 — 같은 문서, 날짜 출처만 다름. `MFDS-G-2026-03` 식별자 건 해소 |
 | 비의료 건강관리서비스 가이드라인 및 사례집 | 룰베이스=**2차(2022.9)** / RAG=**1차(2019.5.21)** | `kr-mohw-nonmedical-health-guide-202209` | `kr-mohw-nonmedical-healthcare-guide-20190521` | ❌ **불일치 — 다른 판본** | RAG는 혼합(로마숫자 장 제목 + 페이지 단위) | correction_rules **29건** | 🔴 조치 필요 | 2026-08-17 | document_id만 맞추면 다른 판본 원문이 근거로 표시될 위험. 2차본 PDF 로컬 보유, RAG에 공유 예정 |
 | 약사법 | 시행 2026.6.21, 법률 제21109호 | `kr-pharmaceutical-affairs-act-20260621` | `kr-pharmaceutical-affairs-act-20260621` | ✅ 일치 | ✅ 조문 단위(`제2조`/`제20조`/`제23조`/`제23조의2`/`제24조`) | correction_rules 7건 | 🟡 일부 조치 필요 | 2026-08-17 | `제44조` 1건 미청킹 — 표2 참조 |
 | 의료기기법 | 시행 2026.7.1, 법률 제21263호 | `kr-medical-device-act-20260701` | `kr-medical-device-act-20260701` | ✅ 일치 | ✅ 조문 단위(`제2조`/`제24조`) | correction_rules 7건 | ✅ 정상 | 2026-08-17 | 인용 조문(`제2조`)이 청킹 범위 안 |
 | 의료기기법 시행규칙 별표7 | 시행 2026.7.1, 총리령 제2127호 | `kr-medical-device-act-rule-annex7-20260701` | `kr-medical-device-act-rule-annex7-20260701` | ✅ 일치 | ✅ 항목 단위(`별표7.제1호`~`제18호`) | RAG 전용(Stage C 룰추출 대상 아님, advertising_score 척도 근거로만 사용) | ✅ 정상 | 2026-08-17 | 18개 항목 전부 청킹 완료 확인 |
-| 의료법 | 시행 2026.4.7, 법률 제21524호 | `kr-medical-act-20260407` | `kr-medical-act-20260407` | ✅ document_id는 일치 | ❌ **RAG chunk 0건 — 미청킹** | correction_rules **7건** | 🔴 조치 필요 | 2026-08-17 | 인용 중인 `제27조` 포함 전체 미청킹 |
+| 의료법 | 시행 2026.4.7, 법률 제21524호 | `kr-medical-act-20260407` | `kr-medical-act-20260407` | ✅ document_id는 일치 | ✅ 청킹 완료(PR #25) — `제2조`/`제27조`/`제56조` 3건 | correction_rules **7건** | ✅ 해소 | 2026-08-17 | 인용 중인 `제27조` 청킹 범위 안 |
 | LLM 기반 디지털의료기기 허가·심사 가이드라인 | 2026.6.30 제정, 안내서-1511-01 | `kr-mfds-llm-digital-medical-device-1511-01-20260630` | `kr-mfds-llm-digital-medical-device-1511-01-20260630` | ✅ document_id는 일치 | ❌ RAG chunk 0건 — 미청킹 | gate_matrix 1건 | 🟡 조치 필요(낮은 우선순위) | 2026-08-17 | function_type 매핑 근거 1건뿐이라 시급하지 않음 |
 
 ---
