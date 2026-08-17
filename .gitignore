@@ -6,8 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 data/chroma/
-\docs
 CLAUDE.md
-requirements-win.txt
+requirements-windows.txt
 data/rule/dump_latest.txt
 data/rule/correction_rules_generated.csv
