@@ -179,7 +179,8 @@ class CorrectionMatch(BaseModel):
     safe_text: str
     regulatory_score: int
     advertising_score: int
-    legal_basis: LegalBasis
+    legal_basis: LegalBasis   
+    exact_phrase_match: bool
 
 
 def _keyword_score(keyword_row: GateKeyword) -> int:
@@ -246,6 +247,7 @@ async def _match_correction_rules(
             regulatory_score=row.regulatory_score,
             advertising_score=row.advertising_score,
             legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
+            exact_phrase_match=bool(phrase_hit),
         )
     return list(matched.values())
 
@@ -310,6 +312,7 @@ class CorrectionCandidate(BaseModel):
     risky_text: str
     safe_text: str
     legal_basis: LegalBasis
+    exact_phrase_match: bool
 
 
 class CorrectionCandidatesResponse(BaseModel):
@@ -322,7 +325,12 @@ async def judge_correction_candidates(request: GateRequest) -> CorrectionCandida
     matches = await _match_correction_rules(request.service_description, matched_keywords)
     return CorrectionCandidatesResponse(
         candidates=[
-            CorrectionCandidate(risky_text=m.risky_text, safe_text=m.safe_text, legal_basis=m.legal_basis)
+            CorrectionCandidate(
+                risky_text=m.risky_text,
+                safe_text=m.safe_text,
+                legal_basis=m.legal_basis,
+                exact_phrase_match=m.exact_phrase_match,
+            )
             for m in matches
         ]
     )
