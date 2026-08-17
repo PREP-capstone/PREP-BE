@@ -8,6 +8,15 @@ legal_article), 한 곳에서만 정의하고 다 같이 import해서 쓴다.
 from pydantic import BaseModel
 
 
+class ApiResponse(BaseModel):
+    """모든 API가 공유하는 응답 envelope. 성공/실패 상관없이 이 형태를 따른다."""
+
+    isSuccess: bool
+    code: str
+    message: str
+    result: object
+
+
 class LegalBasis(BaseModel):
     """근거 조문 1건. document_id/article은 RAG evidence_documents/chunks 조회 키와
     형식이 같아야 한다 — db_구축_설계서.md §1.5.1 정규화 규칙 참조.
