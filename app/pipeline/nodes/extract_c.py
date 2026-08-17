@@ -11,7 +11,8 @@ from openai import AsyncOpenAI
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.db.models import GateKeyword, RuleVersion
+from app.db.models import GateKeyword
+from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS
 from app.db.session import AsyncSessionLocal
 from app.pipeline.article_ref import (
     ARTICLE_NOTATION_PROMPT,
@@ -164,9 +165,7 @@ async def extract_C(state: PipelineState) -> dict:
 async def _load_active_keywords() -> list[GateKeyword]:
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(GateKeyword)
-            .join(RuleVersion, RuleVersion.rule_version_id == GateKeyword.rule_version_id)
-            .where(RuleVersion.status == "active")
+            select(GateKeyword).where(GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
         )
         return list(result.scalars().all())
 

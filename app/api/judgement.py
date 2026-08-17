@@ -12,7 +12,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, RuleVersion, SignalConfig
+from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
+from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS
 from app.db.session import AsyncSessionLocal
 from app.pipeline.correction_terms import BIOMARKER_EXTRA
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
@@ -61,17 +62,13 @@ _ACTION_PRIORITY: list[tuple[set[str], str]] = [
 # 기기연동이어야 침습적 하드체크가 발동하므로 최우선.
 _ACQUIRE_METHOD_PRIORITY = ("기기연동", "OS연동", "수동입력")
 
-_ACTIVE_RULE_VERSION_IDS = (
-    select(RuleVersion.rule_version_id).where(RuleVersion.status == "active").scalar_subquery()
-)
-
 
 async def _biomarker_keywords() -> set[str]:
     """생체지표 판별 사전 = gate_keywords(DATA_TYPE) + BIOMARKER_EXTRA(Stage C와 공유, 미등록 지표 보충)."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(GateKeyword.keyword).where(
-                GateKeyword.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS),
+                GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS),
                 GateKeyword.keyword_category == "DATA_TYPE",
             )
         )
@@ -166,7 +163,7 @@ async def _signal_thresholds() -> dict[str, tuple[int, int]]:
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(SignalConfig).where(SignalConfig.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS))
+                select(SignalConfig).where(SignalConfig.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
     return {row.axis: (row.threshold_low, row.threshold_mid) for row in rows}
@@ -197,7 +194,7 @@ async def _match_gate_keywords(service_description: str) -> list[GateKeyword]:
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(GateKeyword).where(GateKeyword.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS))
+                select(GateKeyword).where(GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
     return [row for row in rows if row.keyword and row.keyword in service_description]
@@ -216,7 +213,7 @@ async def _match_correction_rules(
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(CorrectionRule).where(CorrectionRule.rule_version_id.in_(_ACTIVE_RULE_VERSION_IDS))
+                select(CorrectionRule).where(CorrectionRule.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS))
             )
         ).scalars().all()
 
