@@ -1,0 +1,9 @@
+matrix_id,rule_version_id,data_type,function_type,verdict,exemption_note,acquire_method,avoidance_redesign,avoidance_certification,legal_basis_doc,legal_basis_article,risk_code,priority,created_at
+46081a31-6d48-4b23-b2d6-31ce0b32b46b,937d119c-a305-4b3f-94f6-0789738a598a,생체지표,단순기록,PASS,,,,,kr-mfds-wellness-0091-03-20260212,IV.1.가,,1,2026-08-14 04:04:57.258161+00:00
+1047a520-8e05-4c48-a95a-84bf4c32adfa,937d119c-a305-4b3f-94f6-0789738a598a,생체지표,비교·추이분석,CONDITIONAL,,,,,kr-mfds-wellness-0091-03-20260212,III.가,,2,2026-08-14 04:04:57.258161+00:00
+c3ca4874-1755-4fe6-9414-32c01cdca5b5,937d119c-a305-4b3f-94f6-0789738a598a,생체지표,수치예측·진단,FAIL,,,,,kr-mfds-wellness-0091-03-20260212,IV.3,,3,2026-08-14 04:04:57.258161+00:00
+1eea96d1-7bf3-4a58-b867-00357edcd59c,937d119c-a305-4b3f-94f6-0789738a598a,라이프스타일,단순기록,PASS,,,,,kr-mfds-wellness-0091-03-20260212,IV.1,,1,2026-08-14 04:04:57.258161+00:00
+72b2bfaf-c895-4562-a4d9-065a2c796d7e,937d119c-a305-4b3f-94f6-0789738a598a,라이프스타일,비교·추이분석,PASS,,,,,kr-mfds-wellness-0091-03-20260212,III.다,,1,2026-08-14 04:04:57.258161+00:00
+723a407f-13b5-456c-a016-1ee0a87815ad,937d119c-a305-4b3f-94f6-0789738a598a,라이프스타일,수치예측·진단,CONDITIONAL,,,,,kr-mfds-llm-digital-medical-device-1511-01-20260630,표3-1,,2,2026-08-14 04:04:57.258161+00:00
+721b9470-1e88-41cf-ae4b-8ceb915f21ca,937d119c-a305-4b3f-94f6-0789738a598a,생체지표,비교·추이분석,CONDITIONAL,,기기연동,,,kr-mfds-wellness-0091-03-20260212,II.5,,2,2026-08-14 04:04:57.258161+00:00
+a07ed10b-0b47-4604-b6d4-aa309638410b,937d119c-a305-4b3f-94f6-0789738a598a,생체지표,단순기록,CONDITIONAL,,기기연동,,,kr-mfds-mobile-medical-app-guide-20200225,V.2,,2,2026-08-14 04:04:57.258161+00:00

@@ -1,0 +1,4 @@
+config_id,rule_version_id,axis,threshold_low,threshold_mid
+319413ae-0b6a-4bc9-b427-02aa26b27505,ff5e2849-e1fd-4867-af6a-4ee343b36f19,의료행위표현,1,2
+445983bb-49d8-4911-8786-d184d52e039d,ff5e2849-e1fd-4867-af6a-4ee343b36f19,개인정보민감도,1,2
+afdb2eee-ecc8-4ee2-9121-72c8d536bf43,ff5e2849-e1fd-4867-af6a-4ee343b36f19,광고표현위험,1,2

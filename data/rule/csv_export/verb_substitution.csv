@@ -1,0 +1,13 @@
+verb,verb_category,safe_verb,noun_classes,standalone,legal_basis_doc,legal_basis_article
+진단,DIAGNOSIS,확인,질병명,False,kr-medical-act-20260407,제27조
+검사,DIAGNOSIS,자가 측정,질병명,False,kr-mfds-wellness-0091-03-20260212,IV.1.가
+판별,DIAGNOSIS,기록,질병명,False,kr-mfds-wellness-0091-03-20260212,IV.1.가
+측정,DIAGNOSIS,변화 추이 확인,생체지표,False,kr-mfds-wellness-0091-03-20260212,IV.3
+치료,TREATMENT,관리,질병명,False,kr-mfds-wellness-0091-03-20260212,IV.2.가
+처방,TREATMENT,안내,질병명,False,kr-mfds-wellness-0091-03-20260212,IV.2.나
+개선,TREATMENT,향상 도움,질병명,False,kr-mfds-wellness-0091-03-20260212,IV.1.나
+완화,TREATMENT,관리,질병명,False,kr-medical-device-act-20260701,제2조
+처치,TREATMENT,정보 제공,질병명,False,kr-mfds-wellness-0091-03-20260212,IV.2.가
+조제,PHARM,대체 표현 없음 — 약사 전속 업무이므로 기능 자체를 제외해야 함,,True,kr-pharmaceutical-affairs-act-20260621,제23조
+투약,PHARM,복용 기록,,True,kr-pharmaceutical-affairs-act-20260621,제44조
+복약지도,PHARM,복약 정보 제공,,True,kr-pharmaceutical-affairs-act-20260621,제24조
