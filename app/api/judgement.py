@@ -6,7 +6,7 @@ analysis-sessions API가 아직 없어 요청 스키마는 역할분담표 §6 �
 data_type과 이름만 같고 뜻이 다름) 필드를 다시 맞춰야 한다.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -273,6 +273,12 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
 @router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
 async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
     thresholds = await _signal_thresholds()
+    missing_axes = [axis for axis in _AXIS_TO_SCORE_FIELD if axis not in thresholds]
+    if missing_axes:
+        raise HTTPException(
+            status_code=500,
+            detail=f"signal_config에 활성 임계값이 없는 축: {missing_axes}",
+        )
     matched_keywords = await _match_gate_keywords(request.service_description)
     matches = await _match_correction_rules(request.service_description, matched_keywords)
     # correction_rules는 완성된 문구라 정확하지만 놓치기 쉽고, gate_keywords는 단어
