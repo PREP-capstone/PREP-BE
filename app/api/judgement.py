@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
 from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS
 from app.db.session import AsyncSessionLocal
-from app.pipeline.correction_terms import BIOMARKER_EXTRA
+from app.pipeline.correction_terms import BIOMARKER_EXTRA, keyword_score
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
 from app.schemas.common import LegalBasis
 
@@ -194,17 +194,6 @@ class CorrectionMatch(BaseModel):
     exact_phrase_match: bool
 
 
-def _keyword_score(keyword_row: GateKeyword) -> int:
-    """extract_c.py._keyword_score와 동일한 weight→score 변환. 오프라인/런타임 점수를 맞춘다."""
-    if keyword_row.weight == 5 or keyword_row.verdict == "FAIL_CONFIRMED":
-        return 3
-    if keyword_row.weight in (3, 4):
-        return 2
-    if keyword_row.weight in (1, 2):
-        return 1
-    return 0
-
-
 async def _match_gate_keywords(service_description: str) -> list[GateKeyword]:
     """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다."""
     async with AsyncSessionLocal() as session:
@@ -288,9 +277,9 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
         )
     matches = await _match_correction_rules(request.service_description, matched_keywords)
     # 키워드/문구 두 매칭 중 더 높은 점수 채택 — 한쪽이 놓친 걸 다른 쪽으로 보강.
-    keyword_score = max((_keyword_score(row) for row in matched_keywords), default=0)
+    keyword_match_score = max((keyword_score(row) for row in matched_keywords), default=0)
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
-    regulatory_score = max(regulatory_score, keyword_score)
+    regulatory_score = max(regulatory_score, keyword_match_score)
     advertising_score = max((m.advertising_score for m in matches), default=0)
     matched_rules = [
         MatchedRule(legal_basis=m.legal_basis, exact_phrase_match=m.exact_phrase_match) for m in matches

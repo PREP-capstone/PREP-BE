@@ -12,6 +12,8 @@ Stage C(correction_rules)의 원천은 애초에 문서 추출이 아니라 조�
 모듈은 조합에 쓰이는 **명사 분류**만 담당한다.
 """
 
+from app.db.models import GateKeyword
+
 # gate_keywords(type=DISEASE, keyword_category=DATA_TYPE)를 질병명/생체지표로 분류한다.
 # 자동 분류가 아니라 수기 매핑이다 — "고혈압"과 "혈압"처럼 접두어만 다른 케이스를
 # 규칙으로 가르기 어렵고, 잘못 가르면 "혈압 진단"처럼 죽은 게 아니라 어색한 조합이
@@ -42,3 +44,14 @@ NOUN_CLASSIFICATION: dict[str, str] = {
 # 둔다 — 문법적으로 성립하지 않는 조합("혈압 진단"류)은 매칭 자체가 안 되므로
 # 사용자 입력과 부딪히지 않는다(2026-08-13 결정).
 BIOMARKER_EXTRA: tuple[str, ...] = ("심박수", "체중", "체성분", "심전도", "산소포화도")
+
+
+def keyword_score(keyword_row: GateKeyword) -> int:
+    """weight→score 변환. 오프라인(extract_c.py)과 런타임(judgement.py)이 공유한다."""
+    if keyword_row.weight == 5 or keyword_row.verdict == "FAIL_CONFIRMED":
+        return 3
+    if keyword_row.weight in (3, 4):
+        return 2
+    if keyword_row.weight in (1, 2):
+        return 1
+    return 0
