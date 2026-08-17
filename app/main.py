@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.api.judgement import router as judgement_router
+from app.api.rag import router as rag_router
 from app.core.config import settings
 from app.core.redis_client import redis_client
 from app.db.session import engine
@@ -23,6 +24,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(judgement_router)
+app.include_router(rag_router)
 
 
 class RagSearchRequest(BaseModel):
