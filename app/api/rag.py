@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -46,7 +47,7 @@ class RagDocumentDetail(BaseModel):
 
 class RagChunkLookupRequest(BaseModel):
     document_id: str
-    section_ids: list[str]
+    section_ids: list[str] = Field(max_length=50)
 
 
 class RagChunkLookupItem(BaseModel):
@@ -197,6 +198,20 @@ async def get_rag_document(document_id: str) -> RagDocumentResponse | JSONRespon
     )
 
 
+def order_chunks_by_requested_sections(
+    chunks: Sequence[EvidenceChunk], section_ids: list[str]
+) -> list[EvidenceChunk]:
+    """chunk_order가 아니라 caller가 요청한 section_ids 순서를 따르도록 재정렬한다.
+
+    중복 section_id가 오면 첫 등장 위치를 기준으로 삼는다 — setdefault라서 뒤에 나온
+    같은 id는 앞의 순번을 덮어쓰지 않는다.
+    """
+    section_order: dict[str, int] = {}
+    for index, section_id in enumerate(section_ids):
+        section_order.setdefault(section_id, index)
+    return sorted(chunks, key=lambda chunk: section_order.get(chunk.section_id or "", len(section_order)))
+
+
 @router.post("/chunks/lookup", response_model=RagChunksLookupResponse)
 async def lookup_rag_chunks(request: RagChunkLookupRequest) -> RagChunksLookupResponse:
     if not request.section_ids:
@@ -219,10 +234,7 @@ async def lookup_rag_chunks(request: RagChunkLookupRequest) -> RagChunksLookupRe
     async with AsyncSessionLocal() as session:
         chunks = (await session.execute(stmt)).scalars().all()
 
-    section_order: dict[str, int] = {}
-    for index, section_id in enumerate(request.section_ids):
-        section_order.setdefault(section_id, index)
-    chunks = sorted(chunks, key=lambda chunk: section_order.get(chunk.section_id or "", len(section_order)))
+    chunks = order_chunks_by_requested_sections(chunks, request.section_ids)
 
     return RagChunksLookupResponse(
         isSuccess=True,
@@ -244,10 +256,21 @@ async def lookup_rag_chunks(request: RagChunkLookupRequest) -> RagChunksLookupRe
     )
 
 
-@router.post("/search", response_model=RagSearchResponse)
-async def search_rag_evidence(request: RagSearchRequest) -> RagSearchResponse:
+@router.post(
+    "/search",
+    response_model=RagSearchResponse,
+    responses={503: {"model": RagErrorResponse}},
+)
+async def search_rag_evidence(request: RagSearchRequest) -> RagSearchResponse | JSONResponse:
     if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
+        return JSONResponse(
+            status_code=503,
+            content=RagErrorResponse(
+                isSuccess=False,
+                code="RAG_SEARCH_UNAVAILABLE",
+                message="OPENAI_API_KEY가 설정되지 않았습니다.",
+            ).model_dump(),
+        )
 
     retriever = EvidenceRetriever()
     chunks = await retriever.search(
