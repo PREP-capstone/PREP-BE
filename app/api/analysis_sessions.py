@@ -89,7 +89,9 @@ class AnalysisSessionErrorResponse(ApiResponse):
 
 
 def generate_session_id(now: datetime | None = None) -> str:
-    current = now or datetime.now()
+    # DB의 created_at/updated_at은 전부 UTC(DateTime(timezone=True) + func.now())라서
+    # 로컬 시스템 시간을 쓰면 서버가 UTC가 아닐 때 날짜 prefix가 어긋난다.
+    current = now or datetime.now(timezone.utc)
     return f"session_{current:%Y%m%d}_{uuid.uuid4().hex[:8]}"
 
 
@@ -226,7 +228,14 @@ async def create_health_data(
     session_id: str, request: HealthDataUpsertRequest
 ) -> HealthDataMutationResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
-        analysis_session = await session.get(AnalysisSession, session_id)
+        # FOR UPDATE로 세션 row를 잠가서, 동시에 들어온 두 요청이 둘 다 "데이터 없음"으로
+        # 보고 중복 삽입하는 TOCTOU 레이스를 막는다 — 나중 트랜잭션은 앞 트랜잭션이
+        # commit할 때까지 이 SELECT에서 블록되고, 그 뒤엔 existing이 채워져 409로 빠진다.
+        analysis_session = (
+            await session.execute(
+                select(AnalysisSession).where(AnalysisSession.session_id == session_id).with_for_update()
+            )
+        ).scalar_one_or_none()
         if analysis_session is None:
             return not_found_response()
 
