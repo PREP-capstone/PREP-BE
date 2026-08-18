@@ -6,7 +6,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
@@ -17,6 +17,16 @@ from app.schemas.common import ApiResponse
 router = APIRouter(prefix="/api/v1/analysis-sessions", tags=["analysis-sessions"])
 
 _MAX_LIST_LENGTH = 50
+_MAX_STRING_ITEM_LENGTH = 200
+
+
+def _validate_string_lengths(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return values
+    for value in values:
+        if len(value) > _MAX_STRING_ITEM_LENGTH:
+            raise ValueError(f"항목 길이는 {_MAX_STRING_ITEM_LENGTH}자를 넘을 수 없습니다.")
+    return values
 
 
 class HealthDataItemInput(BaseModel):
@@ -27,15 +37,28 @@ class HealthDataItemInput(BaseModel):
     is_sensitive: bool = False
 
 
-class HealthDataItemResponse(HealthDataItemInput):
-    pass
+class HealthDataItemResponse(BaseModel):
+    """요청(HealthDataItemInput)과 필드가 지금은 같지만, 상속시키지 않고 독립적으로
+    정의한다 — 상속하면 나중에 요청 전용 필드가 추가될 때 응답에도 조용히 새어나간다.
+    """
+
+    name: str
+    data_type: str
+    unit: str | None
+    source: Literal["user_input", "device_sync", "os_sync"]
+    is_sensitive: bool
 
 
 class CreateAnalysisSessionRequest(BaseModel):
     service_name: str = Field(min_length=1, max_length=200)
-    service_description: str = Field(min_length=1)
+    service_description: str = Field(min_length=1, max_length=5000)
     target_users: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
     service_type: str | None = Field(default=None, max_length=50)
+
+    @field_validator("target_users")
+    @classmethod
+    def _cap_target_user_length(cls, value: list[str]) -> list[str]:
+        return _validate_string_lengths(value)
 
 
 class CreateAnalysisSessionResult(BaseModel):
@@ -53,11 +76,21 @@ class HealthDataUpsertRequest(BaseModel):
     processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
     service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
+    @field_validator("processing_purpose", "service_actions")
+    @classmethod
+    def _cap_item_length(cls, value: list[str] | None) -> list[str] | None:
+        return _validate_string_lengths(value)
+
 
 class PatchHealthDataRequest(BaseModel):
     health_data_items: list[HealthDataItemInput] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
     processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
     service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
+
+    @field_validator("processing_purpose", "service_actions")
+    @classmethod
+    def _cap_item_length(cls, value: list[str] | None) -> list[str] | None:
+        return _validate_string_lengths(value)
 
 
 class HealthDataMutationResult(BaseModel):
@@ -281,7 +314,13 @@ async def update_health_data(
     session_id: str, request: PatchHealthDataRequest
 ) -> HealthDataMutationResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
-        analysis_session = await session.get(AnalysisSession, session_id)
+        # POST와 동일하게 FOR UPDATE로 잠근다 — 락 없이 delete+insert만 하면 동시 PATCH가
+        # 서로의 uncommitted 변경을 못 보고 중복/겹치는 row를 남길 수 있다.
+        analysis_session = (
+            await session.execute(
+                select(AnalysisSession).where(AnalysisSession.session_id == session_id).with_for_update()
+            )
+        ).scalar_one_or_none()
         if analysis_session is None:
             return not_found_response()
 
