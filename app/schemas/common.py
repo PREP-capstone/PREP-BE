@@ -8,6 +8,20 @@ legal_article), 한 곳에서만 정의하고 다 같이 import해서 쓴다.
 from pydantic import BaseModel
 
 
+class ApiResponse(BaseModel):
+    """RAG 문서/청크 조회 API(rag.py)가 공유하는 응답 envelope.
+
+    judgement.py는 이 envelope을 쓰지 않는다. /rag/search는 성공 응답만 명세서에
+    고정된 순수 배열 형태(별도 계약)라 제외하고, 에러 응답은 다른 rag.py 엔드포인트와
+    동일하게 이 envelope을 따른다.
+    """
+
+    isSuccess: bool
+    code: str
+    message: str
+    result: object
+
+
 class LegalBasis(BaseModel):
     """근거 조문 1건. document_id/article은 RAG evidence_documents/chunks 조회 키와
     형식이 같아야 한다 — db_구축_설계서.md §1.5.1 정규화 규칙 참조.
