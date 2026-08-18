@@ -174,7 +174,7 @@ async def get_rag_document(document_id: str) -> RagDocumentResponse | JSONRespon
     async with AsyncSessionLocal() as session:
         document = await session.get(EvidenceDocument, document_id)
 
-    if document is None:
+    if document is None or document.status != "active":
         return JSONResponse(
             status_code=404,
             content=RagErrorResponse(

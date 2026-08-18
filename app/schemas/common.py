@@ -9,9 +9,11 @@ from pydantic import BaseModel
 
 
 class ApiResponse(BaseModel):
-    """RAG 문서/청크 조회 API(rag.py)가 공유하는 응답 envelope. 성공/실패 상관없이 이
-    형태를 따른다. judgement.py 및 검색 스펙이 고정된 /rag/search는 별도 계약을 따르므로
-    포함하지 않는다.
+    """RAG 문서/청크 조회 API(rag.py)가 공유하는 응답 envelope.
+
+    judgement.py는 이 envelope을 쓰지 않는다. /rag/search는 성공 응답만 명세서에
+    고정된 순수 배열 형태(별도 계약)라 제외하고, 에러 응답은 다른 rag.py 엔드포인트와
+    동일하게 이 envelope을 따른다.
     """
 
     isSuccess: bool
