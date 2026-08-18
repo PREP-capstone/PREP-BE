@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -18,30 +18,42 @@ from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/rag", tags=["rag"])
 
+_evidence_retriever: EvidenceRetriever | None = None
+
+
+def _get_evidence_retriever() -> EvidenceRetriever:
+    """요청마다 새 OpenAI 클라이언트를 만들지 않도록 최초 1회만 생성해 재사용한다.
+
+    OPENAI_API_KEY 미설정 시 EvidenceRetriever() 생성 자체가 RuntimeError를 던지므로,
+    앱 기동(모듈 임포트) 시점이 아니라 키 존재가 확인된 첫 요청 시점에 지연 생성한다.
+    """
+    global _evidence_retriever
+    if _evidence_retriever is None:
+        _evidence_retriever = EvidenceRetriever()
+    return _evidence_retriever
+
+
 DocType = Literal["LAW", "GUIDE", "CASE", "REPORT"]
 DocumentStatus = Literal["active", "future", "draft", "pending_source"]
 
 
-class RagDocumentListItem(BaseModel):
+class RagDocumentCore(BaseModel):
     document_id: str
     title: str
     doc_type: str
     source_subtype: str | None
-    status: str
     effective_date: date | None
+    status: str
+
+
+class RagDocumentListItem(RagDocumentCore):
     tag_regulatory: bool
     tag_privacy: bool
     tag_advertising: bool
 
 
-class RagDocumentDetail(BaseModel):
-    document_id: str
-    title: str
-    doc_type: str
-    source_subtype: str | None
+class RagDocumentDetail(RagDocumentCore):
     issuing_org: str | None
-    effective_date: date | None
-    status: str
     source_url: str | None
 
 
@@ -50,7 +62,7 @@ class RagChunkLookupRequest(BaseModel):
     section_ids: list[str] = Field(max_length=50)
 
 
-class RagChunkLookupItem(BaseModel):
+class RagChunkCore(BaseModel):
     chunk_id: str
     document_id: str
     section_id: str | None
@@ -59,6 +71,10 @@ class RagChunkLookupItem(BaseModel):
     source_url: str | None
     page_start: int | None
     page_end: int | None
+
+
+class RagChunkLookupItem(RagChunkCore):
+    pass
 
 
 class RagSearchRequest(BaseModel):
@@ -70,17 +86,9 @@ class RagSearchRequest(BaseModel):
     document_ids: list[str] | None = None
 
 
-class RagSearchResult(BaseModel):
-    chunk_id: str
-    document_id: str
+class RagSearchResult(RagChunkCore):
     title: str
     doc_type: str
-    section_id: str | None
-    section_title: str | None
-    chunk_text: str
-    source_url: str | None
-    page_start: int | None
-    page_end: int | None
     similarity: float
 
 
@@ -120,8 +128,7 @@ async def list_rag_documents(
         filters.append(EvidenceDocument.tag_privacy == tag_privacy)
     if tag_advertising is not None:
         filters.append(EvidenceDocument.tag_advertising == tag_advertising)
-    if status:
-        filters.append(EvidenceDocument.status == status)
+    filters.append(EvidenceDocument.status == (status or "active"))
 
     stmt = (
         select(EvidenceDocument)
@@ -252,12 +259,23 @@ async def lookup_rag_chunks(request: RagChunkLookupRequest) -> RagChunksLookupRe
     )
 
 
-@router.post("/search", response_model=list[RagSearchResult])
-async def search_rag_evidence(request: RagSearchRequest) -> list[RagSearchResult]:
+@router.post(
+    "/search",
+    response_model=list[RagSearchResult],
+    responses={503: {"model": RagErrorResponse}},
+)
+async def search_rag_evidence(request: RagSearchRequest) -> list[RagSearchResult] | JSONResponse:
     if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
+        return JSONResponse(
+            status_code=503,
+            content=RagErrorResponse(
+                isSuccess=False,
+                code="RAG_SEARCH_UNAVAILABLE",
+                message="OPENAI_API_KEY가 설정되지 않았습니다.",
+            ).model_dump(),
+        )
 
-    retriever = EvidenceRetriever()
+    retriever = _get_evidence_retriever()
     chunks = await retriever.search(
         request.query,
         top_k=request.top_k,
