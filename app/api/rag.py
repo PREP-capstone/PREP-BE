@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -99,10 +99,6 @@ class RagErrorResponse(ApiResponse):
 
 class RagChunksLookupResponse(ApiResponse):
     result: list[RagChunkLookupItem]
-
-
-class RagSearchResponse(ApiResponse):
-    result: list[RagSearchResult]
 
 
 @router.get("/documents", response_model=RagDocumentsResponse)
@@ -256,21 +252,10 @@ async def lookup_rag_chunks(request: RagChunkLookupRequest) -> RagChunksLookupRe
     )
 
 
-@router.post(
-    "/search",
-    response_model=RagSearchResponse,
-    responses={503: {"model": RagErrorResponse}},
-)
-async def search_rag_evidence(request: RagSearchRequest) -> RagSearchResponse | JSONResponse:
+@router.post("/search", response_model=list[RagSearchResult])
+async def search_rag_evidence(request: RagSearchRequest) -> list[RagSearchResult]:
     if not settings.openai_api_key:
-        return JSONResponse(
-            status_code=503,
-            content=RagErrorResponse(
-                isSuccess=False,
-                code="RAG_SEARCH_UNAVAILABLE",
-                message="OPENAI_API_KEY가 설정되지 않았습니다.",
-            ).model_dump(),
-        )
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is not configured.")
 
     retriever = EvidenceRetriever()
     chunks = await retriever.search(
@@ -281,24 +266,19 @@ async def search_rag_evidence(request: RagSearchRequest) -> RagSearchResponse | 
         tag_advertising=request.tag_advertising,
         document_ids=request.document_ids,
     )
-    return RagSearchResponse(
-        isSuccess=True,
-        code="RAG_SEARCH_FOUND",
-        message="RAG 검색 결과를 조회했습니다.",
-        result=[
-            RagSearchResult(
-                chunk_id=chunk.chunk_id,
-                document_id=chunk.document_id,
-                title=chunk.title,
-                doc_type=chunk.doc_type,
-                section_id=chunk.section_id,
-                section_title=chunk.section_title,
-                chunk_text=chunk.chunk_text,
-                source_url=chunk.source_url,
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
-                similarity=chunk.similarity,
-            )
-            for chunk in chunks
-        ],
-    )
+    return [
+        RagSearchResult(
+            chunk_id=chunk.chunk_id,
+            document_id=chunk.document_id,
+            title=chunk.title,
+            doc_type=chunk.doc_type,
+            section_id=chunk.section_id,
+            section_title=chunk.section_title,
+            chunk_text=chunk.chunk_text,
+            source_url=chunk.source_url,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
+            similarity=chunk.similarity,
+        )
+        for chunk in chunks
+    ]
