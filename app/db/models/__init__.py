@@ -21,8 +21,8 @@ from app.db.models.signal_config import SignalConfig
 from app.db.models.verb_substitution import VerbSubstitution
 
 __all__ = [
-    "AnalysisSession",
     "ActionTemplate",
+    "AnalysisSession",
     "ApiCatalog",
     "Base",
     "BmMapping",
@@ -34,8 +34,8 @@ __all__ = [
     "EvidenceChunk",
     "EvidenceDocument",
     "GateKeyword",
-    "HealthDataItem",
     "GateMatrix",
+    "HealthDataItem",
     "MvpStrategyTemplate",
     "PublicDataCatalog",
     "RuleVersion",

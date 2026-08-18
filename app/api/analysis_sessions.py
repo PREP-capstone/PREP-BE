@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app.db.models.analysis_session import AnalysisSession, HealthDataItem
 from app.db.session import AsyncSessionLocal
@@ -14,12 +16,14 @@ from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/analysis-sessions", tags=["analysis-sessions"])
 
+_MAX_LIST_LENGTH = 50
+
 
 class HealthDataItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     data_type: str = Field(min_length=1, max_length=50)
     unit: str | None = Field(default=None, max_length=50)
-    source: str = Field(min_length=1, max_length=50)
+    source: Literal["user_input", "device_sync", "os_sync"]
     is_sensitive: bool = False
 
 
@@ -30,7 +34,7 @@ class HealthDataItemResponse(HealthDataItemInput):
 class CreateAnalysisSessionRequest(BaseModel):
     service_name: str = Field(min_length=1, max_length=200)
     service_description: str = Field(min_length=1)
-    target_users: list[str] = Field(default_factory=list)
+    target_users: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
     service_type: str | None = Field(default=None, max_length=50)
 
 
@@ -45,15 +49,15 @@ class CreateAnalysisSessionResponse(ApiResponse):
 
 
 class HealthDataUpsertRequest(BaseModel):
-    health_data_items: list[HealthDataItemInput] = Field(default_factory=list)
-    processing_purpose: list[str] | None = None
-    service_actions: list[str] | None = None
+    health_data_items: list[HealthDataItemInput] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
+    processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
+    service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
 
 class PatchHealthDataRequest(BaseModel):
-    health_data_items: list[HealthDataItemInput] | None = None
-    processing_purpose: list[str] | None = None
-    service_actions: list[str] | None = None
+    health_data_items: list[HealthDataItemInput] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
+    processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
+    service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
 
 class HealthDataMutationResult(BaseModel):
@@ -126,22 +130,45 @@ async def replace_health_data_items(session, session_id: str, items: list[Health
     ])
 
 
+_SESSION_ID_RETRY_ATTEMPTS = 3
 
-@router.post("", response_model=CreateAnalysisSessionResponse)
-async def create_analysis_session(request: CreateAnalysisSessionRequest) -> CreateAnalysisSessionResponse:
+
+@router.post(
+    "",
+    response_model=CreateAnalysisSessionResponse,
+    responses={409: {"model": AnalysisSessionErrorResponse}},
+)
+async def create_analysis_session(
+    request: CreateAnalysisSessionRequest,
+) -> CreateAnalysisSessionResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
-        analysis_session = AnalysisSession(
-            session_id=generate_session_id(),
-            service_name=request.service_name,
-            service_description=request.service_description,
-            target_users=request.target_users,
-            service_type=request.service_type,
-            processing_purpose=[],
-            service_actions=[],
-        )
-        session.add(analysis_session)
-        await session.commit()
-        await session.refresh(analysis_session)
+        for attempt in range(_SESSION_ID_RETRY_ATTEMPTS):
+            analysis_session = AnalysisSession(
+                session_id=generate_session_id(),
+                service_name=request.service_name,
+                service_description=request.service_description,
+                target_users=request.target_users,
+                service_type=request.service_type,
+                processing_purpose=[],
+                service_actions=[],
+            )
+            session.add(analysis_session)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                if attempt == _SESSION_ID_RETRY_ATTEMPTS - 1:
+                    return JSONResponse(
+                        status_code=409,
+                        content=AnalysisSessionErrorResponse(
+                            isSuccess=False,
+                            code="ANALYSIS_SESSION_ID_CONFLICT",
+                            message="세션 ID 생성에 실패했습니다. 다시 시도해주세요.",
+                        ).model_dump(),
+                    )
+                continue
+            await session.refresh(analysis_session)
+            break
 
     return CreateAnalysisSessionResponse(
         isSuccess=True,
@@ -193,7 +220,7 @@ async def get_analysis_session_detail(session_id: str) -> AnalysisSessionDetailR
 @router.post(
     "/{session_id}/health-data",
     response_model=HealthDataMutationResponse,
-    responses={404: {"model": AnalysisSessionErrorResponse}},
+    responses={404: {"model": AnalysisSessionErrorResponse}, 409: {"model": AnalysisSessionErrorResponse}},
 )
 async def create_health_data(
     session_id: str, request: HealthDataUpsertRequest
@@ -202,6 +229,23 @@ async def create_health_data(
         analysis_session = await session.get(AnalysisSession, session_id)
         if analysis_session is None:
             return not_found_response()
+
+        existing = (
+            await session.execute(
+                select(HealthDataItem.health_data_item_id)
+                .where(HealthDataItem.session_id == session_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return JSONResponse(
+                status_code=409,
+                content=AnalysisSessionErrorResponse(
+                    isSuccess=False,
+                    code="HEALTH_DATA_ALREADY_EXISTS",
+                    message="이미 등록된 검진 데이터가 있습니다. 수정은 PATCH를 사용하세요.",
+                ).model_dump(),
+            )
 
         await replace_health_data_items(session, session_id, request.health_data_items)
         analysis_session.processing_purpose = request.processing_purpose or []
@@ -234,15 +278,20 @@ async def update_health_data(
 
         if request.health_data_items is not None:
             await replace_health_data_items(session, session_id, request.health_data_items)
+            health_data_count = len(request.health_data_items)
+            # replace_health_data_items만으로는 analysis_session row가 dirty로 표시되지
+            # 않아 updated_at의 onupdate가 안 걸린다 — 명시적으로 찍어준다.
+            analysis_session.updated_at = datetime.now(timezone.utc)
+        else:
+            count_result = await session.execute(
+                select(HealthDataItem.health_data_item_id).where(HealthDataItem.session_id == session_id)
+            )
+            health_data_count = len(count_result.scalars().all())
         if request.processing_purpose is not None:
             analysis_session.processing_purpose = request.processing_purpose
         if request.service_actions is not None:
             analysis_session.service_actions = request.service_actions
 
-        count_result = await session.execute(
-            select(HealthDataItem.health_data_item_id).where(HealthDataItem.session_id == session_id)
-        )
-        health_data_count = len(count_result.scalars().all())
         await session.commit()
 
     return HealthDataMutationResponse(
