@@ -5,7 +5,22 @@
 legal_article), 한 곳에서만 정의하고 다 같이 import해서 쓴다.
 """
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class HealthDataItemInput(BaseModel):
+    """건강/검진 데이터 항목 1건. analysis-sessions API(health-data 등록)와
+    judgement API(/gate 등)가 동일한 입력을 주고받으므로 한 곳에서만 정의한다 —
+    각자 따로 정의하면 source 허용값·길이 제약이 갈라져도 아무도 모르게 깨진다.
+    """
+
+    name: str = Field(min_length=1, max_length=100)
+    data_type: str = Field(min_length=1, max_length=50)
+    unit: str | None = Field(default=None, max_length=50)
+    source: Literal["user_input", "device_sync", "os_sync"]
+    is_sensitive: bool = False
 
 
 class ApiResponse(BaseModel):

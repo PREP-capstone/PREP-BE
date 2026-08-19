@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.models.analysis_session import AnalysisSession, HealthDataItem
 from app.db.session import AsyncSessionLocal
-from app.schemas.common import ApiResponse
+from app.schemas.common import ApiResponse, HealthDataItemInput
 
 router = APIRouter(prefix="/api/v1/analysis-sessions", tags=["analysis-sessions"])
 
@@ -27,14 +27,6 @@ def _validate_string_lengths(values: list[str] | None) -> list[str] | None:
         if len(value) > _MAX_STRING_ITEM_LENGTH:
             raise ValueError(f"항목 길이는 {_MAX_STRING_ITEM_LENGTH}자를 넘을 수 없습니다.")
     return values
-
-
-class HealthDataItemInput(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    data_type: str = Field(min_length=1, max_length=50)
-    unit: str | None = Field(default=None, max_length=50)
-    source: Literal["user_input", "device_sync", "os_sync"]
-    is_sensitive: bool = False
 
 
 class HealthDataItemResponse(BaseModel):
