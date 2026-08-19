@@ -7,8 +7,8 @@ from typing import Literal
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.db.models.analysis_session import AnalysisSession, HealthDataItem
 from app.db.session import AsyncSessionLocal
@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/v1/analysis-sessions", tags=["analysis-sessions"
 
 _MAX_LIST_LENGTH = 50
 _MAX_STRING_ITEM_LENGTH = 200
+_UNIQUE_VIOLATION_SQLSTATE = "23505"
+_LOCK_TIMEOUT = "5s"
 
 
 def _validate_string_lengths(values: list[str] | None) -> list[str] | None:
@@ -27,6 +29,10 @@ def _validate_string_lengths(values: list[str] | None) -> list[str] | None:
         if len(value) > _MAX_STRING_ITEM_LENGTH:
             raise ValueError(f"항목 길이는 {_MAX_STRING_ITEM_LENGTH}자를 넘을 수 없습니다.")
     return values
+
+
+def _is_unique_violation(error: IntegrityError) -> bool:
+    return getattr(error.orig, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE
 
 
 class HealthDataItemResponse(BaseModel):
@@ -64,7 +70,11 @@ class CreateAnalysisSessionResponse(ApiResponse):
 
 
 class HealthDataUpsertRequest(BaseModel):
-    health_data_items: list[HealthDataItemInput] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
+    # min_length=1(기본값 없음, 필수) — 빈 리스트를 허용하면 이미 데이터가 등록된
+    # 세션에 health_data_items: []로 다시 POST해도 "데이터 없음" 체크를 매번 통과해
+    # 중복 제출 방지(409)가 무력화되고 processing_purpose/service_actions가
+    # PATCH 없이 조용히 덮어써진다.
+    health_data_items: list[HealthDataItemInput] = Field(min_length=1, max_length=_MAX_LIST_LENGTH)
     processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
     service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
@@ -131,6 +141,32 @@ def not_found_response() -> JSONResponse:
     )
 
 
+def locked_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=AnalysisSessionErrorResponse(
+            isSuccess=False,
+            code="ANALYSIS_SESSION_LOCKED",
+            message="다른 요청이 이 세션을 처리 중입니다. 잠시 후 다시 시도해주세요.",
+        ).model_dump(),
+    )
+
+
+async def lock_analysis_session(session, session_id: str) -> AnalysisSession | None:
+    """analysis_session row를 FOR UPDATE로 잠근다.
+
+    lock_timeout 없이 무기한 대기하면, 락을 쥔 커넥션이 죽었을 때 이 작은 커넥션
+    풀을 공유하는 judgement.py의 무관한 엔드포인트까지 연쇄로 멈출 수 있다. 타임아웃
+    초과 시 OperationalError가 올라오므로 호출부에서 locked_response()로 받는다.
+    """
+    await session.execute(text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'"))
+    return (
+        await session.execute(
+            select(AnalysisSession).where(AnalysisSession.session_id == session_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
 def health_data_item_to_response(item: HealthDataItem) -> HealthDataItemResponse:
     return HealthDataItemResponse(
         name=item.name,
@@ -168,22 +204,34 @@ _SESSION_ID_RETRY_ATTEMPTS = 3
 async def create_analysis_session(
     request: CreateAnalysisSessionRequest,
 ) -> CreateAnalysisSessionResponse | JSONResponse:
+    # created_at을 서버 기본값(server_default=func.now())에 맡기고 commit 뒤 refresh()로
+    # 읽어오면, commit은 성공했는데 refresh()만 커넥션 문제로 실패하는 경우 클라이언트는
+    # 500(생성 실패)으로 보고 재시도해서 고아 세션이 남을 수 있다. session_id 생성에 쓴
+    # 시각을 그대로 created_at에도 넣어서 refresh 자체를 없앤다.
+    now = datetime.now(timezone.utc)
+
     async with AsyncSessionLocal() as session:
         for attempt in range(_SESSION_ID_RETRY_ATTEMPTS):
             analysis_session = AnalysisSession(
-                session_id=generate_session_id(),
+                session_id=generate_session_id(now),
                 service_name=request.service_name,
                 service_description=request.service_description,
                 target_users=request.target_users,
                 service_type=request.service_type,
                 processing_purpose=[],
                 service_actions=[],
+                created_at=now,
             )
             session.add(analysis_session)
             try:
                 await session.commit()
-            except IntegrityError:
+            except IntegrityError as error:
                 await session.rollback()
+                # unique_violation(23505)이 아니면 session_id 충돌이 아닌 다른 제약
+                # 위반이다 — 새 session_id로 재시도해도 고쳐지지 않으므로 원인을 감추지
+                # 않고 그대로 올려보낸다.
+                if not _is_unique_violation(error):
+                    raise
                 if attempt == _SESSION_ID_RETRY_ATTEMPTS - 1:
                     return JSONResponse(
                         status_code=409,
@@ -194,7 +242,6 @@ async def create_analysis_session(
                         ).model_dump(),
                     )
                 continue
-            await session.refresh(analysis_session)
             break
 
     return CreateAnalysisSessionResponse(
@@ -216,6 +263,12 @@ async def create_analysis_session(
 )
 async def get_analysis_session_detail(session_id: str) -> AnalysisSessionDetailResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
+        # analysis_session과 health_data_items를 별개 SELECT 두 번으로 읽는다. 기본
+        # READ COMMITTED면 그 사이에 PATCH가 커밋될 때 "옛 processing_purpose/
+        # service_actions + 새 health_data_items"처럼 앞뒤가 안 맞는 스냅샷을 반환할
+        # 수 있어, REPEATABLE READ로 트랜잭션 시작 시점 스냅샷을 고정한다.
+        await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+
         analysis_session = await session.get(AnalysisSession, session_id)
         if analysis_session is None:
             return not_found_response()
@@ -253,14 +306,13 @@ async def create_health_data(
     session_id: str, request: HealthDataUpsertRequest
 ) -> HealthDataMutationResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
-        # FOR UPDATE로 세션 row를 잠가서, 동시에 들어온 두 요청이 둘 다 "데이터 없음"으로
-        # 보고 중복 삽입하는 TOCTOU 레이스를 막는다 — 나중 트랜잭션은 앞 트랜잭션이
-        # commit할 때까지 이 SELECT에서 블록되고, 그 뒤엔 existing이 채워져 409로 빠진다.
-        analysis_session = (
-            await session.execute(
-                select(AnalysisSession).where(AnalysisSession.session_id == session_id).with_for_update()
-            )
-        ).scalar_one_or_none()
+        # 세션 row를 잠가서, 동시에 들어온 두 요청이 둘 다 "데이터 없음"으로 보고
+        # 중복 삽입하는 TOCTOU 레이스를 막는다 — 나중 트랜잭션은 앞 트랜잭션이 commit할
+        # 때까지 블록되고, 그 뒤엔 existing이 채워져 409로 빠진다.
+        try:
+            analysis_session = await lock_analysis_session(session, session_id)
+        except OperationalError:
+            return locked_response()
         if analysis_session is None:
             return not_found_response()
 
@@ -300,19 +352,18 @@ async def create_health_data(
 @router.patch(
     "/{session_id}/health-data",
     response_model=HealthDataMutationResponse,
-    responses={404: {"model": AnalysisSessionErrorResponse}},
+    responses={404: {"model": AnalysisSessionErrorResponse}, 409: {"model": AnalysisSessionErrorResponse}},
 )
 async def update_health_data(
     session_id: str, request: PatchHealthDataRequest
 ) -> HealthDataMutationResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
-        # POST와 동일하게 FOR UPDATE로 잠근다 — 락 없이 delete+insert만 하면 동시 PATCH가
-        # 서로의 uncommitted 변경을 못 보고 중복/겹치는 row를 남길 수 있다.
-        analysis_session = (
-            await session.execute(
-                select(AnalysisSession).where(AnalysisSession.session_id == session_id).with_for_update()
-            )
-        ).scalar_one_or_none()
+        # POST와 동일하게 잠근다 — 락 없이 delete+insert만 하면 동시 PATCH가 서로의
+        # uncommitted 변경을 못 보고 중복/겹치는 row를 남길 수 있다.
+        try:
+            analysis_session = await lock_analysis_session(session, session_id)
+        except OperationalError:
+            return locked_response()
         if analysis_session is None:
             return not_found_response()
 

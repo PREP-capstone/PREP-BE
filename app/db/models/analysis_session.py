@@ -31,7 +31,13 @@ class AnalysisSession(Base):
 
 
 class HealthDataItem(Base):
-    """health_data_items — 분석 세션이 입력받거나 처리하는 건강/검진 데이터."""
+    """health_data_items — 분석 세션이 입력받거나 처리하는 건강/검진 데이터.
+
+    SQLAlchemy ORM 모델이다. FastAPI 요청/응답 바디로는 이 클래스를 쓰지 말고
+    app.schemas.common.HealthDataItemInput(Pydantic)을 써야 한다 — 이름이 같아
+    헷갈리기 쉬운데, ORM 모델을 request body 타입으로 잘못 넣으면 FastAPI가 스키마를
+    생성하지 못해 앱 기동 자체가 깨진다.
+    """
 
     __tablename__ = "health_data_items"
 
