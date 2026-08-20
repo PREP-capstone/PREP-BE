@@ -29,6 +29,10 @@ class HealthDataItem(BaseModel):
     unit: str | None = None
     source: str  # user_input / device_sync / os_sync
     is_sensitive: bool = False
+    # data_sensitivity.item_code(PK). 작업 #6에서 방향 B로 확정 — 2번의 health-data API가
+    # 프론트 체크박스 value로 이 코드를 직접 보낸다. privacy_score는 이 값으로만 매칭하고
+    # (item_label 문자열 매칭 폐기), name은 여전히 gate 생체지표 판별에 쓰인다.
+    item_code: str | None = None
 
 
 class GateRequest(BaseModel):
@@ -242,25 +246,23 @@ async def _match_correction_rules(
 
 
 async def _match_privacy_score(items: list[HealthDataItem]) -> int:
-    """health_data_items[].name을 data_sensitivity.item_label과 부분매칭해 최댓값 채택.
+    """health_data_items[].item_code를 data_sensitivity.item_code(PK)와 직접 비교해 최댓값 채택.
 
-    ⚠️ 프론트 표기와 안 맞으면 조용히 0점 처리됨 — 확정되면(작업 #6) 정확히 맞출 것.
+    작업 #6 방향 B(2026-08-17 확정) — 문자열(item_label) 부분매칭은 표기가 조금만
+    달라도 조용히 0점 처리되는 문제가 있어 폐기했다. 2번의 health-data API가
+    item_code를 값으로 직접 보낸다.
     """
-    async with AsyncSessionLocal() as session:
-        rows = (await session.execute(select(DataSensitivity))).scalars().all()
+    item_codes = {item.item_code for item in items if item.item_code}
+    if not item_codes:
+        return 0
 
-    best = 0
-    for item in items:
-        name = item.name.strip()
-        if not name:
-            continue
-        for row in rows:
-            label = row.item_label.strip()
-            if not label:
-                continue
-            if label in name or name in label:
-                best = max(best, row.sensitivity_level)
-    return best
+    async with AsyncSessionLocal() as session:
+        levels = (
+            await session.execute(
+                select(DataSensitivity.sensitivity_level).where(DataSensitivity.item_code.in_(item_codes))
+            )
+        ).scalars().all()
+    return max(levels, default=0)
 
 
 @router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)

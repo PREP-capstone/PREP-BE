@@ -7,7 +7,7 @@
         "service_name": "걸음수 기록 앱",
         "service_description": "사용자가 하루 걸음수를 기록하고 주간 통계를 확인할 수 있다.",
         "health_data_items": [
-          {"name": "걸음수", "data_type": "numeric", "unit": "steps", "source": "user_input", "is_sensitive": false}
+          {"name": "걸음수", "data_type": "numeric", "unit": "steps", "source": "user_input", "is_sensitive": false, "item_code": "lifestyle_001"}
         ],
         "service_actions": ["record"]
       }
@@ -18,7 +18,7 @@
         "service_name": "심박수 기록 앱",
         "service_description": "사용자가 측정한 심박수를 기록하고 히스토리로 조회한다.",
         "health_data_items": [
-          {"name": "심박수", "data_type": "numeric", "unit": "bpm", "source": "user_input", "is_sensitive": false}
+          {"name": "심박수", "data_type": "numeric", "unit": "bpm", "source": "user_input", "is_sensitive": false, "item_code": "biometric_001"}
         ],
         "service_actions": ["record"]
       }
@@ -29,7 +29,7 @@
         "service_name": "혈압 변화 추이 앱",
         "service_description": "사용자가 입력한 혈압 수치의 변화 추이를 그래프로 시각화한다.",
         "health_data_items": [
-          {"name": "혈압", "data_type": "numeric", "unit": "mmHg", "source": "user_input", "is_sensitive": false}
+          {"name": "혈압", "data_type": "numeric", "unit": "mmHg", "source": "user_input", "is_sensitive": false, "item_code": "biometric_002"}
         ],
         "service_actions": ["record", "visualize_trend"]
       }
@@ -41,7 +41,7 @@
         "service_name": "혈당 관리 앱",
         "service_description": "혈당 수치값을 표시하고 위험 수치일 때 경고 알람을 제공한다.",
         "health_data_items": [
-          {"name": "공복혈당", "data_type": "numeric", "unit": "mg/dL", "source": "user_input", "is_sensitive": true}
+          {"name": "공복혈당", "data_type": "numeric", "unit": "mg/dL", "source": "user_input", "is_sensitive": true, "item_code": "sensitive_001"}
         ],
         "service_actions": ["record", "alert"]
       }
@@ -52,8 +52,8 @@
         "service_name": "생활습관 기반 위험도 예측 앱",
         "service_description": "걸음수와 식단 기록을 바탕으로 향후 질환 발생 위험도를 예측해 알려준다.",
         "health_data_items": [
-          {"name": "걸음수", "data_type": "numeric", "unit": "steps", "source": "user_input", "is_sensitive": false},
-          {"name": "식단", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": false}
+          {"name": "걸음수", "data_type": "numeric", "unit": "steps", "source": "user_input", "is_sensitive": false, "item_code": "lifestyle_001"},
+          {"name": "식단", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": false, "item_code": "lifestyle_003"}
         ],
         "service_actions": ["record", "predict"]
       }
@@ -65,7 +65,7 @@
         "service_name": "연속혈당측정 앱",
         "service_description": "CGM 연속혈당측정기와 연동해 혈당을 실시간으로 기록한다.",
         "health_data_items": [
-          {"name": "연속혈당", "data_type": "numeric", "unit": "mg/dL", "source": "device_sync", "is_sensitive": true}
+          {"name": "연속혈당", "data_type": "numeric", "unit": "mg/dL", "source": "device_sync", "is_sensitive": true, "item_code": "sensitive_001"}
         ],
         "service_actions": ["record"]
       }
@@ -77,20 +77,20 @@
         "service_name": "비침습 혈당 추정 앱",
         "service_description": "비침습적 방법으로 혈당을 추정해 표시한다.",
         "health_data_items": [
-          {"name": "혈당(추정)", "data_type": "numeric", "unit": "mg/dL", "source": "device_sync", "is_sensitive": true}
+          {"name": "혈당(추정)", "data_type": "numeric", "unit": "mg/dL", "source": "device_sync", "is_sensitive": true, "item_code": "sensitive_001"}
         ],
         "service_actions": ["record"]
       }
     },
 
     "민감정보_포함_케이스": {
-      "note": "regulatory-risk API의 privacy_score(data_sensitivity 매칭) 테스트용 — sensitivity_level=3 기대",
+      "note": "regulatory-risk API의 privacy_score(data_sensitivity item_code 매칭) 테스트용 — sensitivity_level=3 기대",
       "request": {
         "service_name": "만성질환 관리 앱",
         "service_description": "사용자의 복용약물과 과거 병력을 기록하고 관리한다.",
         "health_data_items": [
-          {"name": "복용약물", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": true},
-          {"name": "과거병력", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": true}
+          {"name": "복용약물", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": true, "item_code": "sensitive_004"},
+          {"name": "과거병력", "data_type": "text", "unit": null, "source": "user_input", "is_sensitive": true, "item_code": "sensitive_005"}
         ],
         "service_actions": ["record"]
       }
