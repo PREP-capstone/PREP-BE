@@ -1,3 +1,4 @@
+from app.db.models.analysis_session import AnalysisSession, HealthDataItem
 from app.db.models.base import Base
 from app.db.models.catalog import (
     ActionTemplate,
@@ -21,6 +22,7 @@ from app.db.models.verb_substitution import VerbSubstitution
 
 __all__ = [
     "ActionTemplate",
+    "AnalysisSession",
     "ApiCatalog",
     "Base",
     "BmMapping",
@@ -33,6 +35,7 @@ __all__ = [
     "EvidenceDocument",
     "GateKeyword",
     "GateMatrix",
+    "HealthDataItem",
     "MvpStrategyTemplate",
     "PublicDataCatalog",
     "RuleVersion",
