@@ -1,10 +1,24 @@
 # 룰베이스 ↔ RAG 정합성 추적표
 
-> 버전: v1.3 | 2026-08-17
+> 버전: v1.4 | 2026-08-20
 > 목적: 룰베이스(`gate_matrix`/`correction_rules`의 `legal_basis_doc`/`legal_basis_article`)와
 > RAG(`evidence_documents.document_id`/`evidence_chunks.section_id`)가 **같은 문서·같은 조문을
 > 가리키는지** 양쪽 담당자가 함께 보고 관리하는 기준표.
 > 재검증 주기: RAG 쪽 문서 추가/재청킹이 있을 때마다, 또는 판정 API(`judgement/*`) 배포 전 필수 1회.
+> v1.4 변경: **`judgement/*` API가 RAG lookup(`rag/chunks/lookup`)을 실제로 연결함** — "다음
+> 재검증 시점"에 있던 배포 게이트가 지금이다(이슈 #37). 화이트리스트는
+> `app/api/judgement.py`의 `_RAG_TRUSTED_DOCUMENT_IDS`(이 표의 ✅ 문서 5개)로 구현.
+> **연결하면서 RDS 실데이터로 재확인해보니 표1과 어긋나는 게 2건 발견됨**:
+> - 웰니스판단기준(`kr-mfds-wellness-0091-03-20260212`): 표1은 "조문 단위 재청킹 완료
+>   (PR #25)"라고 돼 있지만, RDS의 실제 `section_id`는 여전히 `p4`~`p31` 같은 페이지
+>   단위뿐이다(27건). `IV.3` 같은 조문 단위 section_id는 하나도 없어 lookup이 항상
+>   빈 결과를 반환한다.
+> - 의료법(`kr-medical-act-20260407`): 표1은 "청킹 완료(PR #25) — 제2조/제27조/제56조"라고
+>   돼 있지만, RDS에는 이 문서의 청크가 **0건**이다.
+>
+> 둘 다 화이트리스트에는 남겨뒀다(document_id 자체는 맞고, 코드 쪽은 빈 결과를 에러 없이
+> `quote: null`로 처리하니 안전 — 판본 불일치 같은 위험은 아님). 다만 PR #25가 실제로는
+> RDS에 배포되지 않은 것으로 보이니 RAG 쪽에서 확인 부탁드립니다.
 > v1.3 변경: **웰니스판단기준·의료법 재청킹 반영 (RAG PR #25)** — 조문 단위로 재청킹 완료 확인,
 > 실제 원문(page 17~18)과 대조해 청킹 구조가 정확함을 검증. 이 과정에서 **룰베이스 자체 오류
 > 2건 발견·수정**: gate_matrix의 `legal_basis_article`이 `III.가`/`III.다`로 돼 있었는데, 실제

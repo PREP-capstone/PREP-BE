@@ -42,8 +42,9 @@ Authorization: Bearer `<accessToken>`
 { "document_id": "string", "article": "string", "quote": "string|null" }
 ```
 
-`quote`는 RAG `rag/chunks/lookup` 연동 전까지 항상 `null` — 룰 테이블에는 조문
-원문이 없다(이슈 4 "RAG 근거 연결"에서 채워짐).
+`quote`는 화이트리스트 문서(`judgement.py`의 `_RAG_TRUSTED_DOCUMENT_IDS`, 5개)에
+한해서만 RAG `rag/chunks/lookup`으로 채워진다. 그 외 문서는 판본 불일치·미청킹
+등으로 틀린 원문이 나올 위험이 있어 항상 `null`이다(§알려진 한계 참고).
 
 ---
 
@@ -163,6 +164,13 @@ Authorization: Bearer `<accessToken>`
   목록을 상수로 빼서 보강하는 방안은 검토만 하고 미착수 상태.
 - **`privacy_score`**: 프론트/2번 쪽에서 특정 항목에 `item_code`를 안 보내면 그
   항목은 매칭에서 빠진 채로(에러 없이) 조용히 0점 처리된다.
+- **`quote`**: 화이트리스트 문서라고 해서 항상 채워지는 건 아니다 —
+  `룰베이스_RAG_정합성_추적표.md` 표1이 "조문 단위 재청킹 완료"로 표시한 문서 중
+  일부(웰니스판단기준, 의료법)가 실제 RDS에는 아직 그 상태로 반영되지 않아
+  (웰니스판단기준은 여전히 페이지 단위 청크뿐, 의료법은 청크 자체가 0건) lookup이
+  빈 결과를 반환한다 — 에러는 아니고 `quote: null`로 조용히 남는다. 실제로 채워지는
+  건 지금 약사법(`제2조`/`제20조`/`제23조`/`제23조의2`/`제24조`)·의료기기법(`제2조`/
+  `제24조`)뿐이다. RAG 팀이 재청킹을 실제로 배포하면 자동으로 채워진다(코드 변경 불필요).
 
 ## 진행 상황 (이 API를 붙일 때 참고)
 
@@ -170,6 +178,8 @@ Authorization: Bearer `<accessToken>`
   `HealthDataItemInput`이 팀 공유 스키마가 됐고, `judgement.py`도 자체 모델 대신
   이 스키마를 직접 import하도록 정리했다(이슈 #36). `GateRequest`는 이제
   이 3개 API·`health-data` API가 전부 같은 요청 모델을 쓴다.
-- `session_id` 기반으로 이 3개 API를 호출하는 흐름으로 바뀌는 건 아직이다(이슈 4,
-  블록 상태). 지금은 mock(`data/judgement/mock_requests.json`) 기준으로 개발해도
-  된다.
+- RAG 근거 원문(`quote`) 연결 완료(이슈 #37) — `regulatory-risk`/`correction-candidates`가
+  화이트리스트 문서에 한해 실제 조문 원문을 반환한다.
+- `session_id` 기반으로 이 3개 API를 호출하는 흐름으로 바뀌는 건 아직이다(session_id
+  실연동, 별도 작업으로 분리됨). 지금은 mock(`data/judgement/mock_requests.json`)
+  기준으로 개발해도 된다.
