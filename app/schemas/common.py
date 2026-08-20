@@ -42,8 +42,9 @@ class LegalBasis(BaseModel):
     """근거 조문 1건. document_id/article은 RAG evidence_documents/chunks 조회 키와
     형식이 같아야 한다 — db_구축_설계서.md §1.5.1 정규화 규칙 참조.
 
-    quote는 RAG rag/chunks/lookup 연동 전까지는 None — 룰 테이블에는 조문 원문이
-    저장돼 있지 않다(이슈 4 "RAG 근거 연결"에서 채워짐).
+    quote는 룰베이스_RAG_정합성_추적표.md에서 확인된 문서(judgement.py의
+    _RAG_TRUSTED_DOCUMENT_IDS)만 rag/chunks/lookup으로 채워진다. 그 외 문서는
+    판본 불일치·미청킹 등으로 틀린 원문이 나올 위험이 있어 항상 None으로 남는다.
     """
 
     document_id: str
