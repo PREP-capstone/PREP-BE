@@ -1,9 +1,8 @@
 """판정 API — 1번 담당(Gate/규제 위험도 판정). 이슈 1: judgement/gate.
 
 data_type/function_type/acquire_method/invasive_signal 판별은 규칙 기반이다(LLM 미사용).
-analysis-sessions API가 아직 없어 요청 스키마는 역할분담표 §6 예시를 기준으로 임시 확정했다 —
-실제 스키마 나오면 특히 health_data_items[].source(수집방법)·data_type(값 타입, GATE_MATRIX_TABLE의
-data_type과 이름만 같고 뜻이 다름) 필드를 다시 맞춰야 한다.
+health_data_items[].data_type은 값 타입(numeric/text/image 등)이고 GATE_MATRIX_TABLE의
+data_type(라이프스타일/생체지표)과는 이름만 같고 뜻이 다르다.
 """
 
 import asyncio
@@ -18,27 +17,15 @@ from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS, resolve_active_
 from app.db.session import AsyncSessionLocal
 from app.pipeline.correction_terms import BIOMARKER_EXTRA, keyword_score
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
-from app.schemas.common import LegalBasis
+from app.schemas.common import HealthDataItemInput, LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
-
-
-class HealthDataItem(BaseModel):
-    name: str
-    data_type: str  # numeric/text/image 등 값 타입 — GATE_MATRIX_TABLE.data_type(라이프스타일/생체지표)과 다른 개념
-    unit: str | None = None
-    source: str  # user_input / device_sync / os_sync
-    is_sensitive: bool = False
-    # data_sensitivity.item_code(PK). 작업 #6에서 방향 B로 확정 — 2번의 health-data API가
-    # 프론트 체크박스 value로 이 코드를 직접 보낸다. privacy_score는 이 값으로만 매칭하고
-    # (item_label 문자열 매칭 폐기), name은 여전히 gate 생체지표 판별에 쓰인다.
-    item_code: str | None = None
 
 
 class GateRequest(BaseModel):
     service_name: str
     service_description: str
-    health_data_items: list[HealthDataItem]
+    health_data_items: list[HealthDataItemInput]
     service_actions: list[str]
 
 
@@ -81,7 +68,7 @@ async def _biomarker_keywords() -> set[str]:
         return keywords | set(BIOMARKER_EXTRA)
 
 
-def _classify_data_type(items: list[HealthDataItem], biomarker_keywords: set[str]) -> str:
+def _classify_data_type(items: list[HealthDataItemInput], biomarker_keywords: set[str]) -> str:
     for item in items:
         if any(keyword in item.name for keyword in biomarker_keywords):
             return "생체지표"
@@ -96,7 +83,7 @@ def _classify_function_type(actions: list[str]) -> str:
     return "단순기록"
 
 
-def _classify_acquire_method(items: list[HealthDataItem]) -> str | None:
+def _classify_acquire_method(items: list[HealthDataItemInput]) -> str | None:
     methods = {_SOURCE_TO_ACQUIRE_METHOD.get(item.source) for item in items}
     for method in _ACQUIRE_METHOD_PRIORITY:
         if method in methods:
@@ -245,7 +232,7 @@ async def _match_correction_rules(
     return list(matched.values())
 
 
-async def _match_privacy_score(items: list[HealthDataItem]) -> int:
+async def _match_privacy_score(items: list[HealthDataItemInput]) -> int:
     """health_data_items[].item_code를 data_sensitivity.item_code(PK)와 직접 비교해 최댓값 채택.
 
     작업 #6 방향 B(2026-08-17 확정) — 문자열(item_label) 부분매칭은 표기가 조금만
