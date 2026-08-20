@@ -257,10 +257,12 @@ async def _match_privacy_score(items: list[HealthDataItem]) -> int:
         return 0
 
     async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(select(DataSensitivity).where(DataSensitivity.item_code.in_(item_codes)))
+        levels = (
+            await session.execute(
+                select(DataSensitivity.sensitivity_level).where(DataSensitivity.item_code.in_(item_codes))
+            )
         ).scalars().all()
-    return max((row.sensitivity_level for row in rows), default=0)
+    return max(levels, default=0)
 
 
 @router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
