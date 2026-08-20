@@ -1,10 +1,16 @@
 # 룰베이스 ↔ RAG 정합성 추적표
 
-> 버전: v1.4 | 2026-08-20
+> 버전: v1.5 | 2026-08-20
 > 목적: 룰베이스(`gate_matrix`/`correction_rules`의 `legal_basis_doc`/`legal_basis_article`)와
 > RAG(`evidence_documents.document_id`/`evidence_chunks.section_id`)가 **같은 문서·같은 조문을
 > 가리키는지** 양쪽 담당자가 함께 보고 관리하는 기준표.
 > 재검증 주기: RAG 쪽 문서 추가/재청킹이 있을 때마다, 또는 판정 API(`judgement/*`) 배포 전 필수 1회.
+> v1.5 변경: **v1.4에서 발견한 웰니스판단기준·의료법 RDS 미반영 건, RAG 담당이 재청킹
+> 배포해서 해소됨.** RDS로 재확인 — 웰니스판단기준은 조문 단위 section_id 30개(`I`~`IV.2.나`
+> 등, `IV.3` 포함) 정상 적재, 의료법은 `제2조`/`제27조`/`제56조` 3개 정상 적재. mock
+> 케이스(`생체지표_비교추이분석_CONDITIONAL`)로 실제 `/correction-candidates` 호출해
+> `IV.3` quote가 실제 원문으로 채워지는 것까지 확인. `judgement/*`가 신뢰하는 화이트리스트
+> 5개 문서 전부 실데이터 기준으로 정상 동작.
 > v1.4 변경: **`judgement/*` API가 RAG lookup(`rag/chunks/lookup`)을 실제로 연결함** — "다음
 > 재검증 시점"에 있던 배포 게이트가 지금이다(이슈 #39). 화이트리스트는
 > `app/api/judgement.py`의 `_RAG_TRUSTED_DOCUMENT_IDS`(이 표의 ✅ 문서 5개)로 구현.
