@@ -1,4 +1,4 @@
-"""_fill_quotes 골든테스트 — RAG 원문(quote) 연결 화이트리스트(이슈 #37).
+"""_fill_quotes 골든테스트 — RAG 원문(quote) 연결 화이트리스트(이슈 #39).
 
 data_sensitivity 테스트와 같은 이유로 실 RDS 데이터 대상, 쓰기 없이 읽기만 한다.
 문서/조문 값은 실제 seed 데이터(correction_rules·evidence_chunks)에 맞춰져 있다 —

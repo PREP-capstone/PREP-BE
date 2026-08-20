@@ -178,7 +178,7 @@ Authorization: Bearer `<accessToken>`
   `HealthDataItemInput`이 팀 공유 스키마가 됐고, `judgement.py`도 자체 모델 대신
   이 스키마를 직접 import하도록 정리했다(이슈 #36). `GateRequest`는 이제
   이 3개 API·`health-data` API가 전부 같은 요청 모델을 쓴다.
-- RAG 근거 원문(`quote`) 연결 완료(이슈 #37) — `regulatory-risk`/`correction-candidates`가
+- RAG 근거 원문(`quote`) 연결 완료(이슈 #39) — `regulatory-risk`/`correction-candidates`가
   화이트리스트 문서에 한해 실제 조문 원문을 반환한다.
 - `session_id` 기반으로 이 3개 API를 호출하는 흐름으로 바뀌는 건 아직이다(session_id
   실연동, 별도 작업으로 분리됨). 지금은 mock(`data/judgement/mock_requests.json`)
