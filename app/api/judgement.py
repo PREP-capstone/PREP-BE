@@ -42,6 +42,7 @@ _SOURCE_TO_ACQUIRE_METHOD = {
     "user_input": "수동입력",
     "device_sync": "기기연동",
     "os_sync": "OS연동",
+    "institution_sync": "기관연동",
 }
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -51,8 +52,9 @@ _ACTION_PRIORITY: list[tuple[set[str], str]] = [
     ({"record"}, "단순기록"),
 ]
 
-# 기기연동이어야 침습적 하드체크가 발동하므로 최우선.
-_ACQUIRE_METHOD_PRIORITY = ("기기연동", "OS연동", "수동입력")
+# 기기연동이어야 침습적 하드체크가 발동하므로 최우선. 기관연동(기관 데이터 연계, collection_difficulty
+# S축 최고값=10)은 하드체크와 무관하지만 수동입력/OS연동보다 눈에 띄어야 하는 획득방법이라 그다음 순위.
+_ACQUIRE_METHOD_PRIORITY = ("기기연동", "기관연동", "OS연동", "수동입력")
 
 
 async def _biomarker_keywords() -> set[str]:
