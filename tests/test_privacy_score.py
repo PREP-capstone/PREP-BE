@@ -7,13 +7,14 @@ data_sensitivity는 2번 담당 소유 시드 테이블이라 여기서는 쓰�
 
 import pytest
 
-from app.api.judgement import HealthDataItem, _match_privacy_score
+from app.api.judgement import _match_privacy_score
+from app.schemas.common import HealthDataItemInput
 
 pytestmark = pytest.mark.db
 
 
-def item(item_code: str | None) -> HealthDataItem:
-    return HealthDataItem(name="x", data_type="text", source="user_input", item_code=item_code)
+def item(item_code: str | None) -> HealthDataItemInput:
+    return HealthDataItemInput(name="x", data_type="text", source="user_input", item_code=item_code)
 
 
 async def test_adopts_max_sensitivity_level_among_items() -> None:

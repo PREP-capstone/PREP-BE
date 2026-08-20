@@ -2,12 +2,11 @@
 
 > 담당: 1번(Gate/규제 위험도 판정) · 대상: 3번(시장성/BM/리포트) 공유용
 > 작업 #7(이슈 #31) — `RAG_근거검색_API_명세서.md`와 같은 포맷.
-> 최신 코드 기준(`app/api/judgement.py`, `app/schemas/common.py`, PR #35 반영 상태).
+> 최신 코드 기준(`app/api/judgement.py`, `app/schemas/common.py`, 이슈 #36 반영 상태).
 
-이 3개 API는 요청 스키마(`GateRequest`)를 공유한다. 아직 `analysis-sessions` API가
-없어 요청 스키마는 임시 확정 상태다 — 2번의 `POST /health-data`가 받는
-`HealthDataItemInput`(`app/schemas/common.py`)과 통합 예정이라, `HealthDataItem`
-필드가 나중에 조금 바뀔 수 있다(§진행 상황 참고).
+이 3개 API는 요청 스키마(`GateRequest`)를 공유한다. `health_data_items`는
+2번의 `POST /health-data`와 동일한 `HealthDataItemInput`(`app/schemas/common.py`)을
+그대로 쓴다.
 
 ## Headers
 
@@ -34,8 +33,8 @@ Authorization: Bearer `<accessToken>`
 ```
 
 - `item_code`: `data_sensitivity.item_code`(예: `sensitive_001`). `privacy_score` 계산에만
-  쓰인다 — 아직 2번/프론트 쪽 반영 전이라 `null`로 오면 `privacy_score`는 0으로 나온다
-  (§진행 상황 참고).
+  쓰인다 — `null`로 오면(프론트가 아직 안 보내는 항목 등) `privacy_score`는 0으로
+  나온다.
 
 ## 공용 응답 스키마 — `LegalBasis`
 
@@ -162,15 +161,15 @@ Authorization: Bearer `<accessToken>`
 - **`advertising_score`**: 3축 중 유일하게 LLM 판단 영역으로 설계된 축이라 완전한
   규칙 기반 대안이 없다. 지금은 `correction_rules` 매칭에만 의존 — 별표7 신호어
   목록을 상수로 빼서 보강하는 방안은 검토만 하고 미착수 상태.
-- **`privacy_score`**: `item_code` 연동이 끝나기 전까지는 요청에 `item_code`가
-  안 오면(2번/프론트 미반영 시) 항상 0으로 나온다. 아래 진행 상황 참고.
+- **`privacy_score`**: 프론트/2번 쪽에서 특정 항목에 `item_code`를 안 보내면 그
+  항목은 매칭에서 빠진 채로(에러 없이) 조용히 0점 처리된다.
 
 ## 진행 상황 (이 API를 붙일 때 참고)
 
-- `GateRequest.health_data_items[].item_code`는 방금 추가된 필드다(PR #35, 이슈 #31
-  작업 #6). 2번의 `HealthDataItemInput`(`app/schemas/common.py`)에도 같은 필드가
-  추가될 예정이고, 끝나면 `judgement.py`도 자체 `HealthDataItem` 대신 그 스키마를
-  import하도록 정리할 계획 — 그때 요청 스키마 필드가 한 번 더 정리될 수 있다.
-- `analysis-sessions`/`health-data` API(2번 담당, PR #34)가 머지되면, `session_id`
-  기반으로 이 3개 API를 호출하는 흐름으로 바뀔 예정이다(이슈 4, 아직 블록 상태).
-  지금은 mock(`data/judgement/mock_requests.json`) 기준으로 개발해도 된다.
+- `analysis-sessions`/`health-data` API(2번 담당, PR #34)가 `main`에 머지되면서
+  `HealthDataItemInput`이 팀 공유 스키마가 됐고, `judgement.py`도 자체 모델 대신
+  이 스키마를 직접 import하도록 정리했다(이슈 #36). `GateRequest`는 이제
+  이 3개 API·`health-data` API가 전부 같은 요청 모델을 쓴다.
+- `session_id` 기반으로 이 3개 API를 호출하는 흐름으로 바뀌는 건 아직이다(이슈 4,
+  블록 상태). 지금은 mock(`data/judgement/mock_requests.json`) 기준으로 개발해도
+  된다.
