@@ -11,7 +11,7 @@ from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.api.judgement import _SOURCE_TO_ACQUIRE_METHOD, _biomarker_keywords
@@ -31,12 +31,14 @@ router = APIRouter(prefix="/api/v1/feasibility", tags=["feasibility"])
 
 
 class FeasibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
 
 
 class AvailableSource(BaseModel):
     data_name: str
-    source_type: Literal["public_data", "api"]
+    source_type: Literal["public_api", "external_api"]
     source_name: str
 
 
@@ -47,7 +49,7 @@ class PrivacyRisk(BaseModel):
 
 class DataFeasibilityResult(BaseModel):
     data_feasibility_score: int
-    risk_level: Literal["낮음", "중간", "높음"]
+    risk_level: Literal["LOW", "MEDIUM", "HIGH"]
     available_sources: list[AvailableSource]
     privacy_risks: list[PrivacyRisk]
 
@@ -82,16 +84,14 @@ def _no_health_data_response() -> JSONResponse:
     )
 
 
-def _risk_level_for_score(score: int) -> Literal["낮음", "중간", "높음"]:
+def _risk_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
     # db_구축_설계서.md §3.4 등급: 1~3 쉬움 / 4~10 보통 / 12~30 어려움.
-    # "쉬움/보통/어려움"은 D×S 산출 자체의 언어고, 이 API의 risk_level 필드는
-    # judgement 3개 API(regulatory_grade 등)와 같은 "낮음/중간/높음" 어휘를 쓴다 —
-    # 등급 구간(1~3/4~10/12~30)은 동일, 이름만 맞춘다.
+    # API 계약에서는 프론트에서 안정적으로 비교하기 쉬운 영문 enum을 반환한다.
     if score <= 3:
-        return "낮음"
+        return "LOW"
     if score <= 10:
-        return "중간"
-    return "높음"
+        return "MEDIUM"
+    return "HIGH"
 
 
 def _classify_item_data_type(item: HealthDataItem, biomarker_keywords: set[str]) -> str:
@@ -147,7 +147,7 @@ async def _find_available_sources(session, items: list[HealthDataItem]) -> list[
         )
         if api_row is not None:
             sources.append(
-                AvailableSource(data_name=item.name, source_type="api", source_name=api_row.name)
+                AvailableSource(data_name=item.name, source_type="external_api", source_name=api_row.name)
             )
             continue
 
@@ -164,7 +164,7 @@ async def _find_available_sources(session, items: list[HealthDataItem]) -> list[
             sources.append(
                 AvailableSource(
                     data_name=item.name,
-                    source_type="public_data",
+                    source_type="public_api",
                     source_name=public_row.org or public_row.name,
                 )
             )
@@ -233,11 +233,22 @@ async def assess_data_feasibility(
                 ).scalars()
             }
 
-        privacy_risks = [
-            PrivacyRisk(data_name=item.name, reason=_privacy_reason(sensitivity_by_code[item.item_code]))
-            for item in items
-            if item.item_code in sensitivity_by_code
-        ]
+        privacy_risks: list[PrivacyRisk] = []
+        for item in items:
+            if item.item_code in sensitivity_by_code:
+                privacy_risks.append(
+                    PrivacyRisk(
+                        data_name=item.name,
+                        reason=_privacy_reason(sensitivity_by_code[item.item_code]),
+                    )
+                )
+            elif item.is_sensitive:
+                privacy_risks.append(
+                    PrivacyRisk(
+                        data_name=item.name,
+                        reason="건강정보에 해당할 수 있어 민감정보 처리 기준 검토 필요",
+                    )
+                )
 
         available_sources = await _find_available_sources(session, items)
 

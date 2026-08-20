@@ -38,7 +38,7 @@ class HealthDataItemResponse(BaseModel):
     name: str
     data_type: str
     unit: str | None
-    source: Literal["user_input", "device_sync", "os_sync"]
+    source: Literal["user_input", "device_sync", "os_sync", "institution_sync"]
     is_sensitive: bool
     item_code: str | None
 

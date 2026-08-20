@@ -25,13 +25,13 @@ from app.schemas.common import HealthDataItemInput
 
 
 def test_risk_level_thresholds_match_design_doc() -> None:
-    # db_구축_설계서.md §3.4 — 1~3 쉬움/낮음, 4~10 보통/중간, 12~30 어려움/높음.
-    assert _risk_level_for_score(1) == "낮음"
-    assert _risk_level_for_score(3) == "낮음"
-    assert _risk_level_for_score(4) == "중간"
-    assert _risk_level_for_score(10) == "중간"
-    assert _risk_level_for_score(12) == "높음"
-    assert _risk_level_for_score(30) == "높음"
+    # db_구축_설계서.md §3.4 — 1~3 쉬움/LOW, 4~10 보통/MEDIUM, 12~30 어려움/HIGH.
+    assert _risk_level_for_score(1) == "LOW"
+    assert _risk_level_for_score(3) == "LOW"
+    assert _risk_level_for_score(4) == "MEDIUM"
+    assert _risk_level_for_score(10) == "MEDIUM"
+    assert _risk_level_for_score(12) == "HIGH"
+    assert _risk_level_for_score(30) == "HIGH"
 
 
 def test_tokens_overlap_matches_compound_word_against_short_catalog_token() -> None:
@@ -40,6 +40,14 @@ def test_tokens_overlap_matches_compound_word_against_short_catalog_token() -> N
     assert _tokens_overlap_with_name("걸음수, 심박수, 수면, 혈당 등", "공복혈당")
     assert not _tokens_overlap_with_name("걸음수, 심박수, 수면 등", "공복혈당")
     assert not _tokens_overlap_with_name(None, "공복혈당")
+
+
+def test_feasibility_request_rejects_required_data_payload() -> None:
+    # 이 API는 analysis-session에 저장된 health_data_items를 기준으로 판단한다.
+    # 예전 명세의 required_data를 조용히 무시하면 caller가 다른 데이터로 판단됐다고
+    # 오해할 수 있으므로 extra field는 422로 막는다.
+    with pytest.raises(ValueError):
+        FeasibilityRequest.model_validate({"session_id": "s", "required_data": []})
 
 
 async def _create_session(name: str = "feasibility-test") -> str:
@@ -74,7 +82,7 @@ async def test_data_feasibility_score_takes_max_across_items_not_sum() -> None:
         result = await assess_data_feasibility(FeasibilityRequest(session_id=session_id))
 
         assert result.result.data_feasibility_score == 4
-        assert result.result.risk_level == "중간"
+        assert result.result.risk_level == "MEDIUM"
     finally:
         await _delete_session(session_id)
 
@@ -100,7 +108,7 @@ async def test_institution_sync_reaches_highest_difficulty_tier() -> None:
         result = await assess_data_feasibility(FeasibilityRequest(session_id=session_id))
 
         assert result.result.data_feasibility_score == 30
-        assert result.result.risk_level == "높음"
+        assert result.result.risk_level == "HIGH"
     finally:
         await _delete_session(session_id)
 
