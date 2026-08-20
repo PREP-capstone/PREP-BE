@@ -60,6 +60,42 @@ async def test_gate_uses_stored_health_data_and_service_actions() -> None:
         await _delete_session(session_id)
 
 
+async def test_gate_returns_conditional_for_biomarker_trend_analysis() -> None:
+    """생체지표 + 비교·추이분석(visualize_trend) 조합은 CONDITIONAL."""
+    session_id = await _create_session(
+        "사용자가 입력한 혈압 수치의 변화 추이를 그래프로 시각화한다.",
+        [HealthDataItemInput(name="혈압", data_type="numeric", unit="mmHg", source="user_input", item_code="biometric_002")],
+        service_actions=["record", "visualize_trend"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "생체지표"
+        assert response.function_type == "비교·추이분석"
+        assert response.verdict == "CONDITIONAL"
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
+    """기기연동 + 침습적 신호 조합은 하드체크로 FAIL."""
+    session_id = await _create_session(
+        "CGM 연속혈당측정기와 연동해 혈당을 실시간으로 기록한다.",
+        [
+            HealthDataItemInput(
+                name="연속혈당", data_type="numeric", unit="mg/dL", source="device_sync",
+                is_sensitive=True, item_code="sensitive_001",
+            )
+        ],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.verdict == "FAIL"
+        assert response.hardcheck_fired is True
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_regulatory_risk_computes_privacy_score_from_stored_item_code() -> None:
     session_id = await _create_session(
         "사용자의 복용약물을 기록하고 관리한다.",
