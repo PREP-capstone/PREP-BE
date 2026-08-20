@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/v1/analysis-sessions", tags=["analysis-sessions"
 _MAX_LIST_LENGTH = 50
 _MAX_STRING_ITEM_LENGTH = 200
 _UNIQUE_VIOLATION_SQLSTATE = "23505"
+_CHECK_VIOLATION_SQLSTATE = "23514"
 _LOCK_TIMEOUT = "5s"
 
 # 문자열 리스트 항목 하나하나의 길이도 제한한다 — 리스트 개수(max_length=_MAX_LIST_LENGTH)만
@@ -28,6 +29,10 @@ _BoundedStr = Annotated[str, StringConstraints(max_length=_MAX_STRING_ITEM_LENGT
 
 def _is_unique_violation(error: IntegrityError) -> bool:
     return getattr(error.orig, "sqlstate", None) == _UNIQUE_VIOLATION_SQLSTATE
+
+
+def _is_check_violation(error: IntegrityError) -> bool:
+    return getattr(error.orig, "sqlstate", None) == _CHECK_VIOLATION_SQLSTATE
 
 
 class HealthDataItemResponse(BaseModel):
@@ -129,6 +134,17 @@ def locked_response() -> JSONResponse:
             isSuccess=False,
             code="ANALYSIS_SESSION_LOCKED",
             message="다른 요청이 이 세션을 처리 중입니다. 잠시 후 다시 시도해주세요.",
+        ).model_dump(),
+    )
+
+
+def unsupported_source_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=AnalysisSessionErrorResponse(
+            isSuccess=False,
+            code="HEALTH_DATA_SOURCE_UNSUPPORTED",
+            message="지원하지 않는 데이터 수집 방법입니다. DB 마이그레이션 상태를 확인해주세요.",
         ).model_dump(),
     )
 
@@ -319,7 +335,13 @@ async def create_health_data(
         await replace_health_data_items(session, session_id, request.health_data_items)
         analysis_session.processing_purpose = request.processing_purpose or []
         analysis_session.service_actions = request.service_actions or []
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as error:
+            await session.rollback()
+            if _is_check_violation(error):
+                return unsupported_source_response()
+            raise
 
     return HealthDataMutationResponse(
         isSuccess=True,
@@ -369,7 +391,13 @@ async def update_health_data(
         if request.service_actions is not None:
             analysis_session.service_actions = request.service_actions
 
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as error:
+            await session.rollback()
+            if _is_check_violation(error):
+                return unsupported_source_response()
+            raise
 
     return HealthDataMutationResponse(
         isSuccess=True,

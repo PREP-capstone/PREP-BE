@@ -14,7 +14,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
-from app.api.judgement import _SOURCE_TO_ACQUIRE_METHOD, _biomarker_keywords
+from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
+from app.domain.scoring import grade_by_threshold
 from app.db.models import (
     AnalysisSession,
     ApiCatalog,
@@ -86,19 +87,14 @@ def _no_health_data_response() -> JSONResponse:
 
 def _risk_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
     # db_구축_설계서.md §3.4 등급: 1~3 쉬움 / 4~10 보통 / 12~30 어려움.
-    # API 계약에서는 프론트에서 안정적으로 비교하기 쉬운 영문 enum을 반환한다.
-    if score <= 3:
-        return "LOW"
-    if score <= 10:
-        return "MEDIUM"
-    return "HIGH"
+    return grade_by_threshold(score, 3, 10, ("LOW", "MEDIUM", "HIGH"))
 
 
 def _classify_item_data_type(item: HealthDataItem, biomarker_keywords: set[str]) -> str:
     # judgement.py._classify_data_type과 같은 생체지표 사전을 쓴다 — 여긴 항목별로
     # 개별 판정해야 해서(D×S는 항목당 최댓값 채택) 그 함수를 그대로 못 쓰고 판별
     # 규칙만 재사용한다.
-    return "생체지표" if any(keyword in item.name for keyword in biomarker_keywords) else "라이프스타일"
+    return "생체지표" if is_biomarker_name(item.name, biomarker_keywords) else "라이프스타일"
 
 
 def _privacy_reason(row: DataSensitivity) -> str:
@@ -124,7 +120,7 @@ def _tokens_overlap_with_name(field_value: str | None, name: str) -> bool:
     if not field_value:
         return False
     tokens = [t.strip(' []"') for t in field_value.replace(",", " ").split()]
-    return any(token and (token in name or name in token) for token in tokens)
+    return any(len(token) >= 2 and (token in name or name in token) for token in tokens)
 
 
 async def _find_available_sources(session, items: list[HealthDataItem]) -> list[AvailableSource]:
@@ -204,12 +200,21 @@ async def assess_data_feasibility(
             for row in (await session.execute(select(CollectionDifficulty))).scalars()
         }
 
-        biomarker_keywords = await _biomarker_keywords()
+        biomarker_keywords = await load_biomarker_keywords(session)
 
         max_score = 0
         for item in items:
             data_type = _classify_item_data_type(item, biomarker_keywords)
-            method = _SOURCE_TO_ACQUIRE_METHOD.get(item.source)
+            method = SOURCE_TO_ACQUIRE_METHOD.get(item.source)
+            if method is None:
+                return JSONResponse(
+                    status_code=500,
+                    content=FeasibilityErrorResponse(
+                        isSuccess=False,
+                        code="FEASIBILITY_UNKNOWN_DATA_SOURCE",
+                        message=f"지원하지 않는 데이터 수집 방법입니다: {item.source}",
+                    ).model_dump(),
+                )
             if data_type not in d_weight_by_type or method not in s_weight_by_method:
                 return JSONResponse(
                     status_code=500,

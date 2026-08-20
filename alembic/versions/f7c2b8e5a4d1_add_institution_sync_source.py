@@ -30,6 +30,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_constraint("ck_health_data_items_source", "health_data_items", type_="check")
+    # Legacy schema has no institution_sync value. Preserve rows during downgrade by
+    # mapping them to the closest legacy linkage bucket before restoring the old CHECK.
+    op.execute("UPDATE health_data_items SET source = 'os_sync' WHERE source = 'institution_sync'")
     op.create_check_constraint(
         "ck_health_data_items_source",
         "health_data_items",

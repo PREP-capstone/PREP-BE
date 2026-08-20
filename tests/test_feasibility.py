@@ -39,6 +39,7 @@ def test_tokens_overlap_matches_compound_word_against_short_catalog_token() -> N
     # 안 걸리던 문제 — 토큰 단위 양방향 비교로 잡아야 한다.
     assert _tokens_overlap_with_name("걸음수, 심박수, 수면, 혈당 등", "공복혈당")
     assert not _tokens_overlap_with_name("걸음수, 심박수, 수면 등", "공복혈당")
+    assert not _tokens_overlap_with_name("걸음수, 심박수, 수면 등", "등산")
     assert not _tokens_overlap_with_name(None, "공복혈당")
 
 
