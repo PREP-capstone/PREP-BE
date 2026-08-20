@@ -19,7 +19,7 @@ class HealthDataItemInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     data_type: str = Field(min_length=1, max_length=50)
     unit: str | None = Field(default=None, max_length=50)
-    source: Literal["user_input", "device_sync", "os_sync"]
+    source: Literal["user_input", "device_sync", "os_sync", "institution_sync"]
     is_sensitive: bool = False
     item_code: str | None = Field(default=None, max_length=80)  # data_sensitivity.item_code FK
 

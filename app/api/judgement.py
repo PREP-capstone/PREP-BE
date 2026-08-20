@@ -14,9 +14,11 @@ from sqlalchemy import select
 
 from app.api.rag import RagChunkLookupRequest, lookup_rag_chunks
 from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
-from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS, resolve_active_rule_version_ids
+from app.db.rule_version_queries import resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
-from app.pipeline.correction_terms import BIOMARKER_EXTRA, keyword_score
+from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
+from app.domain.scoring import grade_by_threshold
+from app.pipeline.correction_terms import keyword_score
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
 from app.schemas.common import HealthDataItemInput, LegalBasis
 
@@ -50,12 +52,6 @@ class GateResponse(BaseModel):
     hardcheck_fired: bool
 
 
-_SOURCE_TO_ACQUIRE_METHOD = {
-    "user_input": "수동입력",
-    "device_sync": "기기연동",
-    "os_sync": "OS연동",
-}
-
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
 _ACTION_PRIORITY: list[tuple[set[str], str]] = [
     ({"predict", "diagnose", "alert"}, "수치예측·진단"),
@@ -63,26 +59,14 @@ _ACTION_PRIORITY: list[tuple[set[str], str]] = [
     ({"record"}, "단순기록"),
 ]
 
-# 기기연동이어야 침습적 하드체크가 발동하므로 최우선.
-_ACQUIRE_METHOD_PRIORITY = ("기기연동", "OS연동", "수동입력")
-
-
-async def _biomarker_keywords() -> set[str]:
-    """생체지표 판별 사전 = gate_keywords(DATA_TYPE) + BIOMARKER_EXTRA(Stage C와 공유, 미등록 지표 보충)."""
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(GateKeyword.keyword).where(
-                GateKeyword.rule_version_id.in_(ACTIVE_RULE_VERSION_IDS),
-                GateKeyword.keyword_category == "DATA_TYPE",
-            )
-        )
-        keywords = {keyword for keyword in result.scalars().all() if keyword}
-        return keywords | set(BIOMARKER_EXTRA)
+# 기기연동이어야 침습적 하드체크가 발동하므로 최우선. 기관연동(기관 데이터 연계, collection_difficulty
+# S축 최고값=10)은 하드체크와 무관하지만 수동입력/OS연동보다 눈에 띄어야 하는 획득방법이라 그다음 순위.
+_ACQUIRE_METHOD_PRIORITY = ("기기연동", "기관연동", "OS연동", "수동입력")
 
 
 def _classify_data_type(items: list[HealthDataItemInput], biomarker_keywords: set[str]) -> str:
     for item in items:
-        if any(keyword in item.name for keyword in biomarker_keywords):
+        if is_biomarker_name(item.name, biomarker_keywords):
             return "생체지표"
     return "라이프스타일"
 
@@ -96,7 +80,7 @@ def _classify_function_type(actions: list[str]) -> str:
 
 
 def _classify_acquire_method(items: list[HealthDataItemInput]) -> str | None:
-    methods = {_SOURCE_TO_ACQUIRE_METHOD.get(item.source) for item in items}
+    methods = {SOURCE_TO_ACQUIRE_METHOD.get(item.source) for item in items}
     for method in _ACQUIRE_METHOD_PRIORITY:
         if method in methods:
             return method
@@ -113,7 +97,8 @@ def _detect_invasive_signal(request: GateRequest) -> bool:
 
 @router.post("/gate", response_model=GateResponse)
 async def judge_gate(request: GateRequest) -> GateResponse:
-    biomarker_keywords = await _biomarker_keywords()
+    async with AsyncSessionLocal() as session:
+        biomarker_keywords = await load_biomarker_keywords(session)
     data_type = _classify_data_type(request.health_data_items, biomarker_keywords)
     function_type = _classify_function_type(request.service_actions)
     acquire_method = _classify_acquire_method(request.health_data_items)
@@ -165,11 +150,7 @@ class RegulatoryRiskResponse(BaseModel):
 
 
 def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
-    if score <= threshold_low:
-        return "낮음"
-    if score <= threshold_mid:
-        return "중간"
-    return "높음"
+    return grade_by_threshold(score, threshold_low, threshold_mid, ("낮음", "중간", "높음"))
 
 
 async def _signal_thresholds(rule_version_ids: list[uuid.UUID]) -> dict[str, tuple[int, int]]:
