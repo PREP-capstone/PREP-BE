@@ -9,20 +9,84 @@ import asyncio
 import uuid
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.rag import RagChunkLookupRequest, lookup_rag_chunks
-from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
+from app.db.models import AnalysisSession, CorrectionRule, DataSensitivity, GateKeyword, HealthDataItem, SignalConfig
 from app.db.rule_version_queries import resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
 from app.domain.scoring import grade_by_threshold
 from app.pipeline.correction_terms import keyword_score
 from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
-from app.schemas.common import HealthDataItemInput, LegalBasis
+from app.schemas.common import ApiResponse, HealthDataItemInput, LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
+
+
+class JudgementErrorResponse(ApiResponse):
+    result: None = None
+
+
+def _session_not_found_response() -> JSONResponse:
+    # feasibility.py(이슈 #38)와 같은 코드/메시지 — 세션 조회 실패는 두 API에서 같은 모양이어야
+    # 프론트가 에러 처리를 하나로 통일할 수 있다.
+    return JSONResponse(
+        status_code=404,
+        content=JudgementErrorResponse(
+            isSuccess=False,
+            code="ANALYSIS_SESSION_NOT_FOUND",
+            message="분석 세션을 찾을 수 없습니다.",
+        ).model_dump(),
+    )
+
+
+def _no_health_data_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content=JudgementErrorResponse(
+            isSuccess=False,
+            code="HEALTH_DATA_REQUIRED",
+            message="등록된 검진 데이터가 없습니다. 먼저 health-data를 등록해주세요.",
+        ).model_dump(),
+    )
+
+
+async def _load_session(session_id: str) -> tuple[AnalysisSession, list[HealthDataItemInput]] | JSONResponse:
+    """session_id로 analysis_sessions/health_data_items를 조회해 judgement 로직이 쓰는
+    HealthDataItemInput 목록으로 변환한다. feasibility.py(이슈 #38)와 같은 조회 패턴 —
+    별도 세션 조회 API를 HTTP로 호출하지 않고 같은 프로세스에서 직접 쿼리한다.
+    """
+    async with AsyncSessionLocal() as session:
+        analysis_session = await session.get(AnalysisSession, session_id)
+        if analysis_session is None:
+            return _session_not_found_response()
+        rows = (
+            await session.execute(
+                select(HealthDataItem)
+                .where(HealthDataItem.session_id == session_id)
+                .order_by(HealthDataItem.sort_order, HealthDataItem.created_at)
+            )
+        ).scalars().all()
+
+    if not rows:
+        return _no_health_data_response()
+
+    items = [
+        HealthDataItemInput(
+            name=row.name,
+            data_type=row.data_type,
+            unit=row.unit,
+            source=row.source,
+            is_sensitive=row.is_sensitive,
+            item_code=row.item_code,
+        )
+        for row in rows
+    ]
+    return analysis_session, items
+
 
 # 룰베이스_RAG_정합성_추적표.md 표1에서 ✅(정상/해소)로 확인된 문서만. document_id가 우연히
 # 일치해도 판본이 다르거나(비의료 건강관리서비스 가이드라인) 미청킹인 문서는 quote를 채우면
@@ -37,10 +101,7 @@ _RAG_TRUSTED_DOCUMENT_IDS = {
 
 
 class GateRequest(BaseModel):
-    service_name: str
-    service_description: str
-    health_data_items: list[HealthDataItemInput]
-    service_actions: list[str]
+    session_id: str
 
 
 class GateResponse(BaseModel):
@@ -87,22 +148,31 @@ def _classify_acquire_method(items: list[HealthDataItemInput]) -> str | None:
     return None
 
 
-def _detect_invasive_signal(request: GateRequest) -> bool:
+def _detect_invasive_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
     # detect_invasive()는 내부에서 공백을 전부 지우고 매칭한다 — 서로 다른 필드를
     # 이어붙이면 경계가 사라져 부정표현/키워드가 필드를 가로질러 엉뚱하게 매칭된다.
     # 그래서 필드별로 따로 검사해 OR로 합친다.
-    texts = [request.service_description] + [item.name for item in request.health_data_items]
+    texts = [service_description] + [item.name for item in items]
     return any(detect_invasive(text) for text in texts)
 
 
-@router.post("/gate", response_model=GateResponse)
-async def judge_gate(request: GateRequest) -> GateResponse:
+@router.post(
+    "/gate",
+    response_model=GateResponse,
+    responses={404: {"model": JudgementErrorResponse}, 409: {"model": JudgementErrorResponse}},
+)
+async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
+    loaded = await _load_session(request.session_id)
+    if isinstance(loaded, JSONResponse):
+        return loaded
+    analysis_session, health_data_items = loaded
+
     async with AsyncSessionLocal() as session:
         biomarker_keywords = await load_biomarker_keywords(session)
-    data_type = _classify_data_type(request.health_data_items, biomarker_keywords)
-    function_type = _classify_function_type(request.service_actions)
-    acquire_method = _classify_acquire_method(request.health_data_items)
-    invasive_signal = _detect_invasive_signal(request)
+    data_type = _classify_data_type(health_data_items, biomarker_keywords)
+    function_type = _classify_function_type(analysis_session.service_actions)
+    acquire_method = _classify_acquire_method(health_data_items)
+    invasive_signal = _detect_invasive_signal(analysis_session.service_description, health_data_items)
 
     if is_invasive_hardcheck(data_type, acquire_method, invasive_signal):
         return GateResponse(
@@ -271,8 +341,17 @@ async def _match_privacy_score(items: list[HealthDataItemInput]) -> int:
     return max(levels, default=0)
 
 
-@router.post("/regulatory-risk", response_model=RegulatoryRiskResponse)
-async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
+@router.post(
+    "/regulatory-risk",
+    response_model=RegulatoryRiskResponse,
+    responses={404: {"model": JudgementErrorResponse}, 409: {"model": JudgementErrorResponse}},
+)
+async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse | JSONResponse:
+    loaded = await _load_session(request.session_id)
+    if isinstance(loaded, JSONResponse):
+        return loaded
+    analysis_session, health_data_items = loaded
+
     # 활성 rule_version_id를 한 번만 확정해서 이후 모든 쿼리에 그대로 넘긴다 — 각 쿼리가
     # 따로 "활성"을 다시 판단하면 그 사이 publish()가 끼어들 때 스냅샷이 어긋날 수 있다.
     rule_version_ids = await resolve_active_rule_version_ids()
@@ -289,10 +368,12 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse:
 
     # matches는 matched_keywords에 의존해 이후 실행, 나머지 둘은 독립적이라 병렬 조회.
     matched_keywords, privacy_score = await asyncio.gather(
-        _match_gate_keywords(request.service_description, rule_version_ids),
-        _match_privacy_score(request.health_data_items),
+        _match_gate_keywords(analysis_session.service_description, rule_version_ids),
+        _match_privacy_score(health_data_items),
     )
-    matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
+    matches = await _match_correction_rules(
+        analysis_session.service_description, matched_keywords, rule_version_ids
+    )
     # 키워드/문구 두 매칭 중 더 높은 점수 채택 — 한쪽이 놓친 걸 다른 쪽으로 보강.
     keyword_match_score = max((keyword_score(row) for row in matched_keywords), default=0)
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
@@ -337,11 +418,22 @@ class CorrectionCandidatesResponse(BaseModel):
     candidates: list[CorrectionCandidate]
 
 
-@router.post("/correction-candidates", response_model=CorrectionCandidatesResponse)
-async def judge_correction_candidates(request: GateRequest) -> CorrectionCandidatesResponse:
+@router.post(
+    "/correction-candidates",
+    response_model=CorrectionCandidatesResponse,
+    responses={404: {"model": JudgementErrorResponse}, 409: {"model": JudgementErrorResponse}},
+)
+async def judge_correction_candidates(request: GateRequest) -> CorrectionCandidatesResponse | JSONResponse:
+    loaded = await _load_session(request.session_id)
+    if isinstance(loaded, JSONResponse):
+        return loaded
+    analysis_session, _health_data_items = loaded
+
     rule_version_ids = await resolve_active_rule_version_ids()
-    matched_keywords = await _match_gate_keywords(request.service_description, rule_version_ids)
-    matches = await _match_correction_rules(request.service_description, matched_keywords, rule_version_ids)
+    matched_keywords = await _match_gate_keywords(analysis_session.service_description, rule_version_ids)
+    matches = await _match_correction_rules(
+        analysis_session.service_description, matched_keywords, rule_version_ids
+    )
     return CorrectionCandidatesResponse(
         candidates=[
             CorrectionCandidate(
