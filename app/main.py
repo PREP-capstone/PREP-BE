@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.api.analysis_sessions import router as analysis_sessions_router
+from app.api.feasibility import router as feasibility_router
 from app.api.judgement import router as judgement_router
 from app.api.rag import router as rag_router
 from app.core.redis_client import redis_client
@@ -22,6 +23,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(analysis_sessions_router)
+app.include_router(feasibility_router)
 app.include_router(judgement_router)
 app.include_router(rag_router)
 
