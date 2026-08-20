@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.api.rag import RagChunkLookupRequest, lookup_rag_chunks
 from app.db.models import CorrectionRule, DataSensitivity, GateKeyword, SignalConfig
 from app.db.rule_version_queries import ACTIVE_RULE_VERSION_IDS, resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
@@ -20,6 +21,17 @@ from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, i
 from app.schemas.common import HealthDataItemInput, LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
+
+# 룰베이스_RAG_정합성_추적표.md 표1에서 ✅(정상/해소)로 확인된 문서만. document_id가 우연히
+# 일치해도 판본이 다르거나(비의료 건강관리서비스 가이드라인) 미청킹인 문서는 quote를 채우면
+# 틀린 원문이 나올 수 있어 제외한다 — 그 표가 갱신되면 이 목록도 같이 갱신해야 한다.
+_RAG_TRUSTED_DOCUMENT_IDS = {
+    "kr-mfds-wellness-0091-03-20260212",
+    "kr-pharmaceutical-affairs-act-20260621",
+    "kr-medical-device-act-20260701",
+    "kr-medical-device-act-rule-annex7-20260701",
+    "kr-medical-act-20260407",
+}
 
 
 class GateRequest(BaseModel):
@@ -198,6 +210,30 @@ async def _match_gate_keywords(service_description: str, rule_version_ids: list[
     return [row for row in rows if row.keyword and row.keyword in service_description]
 
 
+async def _fill_quotes(matches: list[CorrectionMatch]) -> None:
+    """화이트리스트 문서에 한해 RAG에서 조문 원문을 조회해 legal_basis.quote를 채운다(in-place).
+
+    RAG 조회가 실패해도 조용히 넘어간다 — RAG는 판정 결과를 절대 바꾸지 않는 부가 정보라서
+    (판정엔진_개발설계서.md §10.1), RAG 장애로 핵심 응답까지 깨지면 안 된다.
+    """
+    by_document: dict[str, list[CorrectionMatch]] = {}
+    for match in matches:
+        if match.legal_basis.document_id in _RAG_TRUSTED_DOCUMENT_IDS:
+            by_document.setdefault(match.legal_basis.document_id, []).append(match)
+
+    for document_id, group in by_document.items():
+        section_ids = list({m.legal_basis.article for m in group})
+        try:
+            response = await lookup_rag_chunks(
+                RagChunkLookupRequest(document_id=document_id, section_ids=section_ids)
+            )
+        except Exception:
+            continue
+        chunk_by_section = {chunk.section_id: chunk.chunk_text for chunk in response.result}
+        for match in group:
+            match.legal_basis.quote = chunk_by_section.get(match.legal_basis.article)
+
+
 async def _match_correction_rules(
     service_description: str, matched_keywords: list[GateKeyword], rule_version_ids: list[uuid.UUID]
 ) -> list[CorrectionMatch]:
@@ -229,7 +265,9 @@ async def _match_correction_rules(
             legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
             exact_phrase_match=bool(phrase_hit),
         )
-    return list(matched.values())
+    result = list(matched.values())
+    await _fill_quotes(result)
+    return result
 
 
 async def _match_privacy_score(items: list[HealthDataItemInput]) -> int:
