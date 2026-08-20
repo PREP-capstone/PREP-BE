@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, select, text
+from pydantic import BaseModel, Field, StringConstraints
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.db.models.analysis_session import AnalysisSession, HealthDataItem
@@ -21,14 +21,9 @@ _MAX_STRING_ITEM_LENGTH = 200
 _UNIQUE_VIOLATION_SQLSTATE = "23505"
 _LOCK_TIMEOUT = "5s"
 
-
-def _validate_string_lengths(values: list[str] | None) -> list[str] | None:
-    if values is None:
-        return values
-    for value in values:
-        if len(value) > _MAX_STRING_ITEM_LENGTH:
-            raise ValueError(f"항목 길이는 {_MAX_STRING_ITEM_LENGTH}자를 넘을 수 없습니다.")
-    return values
+# 문자열 리스트 항목 하나하나의 길이도 제한한다 — 리스트 개수(max_length=_MAX_LIST_LENGTH)만
+# 제한하면 항목 1개에 수 MB 텍스트를 넣는 것까지는 못 막는다.
+_BoundedStr = Annotated[str, StringConstraints(max_length=_MAX_STRING_ITEM_LENGTH)]
 
 
 def _is_unique_violation(error: IntegrityError) -> bool:
@@ -45,18 +40,14 @@ class HealthDataItemResponse(BaseModel):
     unit: str | None
     source: Literal["user_input", "device_sync", "os_sync"]
     is_sensitive: bool
+    item_code: str | None
 
 
 class CreateAnalysisSessionRequest(BaseModel):
     service_name: str = Field(min_length=1, max_length=200)
     service_description: str = Field(min_length=1, max_length=5000)
-    target_users: list[str] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
+    target_users: list[_BoundedStr] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
     service_type: str | None = Field(default=None, max_length=50)
-
-    @field_validator("target_users")
-    @classmethod
-    def _cap_target_user_length(cls, value: list[str]) -> list[str]:
-        return _validate_string_lengths(value)
 
 
 class CreateAnalysisSessionResult(BaseModel):
@@ -75,24 +66,14 @@ class HealthDataUpsertRequest(BaseModel):
     # 중복 제출 방지(409)가 무력화되고 processing_purpose/service_actions가
     # PATCH 없이 조용히 덮어써진다.
     health_data_items: list[HealthDataItemInput] = Field(min_length=1, max_length=_MAX_LIST_LENGTH)
-    processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
-    service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
-
-    @field_validator("processing_purpose", "service_actions")
-    @classmethod
-    def _cap_item_length(cls, value: list[str] | None) -> list[str] | None:
-        return _validate_string_lengths(value)
+    processing_purpose: list[_BoundedStr] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
+    service_actions: list[_BoundedStr] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
 
 class PatchHealthDataRequest(BaseModel):
     health_data_items: list[HealthDataItemInput] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
-    processing_purpose: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
-    service_actions: list[str] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
-
-    @field_validator("processing_purpose", "service_actions")
-    @classmethod
-    def _cap_item_length(cls, value: list[str] | None) -> list[str] | None:
-        return _validate_string_lengths(value)
+    processing_purpose: list[_BoundedStr] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
+    service_actions: list[_BoundedStr] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
 
 class HealthDataMutationResult(BaseModel):
@@ -174,6 +155,7 @@ def health_data_item_to_response(item: HealthDataItem) -> HealthDataItemResponse
         unit=item.unit,
         source=item.source,
         is_sensitive=item.is_sensitive,
+        item_code=item.item_code,
     )
 
 
@@ -187,6 +169,7 @@ async def replace_health_data_items(session, session_id: str, items: list[Health
             unit=item.unit,
             source=item.source,
             is_sensitive=item.is_sensitive,
+            item_code=item.item_code,
             sort_order=index,
         )
         for index, item in enumerate(items)
@@ -374,10 +357,13 @@ async def update_health_data(
             # 않아 updated_at의 onupdate가 안 걸린다 — 명시적으로 찍어준다.
             analysis_session.updated_at = datetime.now(timezone.utc)
         else:
-            count_result = await session.execute(
-                select(HealthDataItem.health_data_item_id).where(HealthDataItem.session_id == session_id)
-            )
-            health_data_count = len(count_result.scalars().all())
+            health_data_count = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(HealthDataItem)
+                    .where(HealthDataItem.session_id == session_id)
+                )
+            ).scalar_one()
         if request.processing_purpose is not None:
             analysis_session.processing_purpose = request.processing_purpose
         if request.service_actions is not None:

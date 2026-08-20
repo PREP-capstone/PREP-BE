@@ -21,6 +21,7 @@ class HealthDataItemInput(BaseModel):
     unit: str | None = Field(default=None, max_length=50)
     source: Literal["user_input", "device_sync", "os_sync"]
     is_sensitive: bool = False
+    item_code: str | None = Field(default=None, max_length=80)  # data_sensitivity.item_code FK
 
 
 class ApiResponse(BaseModel):
