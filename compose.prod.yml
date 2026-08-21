@@ -1,0 +1,40 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prep-api
+    env_file:
+      - .env.production
+    environment:
+      APP_ENV: production
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_PERSIST_DIRECTORY: /app/data/chroma
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - prep_chroma_data:/app/data/chroma
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: prep-redis
+    command: redis-server --save "" --appendonly no
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  prep_chroma_data:
