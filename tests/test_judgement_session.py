@@ -6,6 +6,7 @@ create_health_data를 직접 호출해 세션을 만들고 끝나면 지운다.
 """
 
 import pytest
+from fastapi.responses import JSONResponse
 from sqlalchemy import delete
 
 from app.api.analysis_sessions import (
@@ -61,10 +62,14 @@ async def test_gate_uses_stored_health_data_and_service_actions() -> None:
 
 
 async def test_gate_returns_conditional_for_biomarker_trend_analysis() -> None:
-    """생체지표 + 비교·추이분석(visualize_trend) 조합은 CONDITIONAL."""
+    """생체지표(BIOMARKER_EXTRA) + 비교·추이분석(visualize_trend) 조합은 CONDITIONAL.
+
+    "심박수"를 쓰는 이유는 test_gate_uses_stored_health_data_and_service_actions와
+    동일 — gate_keywords 시드 여부와 무관하게 항상 생체지표로 분류돼야 한다.
+    """
     session_id = await _create_session(
-        "사용자가 입력한 혈압 수치의 변화 추이를 그래프로 시각화한다.",
-        [HealthDataItemInput(name="혈압", data_type="numeric", unit="mmHg", source="user_input", item_code="biometric_002")],
+        "사용자가 측정한 심박수의 변화 추이를 그래프로 시각화한다.",
+        [HealthDataItemInput(name="심박수", data_type="numeric", unit="bpm", source="user_input")],
         service_actions=["record", "visualize_trend"],
     )
     try:
@@ -77,12 +82,17 @@ async def test_gate_returns_conditional_for_biomarker_trend_analysis() -> None:
 
 
 async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
-    """기기연동 + 침습적 신호 조합은 하드체크로 FAIL."""
+    """기기연동 + 침습적 신호 조합은 하드체크로 FAIL.
+
+    생체지표 분류는 "심박수"(BIOMARKER_EXTRA)로 고정해 gate_keywords 시드와 무관하게
+    만든다. invasive_signal은 detect_invasive()가 텍스트(CGM/연속혈당)만 보고
+    판단해서 원래도 DB 의존이 아니다 — service_description은 그대로 유지.
+    """
     session_id = await _create_session(
-        "CGM 연속혈당측정기와 연동해 혈당을 실시간으로 기록한다.",
+        "CGM 연속혈당측정기와 연동해 심박수를 실시간으로 기록한다.",
         [
             HealthDataItemInput(
-                name="연속혈당", data_type="numeric", unit="mg/dL", source="device_sync",
+                name="심박수", data_type="numeric", unit="bpm", source="device_sync",
                 is_sensitive=True, item_code="sensitive_001",
             )
         ],
@@ -116,6 +126,21 @@ async def test_correction_candidates_matches_stored_service_description() -> Non
     )
     try:
         response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert any(c.risky_text == "복약지도" for c in response.candidates)
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_correction_candidates_does_not_require_health_data() -> None:
+    """correction-candidates는 service_description만 쓰고 health_data_items를
+    참조하지 않으므로, health-data 미등록 세션이어도 409 없이 동작해야 한다."""
+    request = CreateAnalysisSessionRequest(
+        service_name="no-health-data-test", service_description="사용자에게 복약지도를 제공한다."
+    )
+    session_id = (await create_analysis_session(request)).result.session_id
+    try:
+        response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert not isinstance(response, JSONResponse)
         assert any(c.risky_text == "복약지도" for c in response.candidates)
     finally:
         await _delete_session(session_id)

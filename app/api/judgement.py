@@ -58,6 +58,9 @@ async def _load_session(session_id: str) -> tuple[AnalysisSession, list[HealthDa
     """session_id로 analysis_sessions/health_data_items를 조회해 judgement 로직이 쓰는
     HealthDataItemInput 목록으로 변환한다. feasibility.py(이슈 #38)와 같은 조회 패턴 —
     별도 세션 조회 API를 HTTP로 호출하지 않고 같은 프로세스에서 직접 쿼리한다.
+
+    health_data_items가 비어도 그대로 반환한다(404만 여기서 처리) — correction-candidates는
+    항목을 아예 안 쓰므로 "검진 데이터 필요" 체크는 실제로 쓰는 엔드포인트가 각자 판단한다.
     """
     async with AsyncSessionLocal() as session:
         analysis_session = await session.get(AnalysisSession, session_id)
@@ -70,9 +73,6 @@ async def _load_session(session_id: str) -> tuple[AnalysisSession, list[HealthDa
                 .order_by(HealthDataItem.sort_order, HealthDataItem.created_at)
             )
         ).scalars().all()
-
-    if not rows:
-        return _no_health_data_response()
 
     items = [
         HealthDataItemInput(
@@ -166,6 +166,8 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
     if isinstance(loaded, JSONResponse):
         return loaded
     analysis_session, health_data_items = loaded
+    if not health_data_items:
+        return _no_health_data_response()
 
     async with AsyncSessionLocal() as session:
         biomarker_keywords = await load_biomarker_keywords(session)
@@ -351,6 +353,8 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse 
     if isinstance(loaded, JSONResponse):
         return loaded
     analysis_session, health_data_items = loaded
+    if not health_data_items:
+        return _no_health_data_response()
 
     # 활성 rule_version_id를 한 번만 확정해서 이후 모든 쿼리에 그대로 넘긴다 — 각 쿼리가
     # 따로 "활성"을 다시 판단하면 그 사이 publish()가 끼어들 때 스냅샷이 어긋날 수 있다.
