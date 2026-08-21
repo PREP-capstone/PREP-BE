@@ -1,0 +1,43 @@
+name: Deploy to EC2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
+      ENV_PRODUCTION: ${{ secrets.ENV_PRODUCTION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload production env when provided
+        if: env.ENV_PRODUCTION != ''
+        run: |
+          printf '%s' "$ENV_PRODUCTION" > .env.production
+          scp .env.production "$EC2_USER@$EC2_HOST:$EC2_APP_DIR/.env.production"
+
+      - name: Deploy application
+        run: |
+          ssh "$EC2_USER@$EC2_HOST" "
+            set -e
+            cd '$EC2_APP_DIR'
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose -f compose.prod.yml up -d --build
+            docker compose -f compose.prod.yml exec -T api alembic upgrade head
+            docker compose -f compose.prod.yml exec -T api python scripts/check_deploy_ready.py --skip-chroma
+            curl -fsS http://127.0.0.1:8000/api/v1/health
+          "
