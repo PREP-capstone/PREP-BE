@@ -2,11 +2,13 @@
 
 > 담당: 1번(Gate/규제 위험도 판정) · 대상: 3번(시장성/BM/리포트) 공유용
 > 작업 #7(이슈 #31) — `RAG_근거검색_API_명세서.md`와 같은 포맷.
-> 최신 코드 기준(`app/api/judgement.py`, `app/schemas/common.py`, 이슈 #36 반영 상태).
+> 최신 코드 기준(`app/api/judgement.py`, `app/schemas/common.py`, 이슈 #42 반영 상태).
 
-이 3개 API는 요청 스키마(`GateRequest`)를 공유한다. `health_data_items`는
-2번의 `POST /health-data`와 동일한 `HealthDataItemInput`(`app/schemas/common.py`)을
-그대로 쓴다.
+이 3개 API는 요청 스키마(`GateRequest`)를 공유한다. `session_id`(2번의
+`analysis-sessions`/`health-data` API로 미리 만든 세션)만 받고, 실제 판정 대상
+데이터(`service_description`/`health_data_items`/`service_actions`)는 서버가
+`analysis_sessions`/`health_data_items` 테이블에서 직접 조회한다 — 요청 바디로
+데이터를 다시 보내지 않는다(2번의 `feasibility/data` API와 같은 흐름).
 
 ## Headers
 
@@ -15,26 +17,25 @@ Authorization: Bearer `<accessToken>`
 ## 공용 요청 스키마 — `GateRequest`
 
 ```json
+{ "session_id": "string" }
+```
+
+세션이 없으면 404, 세션은 있는데 `health_data_items`가 하나도 등록 안 됐으면 409를
+반환한다(둘 다 아래 에러 응답 형식).
+
+### 에러 응답 (404 / 409)
+
+```json
 {
-  "service_name": "string",
-  "service_description": "string",
-  "health_data_items": [
-    {
-      "name": "string",
-      "data_type": "numeric|text|image 등 (라이프스타일/생체지표 enum과 다름, 값의 타입)",
-      "unit": "string|null",
-      "source": "user_input|device_sync|os_sync",
-      "is_sensitive": true,
-      "item_code": "string|null"
-    }
-  ],
-  "service_actions": ["record", "visualize_trend", "predict", "diagnose", "alert"]
+  "isSuccess": false,
+  "code": "ANALYSIS_SESSION_NOT_FOUND",
+  "message": "분석 세션을 찾을 수 없습니다.",
+  "result": null
 }
 ```
 
-- `item_code`: `data_sensitivity.item_code`(예: `sensitive_001`). `privacy_score` 계산에만
-  쓰인다 — `null`로 오면(프론트가 아직 안 보내는 항목 등) `privacy_score`는 0으로
-  나온다.
+`code`는 `ANALYSIS_SESSION_NOT_FOUND`(404) 또는 `HEALTH_DATA_REQUIRED`(409) —
+`feasibility/data` API와 같은 코드·메시지를 쓴다.
 
 ## 공용 응답 스키마 — `LegalBasis`
 
@@ -178,6 +179,7 @@ Authorization: Bearer `<accessToken>`
   이 3개 API·`health-data` API가 전부 같은 요청 모델을 쓴다.
 - RAG 근거 원문(`quote`) 연결 완료(이슈 #39) — `regulatory-risk`/`correction-candidates`가
   화이트리스트 문서에 한해 실제 조문 원문을 반환한다.
-- `session_id` 기반으로 이 3개 API를 호출하는 흐름으로 바뀌는 건 아직이다(session_id
-  실연동, 별도 작업으로 분리됨). 지금은 mock(`data/judgement/mock_requests.json`)
-  기준으로 개발해도 된다.
+- `session_id` 기반 실연동 완료(이슈 #42) — 3개 API 전부 `GateRequest`가
+  `{session_id}` 하나만 받는다. mock(`data/judgement/mock_requests.json`)은
+  삭제했다 — 테스트하려면 `analysis-sessions`로 실제 세션을 먼저 만들어야 한다
+  (`tests/test_judgement_session.py` 참고).
