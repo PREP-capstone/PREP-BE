@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 from app.api.analysis_sessions import router as analysis_sessions_router
 from app.api.business_model import router as business_model_router
+from app.api.category_classifier import router as category_classifier_router
 from app.api.feasibility import router as feasibility_router
 from app.api.judgement import router as judgement_router
 from app.api.rag import router as rag_router
@@ -25,6 +26,7 @@ app = FastAPI(
 )
 app.include_router(analysis_sessions_router)
 app.include_router(business_model_router)
+app.include_router(category_classifier_router)
 app.include_router(feasibility_router)
 app.include_router(judgement_router)
 app.include_router(rag_router)

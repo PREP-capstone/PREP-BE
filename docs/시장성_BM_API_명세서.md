@@ -33,18 +33,24 @@ Authorization: Bearer `<accessToken>`
 
 ## 선행 조건 — category_1/category_2/target
 
-`competitors`/`bm_mapping` 조회 키는 `category_1`(질병/분야 축 7종: 수면·정신건강·운동·
-식단·만성질환·여성건강·미용) + `category_2`(기능축 4종: 정보제공·데이터기록관리·
+`competitors`/`bm_mapping` 조회 키는 `category_1`(질병/분야 축 8종: 수면·정신건강·운동·
+식단·만성질환·여성건강·유전자·미용) + `category_2`(기능축 4종: 정보제공·데이터기록관리·
 매칭연결·개입치료) + `target` + `service_type` 4개다. `service_type`은 기존
 `analysis_sessions`에 있었지만 `category_1`/`category_2`/`target`은 이번 작업(#7)에서
 신규 추가한 컬럼이다(마이그레이션 `a1b2c3d4e5f6`).
 
-STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, Macro F1 0.79)이 `category_1`/
-`category_2`를 산출하지만, 그 값을 세션에 반영하는 절차가 이 작업 전에는 없었다.
-`PATCH /api/v1/analysis-sessions/{session_id}/category`를 신규로 추가했다 — 분류
-모델 호출 쪽(AI 모델 담당 또는 프론트)이 세션 생성 이후 이 엔드포인트로 결과를
-반영해야 아래 두 API가 정상 동작한다. `target`은 STEP 0 프론트 입력폼에서 받는 값을
-`CreateAnalysisSessionRequest.target` 또는 같은 PATCH로 채운다.
+> category_1은 원래 7종(수면·정신건강·운동·식단·만성질환·여성건강·미용)으로
+> 알려져 있었으나, 실제 배포된 분류 모델(`best_healthcare_model_large`,
+> `num_labels=8`)은 **유전자**를 포함한 8종을 쓴다(채린 님 확인, 2026-08-22). DB
+> 컬럼은 `String(80)` 자유 텍스트라 값 종류가 늘어도 스키마 변경은 필요 없다.
+
+STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, Macro F1 0.79)이 `category_1`을
+산출한다. `POST /api/v1/category-classifier/predict`(이번 작업에서 신규 통합, 아래
+참고)로 추론하고, 그 결과를 `PATCH /api/v1/analysis-sessions/{session_id}/category`로
+세션에 반영해야 이 문서의 두 API가 정상 동작한다. `category_2`는 아직 이 형태로
+배포된 모델이 없어 별도 축 확정 전까지 프론트/파이프라인이 직접 채워야 한다.
+`target`은 STEP 0 프론트 입력폼에서 받는 값을 `CreateAnalysisSessionRequest.target`
+또는 같은 PATCH로 채운다.
 
 `category_1`/`category_2` 중 하나라도 없으면 두 API 모두 `match_level:
 "insufficient_data"`로 응답한다 — 조회 키가 없는 상태에서 임의로 Opportunity/추천을
@@ -168,6 +174,43 @@ market_lookup.py`에 두 API가 공유하는 구현이 있다.
   `competitors.price`(☆ 신설 완료, 이 API 응답엔 미포함 — 필요 시 market API의
   경쟁 카드와 조합), 전환율은 수집 가능성 자체가 미확인(§9.3), 강점은 LLM ③ 생성
   영역(§12).
+
+---
+
+## `POST /api/v1/category-classifier/predict` (부속 API)
+
+### Description
+
+STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, `data/models/best_healthcare_model_large`)로
+`service_description` 텍스트에서 `category_1`을 추론한다. 세션을 건드리지 않는
+순수 추론 API다 — 결과 반영은 호출한 쪽이 `PATCH /api/v1/analysis-sessions/
+{session_id}/category`로 별도 수행한다(분류 호출 시점과 세션 반영 시점을 분리해
+프론트/파이프라인이 자유롭게 오케스트레이션할 수 있게 한 것, 2026-08-22 확인).
+
+### Request
+
+```json
+{ "service_description": "string" }
+```
+
+### Response
+
+```json
+{ "category_1": "수면|정신건강|운동|식단|만성질환|여성건강|유전자|미용", "confidence": 0.93 }
+```
+
+모델을 찾을 수 없으면(로컬에 `data/models/`를 배치하지 않은 환경) 503
+`CATEGORY_MODEL_UNAVAILABLE`을 반환한다 — 체크포인트가 1.3GB 바이너리라 git에
+커밋하지 않고(`.gitignore`) 환경마다 별도 배치해야 하기 때문이다.
+
+### ⚠️ AutoTokenizer 쓰지 말 것
+
+이 체크포인트의 `tokenizer_config.json`은 `tokenizer_class: RobertaTokenizer`로
+잘못 기록돼 있지만 실제 vocab은 BERT WordPiece 형식이다. `AutoTokenizer`로 로드하면
+한글 입력이 전부 깨진 토큰으로 분해되어 **모든 입력이 같은 라벨로 수렴한다**(실측:
+항상 LABEL_3, confidence ~0.3 — 겉보기엔 정상 동작하는 것처럼 보여서 위험하다).
+`app/domain/category_classifier.py`는 `BertTokenizerFast`를 명시 로드해 이 문제를
+피한다. 이 모델을 다른 곳에서도 로드할 계획이면 반드시 같은 방식을 써야 한다.
 
 ---
 
