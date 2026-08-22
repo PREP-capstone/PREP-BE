@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 data/chroma/
+data/models/
 CLAUDE.md
 requirements-windows.txt
 data/rule/dump_latest.txt
