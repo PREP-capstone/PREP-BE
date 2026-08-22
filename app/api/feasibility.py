@@ -15,11 +15,14 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
+from app.domain.market_lookup import CategoryKeys, MatchLevel, relaxation_stages
 from app.domain.scoring import grade_by_threshold
 from app.db.models import (
     AnalysisSession,
     ApiCatalog,
+    BmMapping,
     CollectionDifficulty,
+    Competitor,
     DataDifficulty,
     DataSensitivity,
     HealthDataItem,
@@ -266,5 +269,165 @@ async def assess_data_feasibility(
             risk_level=_risk_level_for_score(max_score),
             available_sources=available_sources,
             privacy_risks=privacy_risks,
+        ),
+    )
+
+
+# ── 시장 현실성(§03) — 작업 #7(3번 담당). 판정엔진_개발설계서.md §8. ──────────────
+#
+# 국내 수요(app_store_ranking + 검색 트렌드)는 이 API 범위 밖이다: app_store_ranking은
+# 팀이 유료 API/비공식 수집 이슈로 보류했고(Notion "웰니스 창업 아이디어 검진 시스템"
+# §8), 검색 트렌드 임계값은 산출됐으나 성장군/정체군 그룹 가정이 예상과 어긋나 팀
+# 재검토 대기 중이다(같은 문서 §7.7). 둘 다 준비되면 SECTION 2-3 판단근거 ①로
+# 별도 추가한다.
+
+_COMPETITOR_CARD_LIMIT = 3
+_SATURATED_THRESHOLD = 5
+_CHALLENGING_THRESHOLD = 3
+_PLATFORM_TIER = "플랫폼"
+
+Saturation = Literal["Opportunity", "Challenging", "Saturated"]
+MarketRealismGrade = Literal["높음", "중간", "낮음"]
+
+_SATURATION_TO_GRADE: dict[Saturation, MarketRealismGrade] = {
+    "Opportunity": "높음",
+    "Challenging": "중간",
+    "Saturated": "낮음",
+}
+
+
+class MarketFeasibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+
+
+class CompetitorCard(BaseModel):
+    name: str
+    feature: str | None
+    limitation: str | None
+    badge: Literal["진입 가능", "차별화 필요"]
+
+
+class MarketFeasibilityResult(BaseModel):
+    match_level: MatchLevel
+    competitor_count: int
+    saturation: Saturation | None
+    market_realism_grade: MarketRealismGrade | None
+    platform_competitor_exists: bool
+    payment_precedent: str | None
+    competitor_cards: list[CompetitorCard]
+
+
+class MarketFeasibilityResponse(ApiResponse):
+    result: MarketFeasibilityResult
+
+
+def _saturation_for_count(count: int, platform_exists: bool) -> Saturation:
+    # 판정엔진_개발설계서.md §8.1 — 포화도가 낮을수록 시장현실성은 높다(역관계).
+    # n>=5는 항상 Saturated로 분류하되(§8.4 신호등 매핑에 별도 "후보" 등급이 없음),
+    # platform_competitor_exists로 "개수만으로 낮음"과 "대형 플랫폼까지 확인된 낮음"을
+    # 구분해 리포트에서 근거 신뢰도를 드러낸다.
+    if count <= _CHALLENGING_THRESHOLD - 1:
+        return "Opportunity"
+    if count < _SATURATED_THRESHOLD:
+        return "Challenging"
+    return "Saturated"
+
+
+def _badge_for_tier(tier: str | None) -> Literal["진입 가능", "차별화 필요"]:
+    # 배지 기준(§8.5)은 "대형 서비스가 동일 기능 제공 시 차별화 필요"라 원래 LLM/사람
+    # 판단 영역에 가깝다. 규칙 기반 근사치로 tier='플랫폼'이면 차별화 필요, 아니면
+    # 진입 가능으로 처리한다 — advertising_score와 같은 종류의 한계가 있다.
+    return "차별화 필요" if tier == _PLATFORM_TIER else "진입 가능"
+
+
+async def _find_competitors(session, keys: CategoryKeys) -> tuple[MatchLevel, list[Competitor]]:
+    for match_level, filters in relaxation_stages(Competitor, keys):
+        rows = (await session.execute(select(Competitor).where(*filters))).scalars().all()
+        if rows:
+            return match_level, list(rows)
+    return "insufficient_data", []
+
+
+async def _find_payment_precedent(session, keys: CategoryKeys) -> str | None:
+    for _, filters in relaxation_stages(BmMapping, keys):
+        row = (
+            await session.execute(
+                select(BmMapping.precedent_level)
+                .where(*filters)
+                .where(BmMapping.precedent_level.is_not(None))
+                .order_by(BmMapping.frequency_score.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is not None:
+            return row
+    return None
+
+
+@router.post(
+    "/market",
+    response_model=MarketFeasibilityResponse,
+    responses={404: {"model": FeasibilityErrorResponse}},
+)
+async def assess_market_feasibility(
+    request: MarketFeasibilityRequest,
+) -> MarketFeasibilityResponse | JSONResponse:
+    async with AsyncSessionLocal() as session:
+        analysis_session = await session.get(AnalysisSession, request.session_id)
+        if analysis_session is None:
+            return _not_found_response()
+
+        keys = CategoryKeys(
+            category_1=analysis_session.category_1,
+            category_2=analysis_session.category_2,
+            target=analysis_session.target,
+            service_type=analysis_session.service_type,
+        )
+
+        match_level, competitors = await _find_competitors(session, keys)
+        payment_precedent = await _find_payment_precedent(session, keys)
+
+    if match_level == "insufficient_data":
+        return MarketFeasibilityResponse(
+            isSuccess=True,
+            code="MARKET_FEASIBILITY_INSUFFICIENT_DATA",
+            message="유사 경쟁사 데이터가 부족해 시장 현실성을 판단할 수 없습니다.",
+            result=MarketFeasibilityResult(
+                match_level=match_level,
+                competitor_count=0,
+                saturation=None,
+                market_realism_grade=None,
+                platform_competitor_exists=False,
+                payment_precedent=payment_precedent,
+                competitor_cards=[],
+            ),
+        )
+
+    competitor_count = len(competitors)
+    platform_exists = any(row.tier == _PLATFORM_TIER for row in competitors)
+    saturation = _saturation_for_count(competitor_count, platform_exists)
+
+    return MarketFeasibilityResponse(
+        isSuccess=True,
+        code="MARKET_FEASIBILITY_COMPLETED",
+        message="시장 현실성 판단이 완료되었습니다.",
+        result=MarketFeasibilityResult(
+            match_level=match_level,
+            competitor_count=competitor_count,
+            saturation=saturation,
+            market_realism_grade=_SATURATION_TO_GRADE[saturation],
+            platform_competitor_exists=platform_exists,
+            payment_precedent=payment_precedent,
+            competitor_cards=[
+                CompetitorCard(
+                    name=row.name,
+                    feature=row.core_tags,
+                    limitation=row.limitation,
+                    badge=_badge_for_tier(row.tier),
+                )
+                for row in competitors[:_COMPETITOR_CARD_LIMIT]
+            ],
         ),
     )
