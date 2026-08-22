@@ -42,6 +42,25 @@ API endpoint:
 POST /api/v1/rag/search
 ```
 
+## 카테고리 분류 모델 (STEP 1)
+
+`category_1` 추론(`POST /api/v1/category-classifier/predict`)은 KLUE-RoBERTa large
+체크포인트를 로컬에서 로드한다. 체크포인트는 1.3GB 바이너리라 git에 없다
+(`data/models/`는 `.gitignore`) — 배치 후 `CATEGORY_MODEL_DIR`(기본값
+`data/models/best_healthcare_model_large`)이 그 경로를 가리키게 한다.
+
+```bash
+mkdir -p data/models
+unzip best_healthcare_model_large.zip -d data/models
+.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/pip install -r requirements.txt
+```
+
+모델이 없어도 나머지 API는 정상 동작한다 — 이 엔드포인트만 503
+`CATEGORY_MODEL_UNAVAILABLE`을 반환한다. 관련 회귀 테스트는
+`@pytest.mark.ml_model`로 표시돼 있고, 모델 없이 실행하려면
+`pytest -m "not ml_model"`.
+
 ## 🚀 Git 컨벤션 규칙
 
 ### Commit 규칙
