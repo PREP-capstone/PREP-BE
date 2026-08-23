@@ -1,10 +1,11 @@
 """통합 판정 오케스트레이션 API. gate 판정 결과로 나머지 5개 판정/추천 API를
 조건부·병렬 호출해 하나의 응답으로 합친다 — 판정엔진_개발설계서.md §5.4 "GATE FAIL 분기".
 
-session_id 하나만 받고 gate/regulatory-risk/correction-candidates/feasibility 2종/
-business-model 전부 이 프로세스 안에서 함수로 직접 호출한다(HTTP 아님). category_1이
-세션 생성 시 필수값이 됐으므로(app/api/analysis_sessions.py) 이 엔드포인트는 카테고리
-분류를 호출하지 않는다 — 호출 시점엔 이미 확정돼 있다는 전제.
+session_id 하나만 받고 세션 요약(get_analysis_session_detail)·gate·regulatory-risk·
+correction-candidates·feasibility 2종·business-model 전부 이 프로세스 안에서 함수로
+직접 호출한다(HTTP 아님). 카테고리 분류(category-classifier/predict)는 호출하지
+않는다 — 프론트가 STEP1→2 전환 시 별도로 호출하고, PATCH .../category로 세션에
+반영한 뒤에 evaluate를 부르는 흐름을 전제로 한다.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from app.api.analysis_sessions import AnalysisSessionDetail, get_analysis_session_detail
 from app.api.business_model import BusinessModelRequest, BusinessModelResult, recommend_business_model
 from app.api.feasibility import (
     DataFeasibilityResult,
@@ -45,6 +47,7 @@ class EvaluateRequest(BaseModel):
 
 
 class EvaluateResult(BaseModel):
+    session: AnalysisSessionDetail
     gate: GateResponse
     regulatory_risk: RegulatoryRiskResponse
     correction_candidates: CorrectionCandidatesResponse
@@ -68,7 +71,14 @@ class EvaluateErrorResponse(ApiResponse):
     responses={404: {"model": EvaluateErrorResponse}, 409: {"model": EvaluateErrorResponse}},
 )
 async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSONResponse:
-    gate = await judge_gate(GateRequest(session_id=request.session_id))
+    # session_detail은 gate와 독립적인 조회라 병렬로 같이 보낸다 — 세션 없음(404)은
+    # 둘 다 같은 테이블을 보므로 어느 쪽에서 걸려도 동일하다.
+    session_detail, gate = await asyncio.gather(
+        get_analysis_session_detail(request.session_id),
+        judge_gate(GateRequest(session_id=request.session_id)),
+    )
+    if isinstance(session_detail, JSONResponse):
+        return session_detail
     if isinstance(gate, JSONResponse):
         return gate
 
@@ -109,6 +119,7 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
         code="ANALYSIS_EVALUATED",
         message="통합 판정이 완료되었습니다.",
         result=EvaluateResult(
+            session=session_detail.result,
             gate=gate,
             regulatory_risk=regulatory_risk,
             correction_candidates=correction_candidates,

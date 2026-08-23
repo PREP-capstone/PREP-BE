@@ -59,6 +59,8 @@ async def test_evaluate_fail_branch_disables_market_and_business_model() -> None
     )
     try:
         response = await evaluate_analysis(EvaluateRequest(session_id=session_id))
+        assert response.result.session.session_id == session_id
+        assert response.result.session.category_1 == "여성건강"
         assert response.result.gate.verdict == "FAIL"
         assert response.result.regulatory_risk is not None
         assert response.result.correction_candidates is not None
@@ -79,6 +81,8 @@ async def test_evaluate_pass_branch_fills_all_six() -> None:
     )
     try:
         response = await evaluate_analysis(EvaluateRequest(session_id=session_id))
+        assert response.result.session.session_id == session_id
+        assert response.result.session.health_data_items[0].name == "심박수"
         assert response.result.gate.verdict == "PASS"
         assert response.result.regulatory_risk is not None
         assert response.result.correction_candidates is not None
