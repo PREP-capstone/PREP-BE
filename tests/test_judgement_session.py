@@ -119,6 +119,41 @@ async def test_regulatory_risk_computes_privacy_score_from_stored_item_code() ->
         await _delete_session(session_id)
 
 
+async def test_regulatory_risk_fills_applicable_laws_from_service_type() -> None:
+    request = CreateAnalysisSessionRequest(
+        service_name="service-law-map-test",
+        service_description="심박수를 기록한다.",
+        category_1="수면",
+        service_type="기기연동",
+    )
+    session_id = (await create_analysis_session(request)).result.session_id
+    await create_health_data(
+        session_id,
+        HealthDataUpsertRequest(
+            health_data_items=[HealthDataItemInput(name="심박수", data_type="numeric", source="user_input")]
+        ),
+    )
+    try:
+        response = await judge_regulatory_risk(GateRequest(session_id=session_id))
+        assert "kr-medical-device-act-20260701" in response.applicable_laws
+        assert response.service_law_description
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_regulatory_risk_applicable_laws_empty_without_service_type() -> None:
+    session_id = await _create_session(
+        "심박수를 기록한다.",
+        [HealthDataItemInput(name="심박수", data_type="numeric", source="user_input")],
+    )
+    try:
+        response = await judge_regulatory_risk(GateRequest(session_id=session_id))
+        assert response.applicable_laws == []
+        assert response.service_law_description is None
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_correction_candidates_matches_stored_service_description() -> None:
     session_id = await _create_session(
         "사용자에게 복약지도를 제공하고 복용 시간을 알려준다.",
