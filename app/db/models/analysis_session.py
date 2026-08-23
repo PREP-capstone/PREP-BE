@@ -20,10 +20,11 @@ class AnalysisSession(Base):
     service_description: Mapped[str] = mapped_column(Text, nullable=False)
     target_users: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     service_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    # category_1(질병/분야 축 7종)·category_2(기능축 4종)는 STEP 1 카테고리 분류 모델
-    # (KLUE-RoBERTa) 출력이 채운다. target은 STEP 0 프론트 입력폼에서 받는 값 —
-    # target_users(자유 텍스트 리스트)와는 별개로, competitors/bm_mapping 조회 키와
-    # 형식을 맞춘 단일 문자열이다. 셋 다 없으면 시장성/BM 추천 API는 insufficient_data로
+    # category_1(질병/분야 축)은 세션 생성 시 필수 입력(CreateAnalysisSessionRequest) —
+    # STEP 1 분류 모델 추천을 사용자가 확인/수정해 세션 생성 시점에 확정한다. category_2
+    # (기능축)·target은 선택값이라 PATCH .../category로 나중에 채워질 수 있다. DB
+    # 컬럼 자체는 NOT NULL이 아니다 — 필수화 이전에 만들어진 기존 세션은 category_1이
+    # NULL일 수 있고, 그 값들은 시장성/BM 추천 API가 insufficient_data로 안전하게
     # 처리한다(app/api/feasibility.py, app/api/business_model.py).
     category_1: Mapped[str | None] = mapped_column(String(80), nullable=True)
     category_2: Mapped[str | None] = mapped_column(String(80), nullable=True)

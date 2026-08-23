@@ -52,7 +52,7 @@ def test_feasibility_request_rejects_required_data_payload() -> None:
 
 
 async def _create_session(name: str = "feasibility-test") -> str:
-    request = CreateAnalysisSessionRequest(service_name=name, service_description="d")
+    request = CreateAnalysisSessionRequest(service_name=name, service_description="d", category_1="수면")
     response = await create_analysis_session(request)
     return response.result.session_id
 
