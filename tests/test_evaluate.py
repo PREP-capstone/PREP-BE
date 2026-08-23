@@ -67,6 +67,7 @@ async def test_evaluate_fail_branch_disables_market_and_business_model() -> None
         assert response.result.data_feasibility is None
         assert response.result.market_feasibility is None
         assert response.result.business_model is None
+        assert any(link.target_section == "SECTION 2-1 규제 위험도" for link in response.result.section_links)
     finally:
         await _delete_session(session_id)
 
@@ -89,6 +90,7 @@ async def test_evaluate_pass_branch_fills_all_six() -> None:
         assert response.result.data_feasibility is not None
         assert response.result.market_feasibility is not None
         assert response.result.business_model is not None
+        assert any(link.target_section == "SECTION 1 GATE" for link in response.result.section_links)
     finally:
         await _delete_session(session_id)
 

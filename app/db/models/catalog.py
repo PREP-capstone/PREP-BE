@@ -168,6 +168,28 @@ class BmMapping(Base):
     )
 
 
+class SectionLinkRule(Base):
+    """section_link_rules — cross-section navigation hints for the report.
+
+    condition_type/condition_value match against judge_gate() output
+    (gate_verdict, data_type) or the session's service_type. 판정엔진_개발설계서.md §15.8.
+    """
+
+    __tablename__ = "section_link_rules"
+
+    rule_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    condition_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    condition_value: Mapped[str] = mapped_column(String(120), nullable=False)
+    target_section: Mapped[str] = mapped_column(String(120), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class TrendSignalConfig(Base):
     """trend_signal_config — market trend threshold values from the trend workbook."""
 
