@@ -6,43 +6,17 @@ bm_mapping 시드 데이터가 필요한 케이스는 @pytest.mark.db로 표시�
 import pytest
 from sqlalchemy import delete
 
-from app.api.analysis_sessions import (
-    AnalysisSession,
-    CreateAnalysisSessionRequest,
-    create_analysis_session,
-    generate_session_id,
-)
+from app.api.analysis_sessions import AnalysisSession, CreateAnalysisSessionRequest, create_analysis_session
 from app.api.business_model import BusinessModelRequest, recommend_business_model
 from app.db.session import AsyncSessionLocal
 
 
 async def _create_session(**overrides) -> str:
-    overrides.setdefault("category_1", "수면")
     request = CreateAnalysisSessionRequest(
         service_name="bm-test", service_description="d", **overrides
     )
     response = await create_analysis_session(request)
     return response.result.session_id
-
-
-async def _create_session_without_category() -> str:
-    """category_1 필수화(요청 스키마) 이전에 만들어진 레거시 세션을 재현한다 —
-    DB 컬럼은 여전히 nullable이라 ORM으로 직접 넣어야 이 상태를 만들 수 있다."""
-    session_id = generate_session_id()
-    async with AsyncSessionLocal() as session:
-        session.add(
-            AnalysisSession(
-                session_id=session_id,
-                service_name="bm-test-no-category",
-                service_description="d",
-                target_users=[],
-                service_type=None,
-                processing_purpose=[],
-                service_actions=[],
-            )
-        )
-        await session.commit()
-    return session_id
 
 
 async def _delete_session(session_id: str) -> None:
@@ -62,7 +36,7 @@ async def test_recommend_is_insufficient_data_without_category_axes() -> None:
     # category_1/category_2가 없는 세션은 bm_mapping 조회 키가 없어 곧장
     # insufficient_data여야 한다 — 판정엔진_개발설계서.md §9.2: "지표 판정 없음,
     # 추천만 제공" 원칙과 같은 이유로 임의 추천을 만들면 안 된다.
-    session_id = await _create_session_without_category()
+    session_id = await _create_session()
     try:
         response = await recommend_business_model(BusinessModelRequest(session_id=session_id))
         assert response.result.match_level == "insufficient_data"

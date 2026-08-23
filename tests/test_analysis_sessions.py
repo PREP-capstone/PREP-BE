@@ -24,11 +24,6 @@ from app.api.analysis_sessions import (
 from app.db.session import AsyncSessionLocal
 
 
-def test_create_analysis_session_requires_category_1() -> None:
-    with pytest.raises(ValueError):
-        CreateAnalysisSessionRequest(service_name="n", service_description="d")
-
-
 def test_generate_session_id_uses_date_prefix() -> None:
     session_id = generate_session_id(datetime(2026, 8, 18, 9, 30))
 
@@ -37,7 +32,7 @@ def test_generate_session_id_uses_date_prefix() -> None:
 
 
 async def _create_session(service_name: str = "concurrency-test") -> str:
-    request = CreateAnalysisSessionRequest(service_name=service_name, service_description="d", category_1="수면")
+    request = CreateAnalysisSessionRequest(service_name=service_name, service_description="d")
     response = await create_analysis_session(request)
     return response.result.session_id
 
@@ -112,7 +107,7 @@ async def test_create_analysis_session_retries_past_id_collision() -> None:
             return fixed_uuid if call_count == 1 else real_uuid4()
 
         with patch("app.api.analysis_sessions.uuid.uuid4", side_effect=fake_uuid4):
-            request = CreateAnalysisSessionRequest(service_name="new", service_description="d2", category_1="수면")
+            request = CreateAnalysisSessionRequest(service_name="new", service_description="d2")
             response = await create_analysis_session(request)
 
         assert response.result.session_id != colliding_id

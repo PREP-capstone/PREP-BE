@@ -28,9 +28,7 @@ async def _create_session(
     items: list[HealthDataItemInput],
     service_actions: list[str] | None = None,
 ) -> str:
-    request = CreateAnalysisSessionRequest(
-        service_name="session-judgement-test", service_description=service_description, category_1="수면"
-    )
+    request = CreateAnalysisSessionRequest(service_name="session-judgement-test", service_description=service_description)
     response = await create_analysis_session(request)
     session_id = response.result.session_id
     await create_health_data(
@@ -137,7 +135,7 @@ async def test_correction_candidates_does_not_require_health_data() -> None:
     """correction-candidates는 service_description만 쓰고 health_data_items를
     참조하지 않으므로, health-data 미등록 세션이어도 409 없이 동작해야 한다."""
     request = CreateAnalysisSessionRequest(
-        service_name="no-health-data-test", service_description="사용자에게 복약지도를 제공한다.", category_1="만성질환"
+        service_name="no-health-data-test", service_description="사용자에게 복약지도를 제공한다."
     )
     session_id = (await create_analysis_session(request)).result.session_id
     try:
@@ -154,7 +152,7 @@ async def test_gate_returns_404_for_unknown_session() -> None:
 
 
 async def test_gate_returns_409_when_no_health_data_registered() -> None:
-    request = CreateAnalysisSessionRequest(service_name="empty-session-test", service_description="d", category_1="수면")
+    request = CreateAnalysisSessionRequest(service_name="empty-session-test", service_description="d")
     session_id = (await create_analysis_session(request)).result.session_id
     try:
         response = await judge_gate(GateRequest(session_id=session_id))

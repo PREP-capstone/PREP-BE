@@ -53,7 +53,7 @@ class CreateAnalysisSessionRequest(BaseModel):
     service_description: str = Field(min_length=1, max_length=5000)
     target_users: list[_BoundedStr] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
     service_type: str | None = Field(default=None, max_length=50)
-    category_1: str = Field(min_length=1, max_length=80)
+    category_1: str | None = Field(default=None, max_length=80)
     category_2: str | None = Field(default=None, max_length=80)
     target: str | None = Field(default=None, max_length=200)
 
