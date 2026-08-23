@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import desc, select
 
 from app.db.models import AnalysisSession, BmMapping
@@ -25,6 +25,11 @@ _RECOMMENDATION_LIMIT = 2
 
 
 class BusinessModelRequest(BaseModel):
+    # feasibility.py의 FeasibilityRequest/MarketFeasibilityRequest와 동일하게
+    # extra="forbid" — 예전 명세의 필드를 실수로 같이 보내도 조용히 무시하지 않고
+    # 422로 막는다.
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
 
 

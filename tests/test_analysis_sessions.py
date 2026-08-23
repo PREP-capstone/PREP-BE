@@ -12,11 +12,13 @@ from app.api.analysis_sessions import (
     HealthDataItem,
     HealthDataItemInput,
     HealthDataUpsertRequest,
+    PatchCategoryRequest,
     PatchHealthDataRequest,
     create_analysis_session,
     create_health_data,
     generate_session_id,
     get_analysis_session_detail,
+    update_category,
     update_health_data,
 )
 from app.db.session import AsyncSessionLocal
@@ -185,3 +187,31 @@ async def test_health_data_round_trip_preserves_item_code() -> None:
         assert detail.result.health_data_items[0].item_code == "sensitive_001"
     finally:
         await _delete_session(session_id)
+
+
+@pytest.mark.db
+async def test_update_category_reflects_classification_result() -> None:
+    # market/business-model API가 조회 키로 쓰는 category_1/category_2/target을
+    # STEP 1 분류 이후 이 PATCH로 반영한다 — lock_analysis_session 도입(코드
+    # 리뷰 반영) 이후에도 정상 갱신되는지 확인.
+    session_id = await _create_session()
+    try:
+        response = await update_category(
+            session_id,
+            PatchCategoryRequest(category_1="수면", category_2="정보제공", target="전연령"),
+        )
+
+        assert response.result.category_1 == "수면"
+        assert response.result.category_2 == "정보제공"
+        assert response.result.target == "전연령"
+
+        detail = await get_analysis_session_detail(session_id)
+        assert detail.result.category_1 == "수면"
+    finally:
+        await _delete_session(session_id)
+
+
+@pytest.mark.db
+async def test_update_category_returns_404_for_unknown_session() -> None:
+    response = await update_category("does-not-exist", PatchCategoryRequest(category_1="수면"))
+    assert _status_of(response) == 404

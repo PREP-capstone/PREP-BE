@@ -40,16 +40,16 @@ Authorization: Bearer `<accessToken>`
 신규 추가한 컬럼이다(마이그레이션 `a1b2c3d4e5f6`).
 
 > category_1은 원래 7종(수면·정신건강·운동·식단·만성질환·여성건강·미용)으로
-> 알려져 있었으나, 실제 배포된 분류 모델(`best_healthcare_model_large`,
-> `num_labels=8`)은 **유전자**를 포함한 8종을 쓴다(채린 님 확인, 2026-08-22). DB
-> 컬럼은 `String(80)` 자유 텍스트라 값 종류가 늘어도 스키마 변경은 필요 없다.
+> 알려져 있었으나, 실제 배포된 분류 모델은 **유전자**를 포함한 8종을 쓴다(채린
+> 님 확인, 2026-08-22). DB 컬럼은 `String(80)` 자유 텍스트라 값 종류가 늘어도
+> 스키마 변경은 필요 없다.
 
-STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, Macro F1 0.79)이 `category_1`을
-산출한다. `POST /api/v1/category-classifier/predict`(이번 작업에서 신규 통합, 아래
-참고)로 추론하고, 그 결과를 `PATCH /api/v1/analysis-sessions/{session_id}/category`로
-세션에 반영해야 이 문서의 두 API가 정상 동작한다. `category_2`는 아직 이 형태로
-배포된 모델이 없어 별도 축 확정 전까지 프론트/파이프라인이 직접 채워야 한다.
-`target`은 STEP 0 프론트 입력폼에서 받는 값을 `CreateAnalysisSessionRequest.target`
+STEP 1 카테고리 분류 모델(klue/roberta-base 멀티태스크, `category_1`/`category_2`
+동시 산출, Avg Macro F1 0.6775 — 축1 0.7033/축2 0.6518, 2026-08-23 기준 계속
+학습 중)이 두 값을 함께 산출한다. `POST /api/v1/category-classifier/predict`(이번
+작업에서 신규 통합, 아래 참고)로 추론하고, 그 결과를 `PATCH /api/v1/
+analysis-sessions/{session_id}/category`로 세션에 반영해야 이 문서의 두 API가
+정상 동작한다. `target`은 STEP 0 프론트 입력폼에서 받는 값을 `CreateAnalysisSessionRequest.target`
 또는 같은 PATCH로 채운다.
 
 `category_1`/`category_2` 중 하나라도 없으면 두 API 모두 `match_level:
@@ -181,11 +181,15 @@ market_lookup.py`에 두 API가 공유하는 구현이 있다.
 
 ### Description
 
-STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, `data/models/best_healthcare_model_large`)로
-`service_description` 텍스트에서 `category_1`을 추론한다. 세션을 건드리지 않는
-순수 추론 API다 — 결과 반영은 호출한 쪽이 `PATCH /api/v1/analysis-sessions/
-{session_id}/category`로 별도 수행한다(분류 호출 시점과 세션 반영 시점을 분리해
-프론트/파이프라인이 자유롭게 오케스트레이션할 수 있게 한 것, 2026-08-22 확인).
+STEP 1 카테고리 분류 모델(klue/roberta-base 멀티태스크, `data/models/
+best_healthcare_model_2line`)로 `service_description` 텍스트에서 `category_1`·
+`category_2`를 동시에 추론한다. 세션을 건드리지 않는 순수 추론 API다 — 결과
+반영은 호출한 쪽이 `PATCH /api/v1/analysis-sessions/{session_id}/category`로
+별도 수행한다(분류 호출 시점과 세션 반영 시점을 분리해 프론트/파이프라인이
+자유롭게 오케스트레이션할 수 있게 한 것, 2026-08-22 확인).
+
+모델 정확도는 Avg Macro F1 0.6775(축1 category_1 0.7033 / 축2 category_2
+0.6518, 2026-08-23 기준) — 계속 학습 중이라 값이 바뀔 수 있다.
 
 ### Request
 
@@ -196,21 +200,35 @@ STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, `data/models/best_healthca
 ### Response
 
 ```json
-{ "category_1": "수면|정신건강|운동|식단|만성질환|여성건강|유전자|미용", "confidence": 0.93 }
+{
+  "category_1": "수면|정신건강|운동|식단|만성질환|여성건강|유전자|미용",
+  "category_1_confidence": 0.91,
+  "category_2": "정보제공|데이터기록관리|매칭연결|개입치료",
+  "category_2_confidence": 0.74
+}
 ```
 
 모델을 찾을 수 없으면(로컬에 `data/models/`를 배치하지 않은 환경) 503
-`CATEGORY_MODEL_UNAVAILABLE`을 반환한다 — 체크포인트가 1.3GB 바이너리라 git에
-커밋하지 않고(`.gitignore`) 환경마다 별도 배치해야 하기 때문이다.
+`CATEGORY_MODEL_UNAVAILABLE`을 반환한다 — 체크포인트가 git에 없는 바이너리라
+(`.gitignore`) 환경마다 별도 배치해야 하기 때문이다.
 
-### ⚠️ AutoTokenizer 쓰지 말 것
+### ⚠️ 두 가지 함정 — 겉보기엔 정상 동작하는 것처럼 보여서 위험하다
 
-이 체크포인트의 `tokenizer_config.json`은 `tokenizer_class: RobertaTokenizer`로
-잘못 기록돼 있지만 실제 vocab은 BERT WordPiece 형식이다. `AutoTokenizer`로 로드하면
-한글 입력이 전부 깨진 토큰으로 분해되어 **모든 입력이 같은 라벨로 수렴한다**(실측:
-항상 LABEL_3, confidence ~0.3 — 겉보기엔 정상 동작하는 것처럼 보여서 위험하다).
-`app/domain/category_classifier.py`는 `BertTokenizerFast`를 명시 로드해 이 문제를
-피한다. 이 모델을 다른 곳에서도 로드할 계획이면 반드시 같은 방식을 써야 한다.
+1. **AutoTokenizer 쓰지 말 것**. 이 체크포인트의 `tokenizer_config.json`은
+   `tokenizer_class: RobertaTokenizer`로 잘못 기록돼 있지만 실제 vocab은 BERT
+   WordPiece 형식이다. `AutoTokenizer`로 로드하면 한글 입력이 전부 깨진 토큰으로
+   분해되어 **모든 입력이 같은 라벨로 수렴한다**(단일축 구버전 체크포인트로 실측:
+   항상 LABEL_3, confidence ~0.3). `BertTokenizerFast`를 명시 로드해야 한다.
+2. **`outputs.pooler_output` 쓰지 말 것**. 이 체크포인트는 커스텀 멀티태스크
+   구조(`encoder` + `category_head` + `function_head`, raw state_dict로 저장돼
+   HuggingFace 표준 `save_pretrained` 형식이 아니다)라 `pooler_output`을 헤드에
+   넣으면 확신도가 거의 균등분포(8종 기준 confidence ~0.13)로 나온다. 학습은
+   `outputs.last_hidden_state[:, 0]`(CLS 토큰 원본)을 헤드에 직접 넣는 방식으로
+   됐다(채린 님 확인, 2026-08-23) — 이렇게 해야 확신도가 실제로 분별력 있게
+   나온다(예: 0.7~0.9대).
+
+`app/domain/category_classifier.py`가 이 두 가지를 모두 피해서 구현돼 있다.
+이 모델을 다른 곳에서도 로드할 계획이면 반드시 같은 방식을 써야 한다.
 
 ---
 
@@ -225,6 +243,10 @@ STEP 1 카테고리 분류 모델(KLUE-RoBERTa large, `data/models/best_healthca
 - `competitors.limitation`/`competitors.price` 컬럼은 이미 존재·시딩되어 있다
   (Google Sheet 경쟁사DB_BM매핑_수집시트 기준) — §15.10에서 "보강 필요"로 남아있던
   항목이 이미 반영된 상태였다.
+- 카테고리 분류 모델을 단일축(category_1만, klue/roberta-large)에서 2축 동시
+  분류(category_1+category_2, klue/roberta-base 멀티태스크)로 교체(2026-08-23).
+  `category_2`도 이제 이 API로 채울 수 있다 — 계속 학습 중이라 정확도(Avg Macro
+  F1 0.6775)는 앞으로 개선될 예정.
 
 ## 미완료 — 리포트 저장/조립 API (`/reports/preview`, `POST /reports`)
 

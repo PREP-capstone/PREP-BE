@@ -382,13 +382,19 @@ async def create_health_data(
 @router.patch(
     "/{session_id}/category",
     response_model=AnalysisSessionDetailResponse,
-    responses={404: {"model": AnalysisSessionErrorResponse}},
+    responses={404: {"model": AnalysisSessionErrorResponse}, 409: {"model": AnalysisSessionErrorResponse}},
 )
 async def update_category(
     session_id: str, request: PatchCategoryRequest
 ) -> AnalysisSessionDetailResponse | JSONResponse:
     async with AsyncSessionLocal() as session:
-        analysis_session = await session.get(AnalysisSession, session_id)
+        # create_health_data/update_health_data와 같은 락 패턴 — 스칼라 컬럼 3개만
+        # 갱신해 "나중에 커밋한 쪽이 이긴다" 수준이라 락 없이도 큰 사고는 안 나지만,
+        # 세션 갱신 엔드포인트 전체가 같은 동시성 보장을 갖도록 통일한다.
+        try:
+            analysis_session = await lock_analysis_session(session, session_id)
+        except OperationalError:
+            return locked_response()
         if analysis_session is None:
             return not_found_response()
 
