@@ -20,7 +20,7 @@ import asyncio
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import or_, select
+from sqlalchemy import desc, or_, select
 
 from app.api.analysis_sessions import AnalysisSessionDetail, get_analysis_session_detail
 from app.api.business_model import BusinessModelRequest, BusinessModelResult, recommend_business_model
@@ -41,7 +41,7 @@ from app.api.judgement import (
     judge_gate,
     judge_regulatory_risk,
 )
-from app.db.models import SectionLinkRule
+from app.db.models import ActionTemplate, SectionLinkRule
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse
 
@@ -69,6 +69,39 @@ async def _find_section_links(gate: GateResponse, service_type: str | None) -> l
     return [SectionLink(target_section=row.target_section, message=row.message) for row in rows]
 
 
+class NextAction(BaseModel):
+    action_text: str
+    ref_doc: str | None
+    priority: int
+
+
+_NEXT_ACTIONS_LIMIT = 4
+
+
+async def _find_next_actions(gate: GateResponse, regulatory_risk: RegulatoryRiskResponse) -> list[NextAction]:
+    """action_templates(scope=SECTION) 조회 — SECTION 2-1·부록 "다음 액션 3~4개"
+    (판정엔진_개발설계서.md §15.3). gate_verdict는 judge_gate, risk_level/sensitivity_level은
+    judge_regulatory_risk 결과가 있어야 나와서 두 서브 호출이 끝난 뒤에만 조회 가능하다.
+    priority 상위 §15.3 기준대로 4개까지만 노출 — 조합 폭발 방지."""
+    conditions = [
+        (ActionTemplate.trigger_type == "gate_verdict") & (ActionTemplate.trigger_value == gate.verdict),
+        (ActionTemplate.trigger_type == "risk_level")
+        & (ActionTemplate.trigger_value == regulatory_risk.regulatory_grade),
+        (ActionTemplate.trigger_type == "sensitivity_level")
+        & (ActionTemplate.trigger_value == str(regulatory_risk.privacy_score)),
+    ]
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(ActionTemplate)
+                .where(ActionTemplate.scope == "SECTION", or_(*conditions))
+                .order_by(desc(ActionTemplate.priority))
+                .limit(_NEXT_ACTIONS_LIMIT)
+            )
+        ).scalars().all()
+    return [NextAction(action_text=row.action_text, ref_doc=row.ref_doc, priority=row.priority) for row in rows]
+
+
 class EvaluateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -85,6 +118,7 @@ class EvaluateResult(BaseModel):
     market_feasibility: MarketFeasibilityResult | None
     business_model: BusinessModelResult | None
     section_links: list[SectionLink]
+    next_actions: list[NextAction]
 
 
 class EvaluateResponse(ApiResponse):
@@ -124,6 +158,7 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
             if isinstance(response, JSONResponse):
                 return response
         regulatory_risk, correction_candidates, section_links = results
+        next_actions = await _find_next_actions(gate, regulatory_risk)
         data_feasibility = market_feasibility = business_model = None
     else:
         results = await asyncio.gather(
@@ -145,6 +180,7 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
             business_model_response,
             section_links,
         ) = results
+        next_actions = await _find_next_actions(gate, regulatory_risk)
         data_feasibility = data_feasibility_response.result
         market_feasibility = market_feasibility_response.result
         business_model = business_model_response.result
@@ -162,5 +198,6 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
             market_feasibility=market_feasibility,
             business_model=business_model,
             section_links=section_links,
+            next_actions=next_actions,
         ),
     )
