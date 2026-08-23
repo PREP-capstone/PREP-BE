@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     rag_retrieval_top_k: int = 5
     chroma_persist_directory: str = "data/chroma"
     chroma_collection_name: str = "evidence_chunks"
+    category_model_dir: str = "data/models/best_healthcare_model_2line"
 
     model_config = SettingsConfigDict(
         env_file=".env",

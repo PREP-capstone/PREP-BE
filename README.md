@@ -42,6 +42,31 @@ API endpoint:
 POST /api/v1/rag/search
 ```
 
+## 카테고리 분류 모델 (STEP 1)
+
+`category_1`(8종)·`category_2`(4종) 동시 추론(`POST /api/v1/category-classifier/predict`)은
+klue/roberta-base 인코더 + 헤드 2개(category_head/function_head)로 구성된 커스텀
+멀티태스크 체크포인트(`best_healthcare_model_2line`, Avg Macro F1 0.6775 — 축1
+0.7033/축2 0.6518, 2026-08-23 기준, 계속 학습 중)를 로컬에서 로드한다. 체크포인트는
+git에 없다(`data/models/`는 `.gitignore`) — 배치 후 `CATEGORY_MODEL_DIR`(기본값
+`data/models/best_healthcare_model_2line`)이 그 경로를 가리키게 한다.
+
+```bash
+mkdir -p data/models
+unzip best_healthcare_model_2line.zip -d data/models
+.venv/bin/pip install -r requirements.txt
+```
+
+모델이 없어도 나머지 API는 정상 동작한다 — 이 엔드포인트만 503
+`CATEGORY_MODEL_UNAVAILABLE`을 반환한다. 관련 회귀 테스트는
+`@pytest.mark.ml_model`로 표시돼 있고, 모델 없이 실행하려면
+`pytest -m "not ml_model"`.
+
+⚠️ 이 모델을 다른 곳에서도 로드할 계획이면 `app/domain/category_classifier.py`
+모듈 docstring의 두 함정(AutoTokenizer 대신 BertTokenizerFast, pooler_output
+대신 last_hidden_state[:,0])을 꼭 참고할 것 — 둘 다 겉보기엔 에러 없이
+돌아가면서 예측만 조용히 틀어진다.
+
 ## 🚀 Git 컨벤션 규칙
 
 ### Commit 규칙

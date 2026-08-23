@@ -53,6 +53,9 @@ class CreateAnalysisSessionRequest(BaseModel):
     service_description: str = Field(min_length=1, max_length=5000)
     target_users: list[_BoundedStr] = Field(default_factory=list, max_length=_MAX_LIST_LENGTH)
     service_type: str | None = Field(default=None, max_length=50)
+    category_1: str | None = Field(default=None, max_length=80)
+    category_2: str | None = Field(default=None, max_length=80)
+    target: str | None = Field(default=None, max_length=200)
 
 
 class CreateAnalysisSessionResult(BaseModel):
@@ -81,6 +84,19 @@ class PatchHealthDataRequest(BaseModel):
     service_actions: list[_BoundedStr] | None = Field(default=None, max_length=_MAX_LIST_LENGTH)
 
 
+class PatchCategoryRequest(BaseModel):
+    """STEP 1 카테고리 분류 모델(KLUE-RoBERTa) 출력을 세션에 반영한다.
+
+    분류는 세션 생성 이후 비동기로 실행되므로 생성 시점에 값이 없을 수 있어
+    별도 PATCH로 둔다 — feasibility/market·business-model/recommend API가 이
+    값을 조회 키로 쓴다.
+    """
+
+    category_1: str | None = Field(default=None, max_length=80)
+    category_2: str | None = Field(default=None, max_length=80)
+    target: str | None = Field(default=None, max_length=200)
+
+
 class HealthDataMutationResult(BaseModel):
     session_id: str
     health_data_count: int
@@ -96,6 +112,9 @@ class AnalysisSessionDetail(BaseModel):
     service_description: str
     target_users: list[str]
     service_type: str | None
+    category_1: str | None
+    category_2: str | None
+    target: str | None
     health_data_items: list[HealthDataItemResponse]
     processing_purpose: list[str]
     service_actions: list[str]
@@ -217,6 +236,9 @@ async def create_analysis_session(
                 service_description=request.service_description,
                 target_users=request.target_users,
                 service_type=request.service_type,
+                category_1=request.category_1,
+                category_2=request.category_2,
+                target=request.target,
                 processing_purpose=[],
                 service_actions=[],
                 created_at=now,
@@ -289,6 +311,9 @@ async def get_analysis_session_detail(session_id: str) -> AnalysisSessionDetailR
             service_description=analysis_session.service_description,
             target_users=analysis_session.target_users,
             service_type=analysis_session.service_type,
+            category_1=analysis_session.category_1,
+            category_2=analysis_session.category_2,
+            target=analysis_session.target,
             health_data_items=[health_data_item_to_response(item) for item in health_data_items],
             processing_purpose=analysis_session.processing_purpose,
             service_actions=analysis_session.service_actions,
@@ -350,6 +375,63 @@ async def create_health_data(
         result=HealthDataMutationResult(
             session_id=session_id,
             health_data_count=len(request.health_data_items),
+        ),
+    )
+
+
+@router.patch(
+    "/{session_id}/category",
+    response_model=AnalysisSessionDetailResponse,
+    responses={404: {"model": AnalysisSessionErrorResponse}, 409: {"model": AnalysisSessionErrorResponse}},
+)
+async def update_category(
+    session_id: str, request: PatchCategoryRequest
+) -> AnalysisSessionDetailResponse | JSONResponse:
+    async with AsyncSessionLocal() as session:
+        # create_health_data/update_health_data와 같은 락 패턴 — 스칼라 컬럼 3개만
+        # 갱신해 "나중에 커밋한 쪽이 이긴다" 수준이라 락 없이도 큰 사고는 안 나지만,
+        # 세션 갱신 엔드포인트 전체가 같은 동시성 보장을 갖도록 통일한다.
+        try:
+            analysis_session = await lock_analysis_session(session, session_id)
+        except OperationalError:
+            return locked_response()
+        if analysis_session is None:
+            return not_found_response()
+
+        if request.category_1 is not None:
+            analysis_session.category_1 = request.category_1
+        if request.category_2 is not None:
+            analysis_session.category_2 = request.category_2
+        if request.target is not None:
+            analysis_session.target = request.target
+        analysis_session.updated_at = datetime.now(timezone.utc)
+
+        await session.commit()
+
+        health_data_items = (
+            await session.execute(
+                select(HealthDataItem)
+                .where(HealthDataItem.session_id == session_id)
+                .order_by(HealthDataItem.sort_order, HealthDataItem.created_at)
+            )
+        ).scalars().all()
+
+    return AnalysisSessionDetailResponse(
+        isSuccess=True,
+        code="ANALYSIS_SESSION_CATEGORY_UPDATED",
+        message="카테고리 분류 결과가 반영되었습니다.",
+        result=AnalysisSessionDetail(
+            session_id=analysis_session.session_id,
+            service_name=analysis_session.service_name,
+            service_description=analysis_session.service_description,
+            target_users=analysis_session.target_users,
+            service_type=analysis_session.service_type,
+            category_1=analysis_session.category_1,
+            category_2=analysis_session.category_2,
+            target=analysis_session.target,
+            health_data_items=[health_data_item_to_response(item) for item in health_data_items],
+            processing_purpose=analysis_session.processing_purpose,
+            service_actions=analysis_session.service_actions,
         ),
     )
 
