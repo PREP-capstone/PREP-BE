@@ -9,6 +9,7 @@ from app.db.models.catalog import (
     MvpStrategyTemplate,
     PublicDataCatalog,
     SectionLinkRule,
+    ServiceLawMap,
     TrendSignalConfig,
 )
 from app.db.models.correction_rule import CorrectionRule
@@ -41,6 +42,7 @@ __all__ = [
     "PublicDataCatalog",
     "RuleVersion",
     "SectionLinkRule",
+    "ServiceLawMap",
     "SignalConfig",
     "TrendSignalConfig",
     "VerbSubstitution",

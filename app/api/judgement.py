@@ -14,7 +14,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.rag import RagChunkLookupRequest, lookup_rag_chunks
-from app.db.models import AnalysisSession, CorrectionRule, DataSensitivity, GateKeyword, HealthDataItem, SignalConfig
+from app.db.models import (
+    AnalysisSession,
+    CorrectionRule,
+    DataSensitivity,
+    GateKeyword,
+    HealthDataItem,
+    ServiceLawMap,
+    SignalConfig,
+)
 from app.db.rule_version_queries import resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
@@ -219,6 +227,9 @@ class RegulatoryRiskResponse(BaseModel):
     advertising_score: int
     advertising_grade: str
     matched_rules: list[MatchedRule]
+    # 판단근거③(서비스 형태 기반 적용 법령) — service_type 미입력이거나 매칭 없으면 빈 값.
+    applicable_laws: list[str]
+    service_law_description: str | None
 
 
 def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
@@ -323,6 +334,15 @@ async def _match_correction_rules(
     return result
 
 
+async def _find_service_law(service_type: str | None) -> ServiceLawMap | None:
+    """service_law_map(§15.2)에서 service_type으로 직접 조회. service_type 없으면
+    조회 자체를 건너뛴다 — category_1/category_2처럼 완화 단계가 없는 단일 PK 매칭."""
+    if not service_type:
+        return None
+    async with AsyncSessionLocal() as session:
+        return await session.get(ServiceLawMap, service_type)
+
+
 async def _match_privacy_score(items: list[HealthDataItemInput]) -> int:
     """health_data_items[].item_code를 data_sensitivity.item_code(PK)와 직접 비교해 최댓값 채택.
 
@@ -370,10 +390,11 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse 
             detail=f"signal_config에 활성 임계값이 없는 축: {missing_axes}",
         )
 
-    # matches는 matched_keywords에 의존해 이후 실행, 나머지 둘은 독립적이라 병렬 조회.
-    matched_keywords, privacy_score = await asyncio.gather(
+    # matches는 matched_keywords에 의존해 이후 실행, 나머지는 전부 독립적이라 병렬 조회.
+    matched_keywords, privacy_score, service_law = await asyncio.gather(
         _match_gate_keywords(analysis_session.service_description, rule_version_ids),
         _match_privacy_score(health_data_items),
+        _find_service_law(analysis_session.service_type),
     )
     matches = await _match_correction_rules(
         analysis_session.service_description, matched_keywords, rule_version_ids
@@ -405,6 +426,8 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse 
         advertising_score=advertising_score,
         advertising_grade=grades["advertising_score"],
         matched_rules=matched_rules,
+        applicable_laws=service_law.applicable_laws if service_law else [],
+        service_law_description=service_law.description if service_law else None,
     )
 
 

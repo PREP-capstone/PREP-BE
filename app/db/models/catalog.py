@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, Boolean, Date, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.models.base import Base
@@ -160,6 +160,24 @@ class BmMapping(Base):
     contributing_competitor_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     last_computed_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ServiceLawMap(Base):
+    """service_law_map — 서비스 형태별 적용 법령 고정표. 판정엔진_개발설계서.md §15.2,
+    규제위험도 판단근거③(서비스 형태 기반 적용 법령)의 유일한 소스.
+    """
+
+    __tablename__ = "service_law_map"
+
+    service_type: Mapped[str] = mapped_column(String(120), primary_key=True)
+    applicable_laws: Mapped[list] = mapped_column(JSON, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
