@@ -67,6 +67,21 @@ unzip best_healthcare_model_2line.zip -d data/models
 대신 last_hidden_state[:,0])을 꼭 참고할 것 — 둘 다 겉보기엔 에러 없이
 돌아가면서 예측만 조용히 틀어진다.
 
+## 국내 수요(검색 트렌드) 연동
+
+`POST /api/v1/feasibility/market`의 `domestic_demand` 필드는 NAVER API HUB(Cloud
+Platform, `naverapihub.apigw.ntruss.com`)의 검색어 트렌드 API를 실시간 호출한다.
+`NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET`이 필요하고, [네이버 클라우드 플랫폼
+콘솔](https://console.ncloud.com)에서 애플리케이션에 **"데이터랩(검색어트렌드)"**
+API를 추가해야 호출된다 — developers.naver.com의 개인용 오픈API(다른 서비스,
+다른 인증 헤더)와 헷갈리지 않도록 주의. 자세한 내용은
+`app/domain/trend_client.py` 모듈 docstring과
+`docs/시장성_BM_API_명세서.md`의 "국내 수요" 절 참고.
+
+키가 없어도 나머지 API는 정상 동작하고 `domestic_demand`만 `null`로 빠진다.
+실제 호출 테스트는 `@pytest.mark.naver`로 표시돼 있고, 기본 `pytest` 실행에서는
+제외된다(`-m "not naver"`가 기본).
+
 ## 🚀 Git 컨벤션 규칙
 
 ### Commit 규칙

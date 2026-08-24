@@ -100,7 +100,8 @@ market_lookup.py`에 두 API가 공유하는 구현이 있다.
       "limitation": "string|null",
       "badge": "진입 가능|차별화 필요"
     }
-  ]
+  ],
+  "domestic_demand": "상위권|하위권|null"
 }
 ```
 
@@ -118,18 +119,40 @@ market_lookup.py`에 두 API가 공유하는 구현이 있다.
 - `match_level == "insufficient_data"`일 때 `saturation`/`market_realism_grade`는
   `null`, `competitor_cards`는 빈 배열.
 
-### ⚠️ 이번 API 범위 밖 — 국내 수요 (§8.3 판단근거 ①)
+### 국내 수요 (§8.3 판단근거 ①) — `domestic_demand`
 
-`판정엔진_개발설계서.md` §13 SECTION 2-3 판단근거 4줄 중 "① 국내 수요"는 이 API에
-없다.
+`판정엔진_개발설계서.md` §13 SECTION 2-3 판단근거 4줄 중 "① 국내 수요"는
+`app_store_ranking`(팀이 공식 보류 결정, Notion "웰니스 창업 아이디어 검진
+시스템" §8 — Google Play 공식 순위 API 부재, 유료 API 계약 이슈)은 여전히 범위
+밖이지만, 검색 트렌드는 2026-08-24부로 `app/domain/trend_client.py`가 실시간
+연동한다.
 
-| 데이터 소스 | 상태 |
-|---|---|
-| `app_store_ranking` | 팀이 공식 보류 결정(Notion "웰니스 창업 아이디어 검진 시스템" §8) — Google Play 공식 순위 API 부재, 유료 API(AppTweak 등) 계약 이슈 |
-| 검색 트렌드 임계값(`trend_signal_config`) | 산출은 완료됐으나(`trend_slope_threshold=-0.15%/일`) 성장군이 정체군보다 더 하락하는 이상치가 있어 팀 재검토 대기 중(같은 문서 §7.7) |
+- `category_1` → 검색어 매핑 후 NAVER API HUB(검색어 트렌드)로 최근 1년 일별
+  검색 비율을 받아 최소제곱법 기울기를 계산하고, `trend_signal_config.
+  trend_slope_threshold`(-0.151%/일)와 비교한다.
+- Redis에 24시간 캐시(§8.3 "24시간 캐시 권장") — 카테고리당(세션당 아님) 캐시라
+  같은 카테고리의 다른 세션은 캐시를 공유한다.
+- `null`이 나오는 경우: `NAVER_CLIENT_ID`/`SECRET` 미설정, API 호출 실패,
+  `trend_signal_config` 미시딩, 또는 `category_1`이 없거나 매핑 테이블에 없는
+  값일 때.
 
-둘 다 준비되면 이 API 응답에 `domestic_demand` 필드로 추가할 예정. 리포트에서
-④ 광고표현위험 판단근거처럼 UI에 "데이터 준비 중" 표시가 필요하면 참고.
+⚠️ **판정 자체가 완전히 확정된 건 아니다.** 원래 3단계(급성장/완만/하락, §8.3)
+설계는 임계값이 음수로 나오면서 무너졌다 — "0 < 기울기 < 임계값" 구간이
+성립 불가능하고, 실측(2026-08-22)으로 "성장 예상 그룹" 평균(-0.180%/일)이
+"정체·하락 예상 그룹" 평균(-0.121%/일)보다 더 하락하는 이상치도 확인됐다.
+지금은 DB `trend_signal_config.trend_slope_threshold` 행의 note 필드에 이미
+남겨져 있던 단순화안을 그대로 따라 **2단계(상위권/하위권)**로만 판정한다:
+기울기가 임계값보다 크면(덜 하락하면) 상위권, 아니면 하위권. 이 단순화 자체가
+여전히 팀 재검토 대상이다 — 성장/하락 그룹 라벨링을 다시 볼지, 아니면 이대로
+쓸지 결정 필요.
+
+⚠️ **NAVER API 인증 함정**: `developers.naver.com`의 개인용 오픈API
+(`X-Naver-Client-Id`/`X-Naver-Client-Secret`, `openapi.naver.com`)와 이번에 쓴
+NAVER API HUB(Cloud Platform, `naverapihub.apigw.ntruss.com`)는 **완전히 다른
+서비스**다. 인증 헤더도 다르다(`X-NCP-APIGW-API-KEY-ID`/`X-NCP-APIGW-API-KEY`).
+처음에 개인용 오픈API 방식으로 잘못 구현해서 401을 받았다(2026-08-24) — 네이버
+클라우드 플랫폼 콘솔에서 "데이터랩(검색어트렌드)" API를 애플리케이션에 추가해야
+호출된다.
 
 ### `badge` 필드의 한계
 
