@@ -128,6 +128,22 @@ async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck(
         await _delete_session(session_id)
 
 
+async def test_gate_reasoning_explains_device_sync_without_invasive_signal() -> None:
+    """생체지표+기기연동인데 침습 신호가 없어 하드체크를 피한 경우도 그 이유가 명시돼야 한다."""
+    session_id = await _create_session(
+        "사용자가 측정한 심박수를 기록한다.",
+        [HealthDataItemInput(name="심박수", data_type="numeric", unit="bpm", source="device_sync")],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.verdict == "PASS"
+        assert response.hardcheck_fired is False
+        assert "침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다" in response.reasoning[0]
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_regulatory_risk_computes_privacy_score_from_stored_item_code() -> None:
     session_id = await _create_session(
         "사용자의 복용약물을 기록하고 관리한다.",

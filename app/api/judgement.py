@@ -169,7 +169,11 @@ def _describe_data_and_acquire(data_type: str, acquire_method: str | None, hardc
         return f"{data_type} 데이터를 {acquire_method}으로 수집하는 조합이라 침습적 하드체크 대상입니다."
     if acquire_method is None:
         return f"{data_type} 데이터를 다루지만 등록된 항목에서 수집 방법을 특정할 수 없습니다."
-    if data_type == "생체지표" and acquire_method != "기기연동":
+    if data_type == "생체지표" and acquire_method == "기기연동":
+        # hardcheck_fired=False인데 여기 도달했다는 건 invasive_signal=False였다는 뜻
+        # (is_invasive_hardcheck는 생체지표+기기연동+invasive_signal 셋 다 True일 때만 발동).
+        return "생체지표 데이터를 기기연동으로 수집하지만 침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다."
+    if data_type == "생체지표":
         return f"생체지표 데이터를 다루지만 수집 방법이 기기연동이 아닌 {acquire_method}이라 침습적 하드체크 대상이 아닙니다."
     return f"{data_type} 데이터를 {acquire_method}으로 수집합니다."
 
