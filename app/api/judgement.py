@@ -119,6 +119,7 @@ class GateResponse(BaseModel):
     invasive_signal: bool
     verdict: str
     hardcheck_fired: bool
+    reasoning: list[str]
 
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -154,6 +155,55 @@ def _classify_acquire_method(items: list[HealthDataItemInput]) -> str | None:
         if method in methods:
             return method
     return None
+
+
+_FUNCTION_TYPE_DESCRIPTIONS = {
+    "단순기록": "기능은 단순 기록·조회 수준에 머물러 있어 비교·추이분석이나 수치예측·진단 기능은 포함되지 않습니다.",
+    "비교·추이분석": "기능은 비교·추이분석 수준으로, 수치를 비교·해석해 보여주지만 예측·진단까지는 하지 않습니다.",
+    "수치예측·진단": "기능이 수치예측·진단 수준까지 포함돼 의료기기 해당 가능성이 가장 높은 조합입니다.",
+}
+
+
+def _describe_data_and_acquire(data_type: str, acquire_method: str | None, hardcheck_fired: bool) -> str:
+    if hardcheck_fired:
+        return f"{data_type} 데이터를 {acquire_method}으로 수집하는 조합이라 침습적 하드체크 대상입니다."
+    if acquire_method is None:
+        return f"{data_type} 데이터를 다루지만 등록된 항목에서 수집 방법을 특정할 수 없습니다."
+    if data_type == "생체지표" and acquire_method != "기기연동":
+        return f"생체지표 데이터를 다루지만 수집 방법이 기기연동이 아닌 {acquire_method}이라 침습적 하드체크 대상이 아닙니다."
+    return f"{data_type} 데이터를 {acquire_method}으로 수집합니다."
+
+
+def _describe_invasive_signal(invasive_signal: bool) -> str:
+    if invasive_signal:
+        return "서비스 설명·데이터 항목명에서 침습적 신호가 감지됐습니다."
+    return "서비스 설명·데이터 항목명 어디에서도 침습적 신호가 감지되지 않았습니다."
+
+
+def _describe_verdict(verdict: str, hardcheck_fired: bool) -> str:
+    if hardcheck_fired:
+        return "생체지표·기기연동·침습적 신호가 모두 겹쳐 하드체크로 FAIL 판정됐습니다."
+    if verdict == "PASS":
+        return "위 조합은 GATE 매트릭스 기준 의료기기 해당 가능성이 낮은 조합으로 판정됐습니다(PASS)."
+    if verdict == "CONDITIONAL":
+        return "위 조합은 GATE 매트릭스 기준 조건부 통과(CONDITIONAL)로 판정됐습니다 — 추가 검토가 필요합니다."
+    return "위 조합은 GATE 매트릭스 기준 의료기기 해당 가능성이 높은 조합으로 판정됐습니다(FAIL)."
+
+
+def _build_gate_reasoning(
+    data_type: str,
+    function_type: str,
+    acquire_method: str | None,
+    invasive_signal: bool,
+    hardcheck_fired: bool,
+    verdict: str,
+) -> list[str]:
+    return [
+        _describe_data_and_acquire(data_type, acquire_method, hardcheck_fired),
+        _FUNCTION_TYPE_DESCRIPTIONS[function_type],
+        _describe_invasive_signal(invasive_signal),
+        _describe_verdict(verdict, hardcheck_fired),
+    ]
 
 
 def _detect_invasive_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
@@ -192,6 +242,9 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
             invasive_signal=invasive_signal,
             verdict="FAIL",
             hardcheck_fired=True,
+            reasoning=_build_gate_reasoning(
+                data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True, verdict="FAIL"
+            ),
         )
 
     cell = GATE_MATRIX_TABLE[(data_type, function_type)]
@@ -202,6 +255,9 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         invasive_signal=invasive_signal,
         verdict=cell["verdict"],
         hardcheck_fired=False,
+        reasoning=_build_gate_reasoning(
+            data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
+        ),
     )
 
 
