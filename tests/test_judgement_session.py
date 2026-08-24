@@ -5,6 +5,8 @@ feasibility.py 테스트(test_feasibility.py)와 같은 패턴 — create_analys
 create_health_data를 직접 호출해 세션을 만들고 끝나면 지운다.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete
@@ -18,6 +20,7 @@ from app.api.analysis_sessions import (
 )
 from app.api.judgement import GateRequest, judge_correction_candidates, judge_gate, judge_regulatory_risk
 from app.db.session import AsyncSessionLocal
+from app.domain.correction_llm import LLMUnavailable
 from app.schemas.common import HealthDataItemInput
 
 pytestmark = pytest.mark.db
@@ -177,6 +180,77 @@ async def test_correction_candidates_does_not_require_health_data() -> None:
         response = await judge_correction_candidates(GateRequest(session_id=session_id))
         assert not isinstance(response, JSONResponse)
         assert any(c.risky_text == "복약지도" for c in response.candidates)
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_correction_candidates_skips_llm_fallback_when_rule_based_matches_exist() -> None:
+    """규칙 기반 매칭이 있으면 LLM①을 아예 호출하지 않아야 한다(이슈 #58, 비용 절감 요건)."""
+    session_id = await _create_session(
+        "사용자에게 복약지도를 제공하고 복용 시간을 알려준다.",
+        [HealthDataItemInput(name="복용약물", data_type="text", source="user_input")],
+    )
+    try:
+        with patch(
+            "app.api.judgement.generate_correction_candidates", new_callable=AsyncMock
+        ) as mock_llm:
+            response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        mock_llm.assert_not_called()
+        assert any(c.risky_text == "복약지도" for c in response.candidates)
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_correction_candidates_calls_llm_fallback_when_no_rule_based_match() -> None:
+    """규칙 기반 매칭이 0건이면 LLM①을 호출하고, 그 결과를 exact_phrase_match=False로 채운다."""
+    session_id = await _create_session(
+        "사용자가 매일 마신 물의 양을 기록하고 알림을 받는다.",
+        [HealthDataItemInput(name="음수량", data_type="numeric", source="user_input")],
+    )
+    llm_result = [
+        {
+            "risky_text": "약 시간표를 짜드려요",
+            "safe_text": "복약 알림을 보내드려요",
+            "legal_basis": {"document_id": "kr-pharmaceutical-affairs-act-20260621", "article": "제2조"},
+        }
+    ]
+    try:
+        with (
+            patch("app.api.judgement._match_correction_rules", new=AsyncMock(return_value=[])),
+            patch(
+                "app.api.judgement.generate_correction_candidates",
+                new=AsyncMock(return_value=llm_result),
+            ) as mock_llm,
+        ):
+            response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        mock_llm.assert_called_once()
+        assert len(response.candidates) == 1
+        candidate = response.candidates[0]
+        assert candidate.risky_text == "약 시간표를 짜드려요"
+        assert candidate.safe_text == "복약 알림을 보내드려요"
+        assert candidate.exact_phrase_match is False
+        assert candidate.legal_basis.document_id == "kr-pharmaceutical-affairs-act-20260621"
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_correction_candidates_returns_empty_when_llm_fallback_unavailable() -> None:
+    """규칙 기반 0건 + LLM도 실패(LLMUnavailable)면 500이 아니라 빈 리스트로 정상 응답해야 한다."""
+    session_id = await _create_session(
+        "사용자가 매일 마신 물의 양을 기록하고 알림을 받는다.",
+        [HealthDataItemInput(name="음수량", data_type="numeric", source="user_input")],
+    )
+    try:
+        with (
+            patch("app.api.judgement._match_correction_rules", new=AsyncMock(return_value=[])),
+            patch(
+                "app.api.judgement.generate_correction_candidates",
+                new=AsyncMock(side_effect=LLMUnavailable("테스트: OPENAI_API_KEY 없음")),
+            ),
+        ):
+            response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert not isinstance(response, JSONResponse)
+        assert response.candidates == []
     finally:
         await _delete_session(session_id)
 

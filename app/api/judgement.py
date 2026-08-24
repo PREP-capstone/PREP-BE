@@ -25,6 +25,7 @@ from app.db.models import (
 )
 from app.db.rule_version_queries import resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
+from app.domain.correction_llm import generate_correction_candidates
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
 from app.domain.scoring import grade_by_threshold
 from app.pipeline.correction_terms import keyword_score
@@ -334,6 +335,59 @@ async def _match_correction_rules(
     return result
 
 
+async def _match_correction_rules_with_llm_fallback(
+    service_description: str, matched_keywords: list[GateKeyword], rule_version_ids: list[uuid.UUID]
+) -> list[CorrectionMatch]:
+    """규칙 기반(_match_correction_rules)이 0건일 때만 LLM①을 보완 호출한다(이슈 #58).
+
+    2026-08-23 실측 — gate_keywords 68개 중 하나도 안 걸리는 파라프레이즈 표현(복약지도 등)은
+    규칙 기반으로 원천적으로 못 잡는다. LLM 미가용(키 없음·호출 실패)이면 빈 리스트로
+    조용히 폴백 — correction-candidates 응답 전체가 LLM 장애로 깨지면 안 된다(§10.1).
+    """
+    matches = await _match_correction_rules(service_description, matched_keywords, rule_version_ids)
+    if matches:
+        return matches
+
+    try:
+        raw_candidates = await generate_correction_candidates(service_description)
+    except Exception:
+        # LLMUnavailable(키 없음·호출 실패로 이 모듈이 직접 올리는 것)뿐 아니라 그 외 예기치
+        # 못한 예외까지 전부 여기서 끊는다 — _fill_quotes()의 RAG 조회 실패 처리(위)와 같은
+        # 이유: 이 호출은 보조 정보라 장애가 나도 judge_correction_candidates() 전체(나아가
+        # evaluate.py의 asyncio.gather 안에서는 /evaluate 전체)를 절대 깨면 안 된다(§10.1).
+        return []
+
+    try:
+        # (risky_text, document_id, article) 기준 중복 제거 — risky_text만 쓰면 같은 문구를
+        # 서로 다른 법적 근거로 잡은 두 후보가 하나로 뭉개진다. 이 함수 자체가 LLM 장애 시
+        # 빈 리스트로 조용히 폴백하는 게 계약이라, 여기서 KeyError가 나도(strict json_schema라
+        # 사실상 안 나지만) 500 대신 빈 리스트로 빠져야 일관적이다.
+        deduped: dict[tuple[str, str, str], dict] = {
+            (item["risky_text"], item["legal_basis"]["document_id"], item["legal_basis"]["article"]): item
+            for item in raw_candidates
+        }
+        llm_matches = [
+            CorrectionMatch(
+                risky_text=item["risky_text"],
+                safe_text=item["safe_text"],
+                # judge_correction_candidates()는 이 두 점수를 응답에 노출하지 않는다(CorrectionMatch를
+                # 재사용하는 건 _fill_quotes() 그대로 태우기 위해서일 뿐) — 여기선 의미 없는 값.
+                regulatory_score=0,
+                advertising_score=0,
+                legal_basis=LegalBasis(
+                    document_id=item["legal_basis"]["document_id"], article=item["legal_basis"]["article"]
+                ),
+                exact_phrase_match=False,
+            )
+            for item in deduped.values()
+        ]
+    except (KeyError, TypeError):
+        return []
+
+    await _fill_quotes(llm_matches)
+    return llm_matches
+
+
 async def _find_service_law(service_type: str | None) -> ServiceLawMap | None:
     """service_law_map(§15.2)에서 service_type으로 직접 조회. service_type 없으면
     조회 자체를 건너뛴다 — category_1/category_2처럼 완화 단계가 없는 단일 PK 매칭."""
@@ -458,7 +512,7 @@ async def judge_correction_candidates(request: GateRequest) -> CorrectionCandida
 
     rule_version_ids = await resolve_active_rule_version_ids()
     matched_keywords = await _match_gate_keywords(analysis_session.service_description, rule_version_ids)
-    matches = await _match_correction_rules(
+    matches = await _match_correction_rules_with_llm_fallback(
         analysis_session.service_description, matched_keywords, rule_version_ids
     )
     return CorrectionCandidatesResponse(
