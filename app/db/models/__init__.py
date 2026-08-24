@@ -10,6 +10,7 @@ from app.db.models.catalog import (
     PublicDataCatalog,
     SectionLinkRule,
     ServiceLawMap,
+    StandardScale,
     TrendSignalConfig,
 )
 from app.db.models.correction_rule import CorrectionRule
@@ -44,6 +45,7 @@ __all__ = [
     "SectionLinkRule",
     "ServiceLawMap",
     "SignalConfig",
+    "StandardScale",
     "TrendSignalConfig",
     "VerbSubstitution",
 ]

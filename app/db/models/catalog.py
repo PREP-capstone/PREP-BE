@@ -113,6 +113,28 @@ class MvpStrategyTemplate(Base):
     )
 
 
+class StandardScale(Base):
+    """standard_scales — self-report scale candidates for data feasibility evidence."""
+
+    __tablename__ = "standard_scales"
+
+    scale_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    category_1: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    item_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scoring_range: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    license_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class Competitor(Base):
     """competitors — comparable services used for market and BM analysis."""
 

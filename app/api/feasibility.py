@@ -26,7 +26,9 @@ from app.db.models import (
     DataDifficulty,
     DataSensitivity,
     HealthDataItem,
+    MvpStrategyTemplate,
     PublicDataCatalog,
+    StandardScale,
 )
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse
@@ -51,11 +53,31 @@ class PrivacyRisk(BaseModel):
     reason: str
 
 
+class StandardScaleCandidate(BaseModel):
+    scale_id: str
+    name: str
+    full_name: str | None
+    category_1: str | None
+    item_count: int | None
+    scoring_range: str | None
+    license_type: str | None
+    source_url: str | None
+    note: str | None
+
+
+class MvpRoadmapStep(BaseModel):
+    stage: int
+    title: str
+    description: str
+
+
 class DataFeasibilityResult(BaseModel):
     data_feasibility_score: int
     risk_level: Literal["LOW", "MEDIUM", "HIGH"]
     available_sources: list[AvailableSource]
     privacy_risks: list[PrivacyRisk]
+    standard_scale_candidates: list[StandardScaleCandidate]
+    mvp_roadmap: list[MvpRoadmapStep]
 
 
 class DataFeasibilityResponse(ApiResponse):
@@ -91,6 +113,10 @@ def _no_health_data_response() -> JSONResponse:
 def _risk_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
     # db_구축_설계서.md §3.4 등급: 1~3 쉬움 / 4~10 보통 / 12~30 어려움.
     return grade_by_threshold(score, 3, 10, ("LOW", "MEDIUM", "HIGH"))
+
+
+def _difficulty_level_for_risk(risk_level: Literal["LOW", "MEDIUM", "HIGH"]) -> str:
+    return {"LOW": "쉬움", "MEDIUM": "보통", "HIGH": "어려움"}[risk_level]
 
 
 def _classify_item_data_type(item: HealthDataItem, biomarker_keywords: set[str]) -> str:
@@ -169,6 +195,94 @@ async def _find_available_sources(session, items: list[HealthDataItem]) -> list[
             )
 
     return sources
+
+
+async def _find_standard_scale_candidates(
+    session,
+    analysis_session: AnalysisSession,
+    items: list[HealthDataItem],
+) -> list[StandardScaleCandidate]:
+    """standard_scales에서 자가입력 대체 근거 후보를 찾는다.
+
+    1차 테이블은 공용 item_code가 없어서 category_1 exact match와 항목명/척도 설명의
+    토큰 overlap을 같이 쓴다. 라이선스는 후보 정보로만 노출하고, 사용 가능 확정 판단은
+    리포트/기획 단계에서 별도 확인한다.
+    """
+    rows = (await session.execute(select(StandardScale))).scalars().all()
+    user_input_items = [item for item in items if item.source == "user_input"]
+
+    scored: list[tuple[int, StandardScale]] = []
+    for row in rows:
+        score = 0
+        if analysis_session.category_1 and row.category_1 == analysis_session.category_1:
+            score += 3
+
+        searchable = " ".join(
+            value
+            for value in [
+                row.name,
+                row.full_name,
+                row.category_1,
+                row.scoring_range,
+                row.note,
+            ]
+            if value
+        )
+        if any(_tokens_overlap_with_name(searchable, item.name) for item in user_input_items):
+            score += 2
+        if score > 0:
+            scored.append((score, row))
+
+    scored.sort(key=lambda item: (-item[0], item[1].name))
+    return [
+        StandardScaleCandidate(
+            scale_id=row.scale_id,
+            name=row.name,
+            full_name=row.full_name,
+            category_1=row.category_1,
+            item_count=row.item_count,
+            scoring_range=row.scoring_range,
+            license_type=row.license_type,
+            source_url=row.source_url,
+            note=row.note,
+        )
+        for _, row in scored[:3]
+    ]
+
+
+async def _find_mvp_roadmap(
+    session,
+    category_1: str | None,
+    risk_level: Literal["LOW", "MEDIUM", "HIGH"],
+) -> list[MvpRoadmapStep]:
+    difficulty_level = _difficulty_level_for_risk(risk_level)
+
+    category_rows: list[MvpStrategyTemplate] = []
+    if category_1:
+        category_rows = (
+            await session.execute(
+                select(MvpStrategyTemplate)
+                .where(MvpStrategyTemplate.difficulty_level == difficulty_level)
+                .where(MvpStrategyTemplate.category_1 == category_1)
+                .order_by(MvpStrategyTemplate.stage)
+            )
+        ).scalars().all()
+
+    rows = category_rows
+    if not rows:
+        rows = (
+            await session.execute(
+                select(MvpStrategyTemplate)
+                .where(MvpStrategyTemplate.difficulty_level == difficulty_level)
+                .where(MvpStrategyTemplate.category_1.is_(None))
+                .order_by(MvpStrategyTemplate.stage)
+            )
+        ).scalars().all()
+
+    return [
+        MvpRoadmapStep(stage=row.stage, title=row.title, description=row.description)
+        for row in rows
+    ]
 
 
 @router.post(
@@ -259,6 +373,9 @@ async def assess_data_feasibility(
                 )
 
         available_sources = await _find_available_sources(session, items)
+        risk_level = _risk_level_for_score(max_score)
+        standard_scale_candidates = await _find_standard_scale_candidates(session, analysis_session, items)
+        mvp_roadmap = await _find_mvp_roadmap(session, analysis_session.category_1, risk_level)
 
     return DataFeasibilityResponse(
         isSuccess=True,
@@ -266,9 +383,11 @@ async def assess_data_feasibility(
         message="데이터 확보 가능성 판단이 완료되었습니다.",
         result=DataFeasibilityResult(
             data_feasibility_score=max_score,
-            risk_level=_risk_level_for_score(max_score),
+            risk_level=risk_level,
             available_sources=available_sources,
             privacy_risks=privacy_risks,
+            standard_scale_candidates=standard_scale_candidates,
+            mvp_roadmap=mvp_roadmap,
         ),
     )
 

@@ -79,6 +79,7 @@ async def check_reference_tables() -> CheckResult:
         "trend_signal_config",
         "action_templates",
         "mvp_strategy_templates",
+        "standard_scales",
         "competitors",
         "bm_mapping",
     ]

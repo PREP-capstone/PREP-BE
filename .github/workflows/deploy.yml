@@ -40,6 +40,7 @@ jobs:
             docker ps -aq --filter 'name=prep-api' --filter 'name=prep-redis' | xargs -r docker rm -f
             docker compose -p prep-be -f compose.prod.yml up -d --build --remove-orphans
             docker compose -p prep-be -f compose.prod.yml exec -T api alembic upgrade head
+            docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/seed_standard_scales.py
             docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/check_deploy_ready.py --skip-chroma
             curl -fsS http://127.0.0.1:8000/api/v1/health
           "
