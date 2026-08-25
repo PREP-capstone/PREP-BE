@@ -1401,7 +1401,7 @@ PREP §10.4에 따라 사용자 입력·분석 결과는 본 DB에 저장되지 
   > - **3분기 처리**: ① 생체지표+기기연동+LLM이 침습 판정 → **FAIL 하드 오버라이드**(function_type·6칸 표 무시) ② 생체지표+기기연동인데 코드는 침습 신호를 잡았고 LLM은 아니라고 한 **불일치** → FAIL로 확정하지 않고 **CONDITIONAL(검수 대기)**로 뺀다(정밀도가 낮은 코드 신호 하나만으로 FAIL을 주지 않기 위한 안전장치) ③ 그 외 → 6칸 표 조회.
   > - 실전 검증: 모바일 의료용 앱 지침 투입 중 ②(CONDITIONAL 안전장치)가 실제로 1건 발동 — LLM이 "혈압 수집·병원 송신"을 정확히 비침습으로 판단했으나, 같은 청크(9,973자, 헤딩 중복으로 대형화)에 CGM 관련 서술이 섞여 있어 코드 신호와 충돌했다. 설계대로 CONDITIONAL로 빠져 오탐을 FAIL로 확정하지 않았다.
 - ~~(구) acquire_method 침습적 하드체크 대상 목록 미확정~~ — §3.2에 acquire_method 필드는 복원했으나, "어떤 data_type+키워드 조합이 침습적으로 간주되는지"(구 룰베이스 구축방안 예시: 혈당 CGM) 구체 목록은 아직 없음. data_type이 2종으로 추상화된 이후라 개별 사례(CGM 등) 재정의 필요 — gate_keywords 고위해도 5요소 항목과 연계해 확정할 것
-- **(2026-07-26 추가) avoidance_redesign/avoidance_certification 실제 문구 작성 주체 미지정** — 필드는 복원했으나 verdict=FAIL row마다 이 문구를 누가(관리자 검수 vs LLM 초안 생성) 채우는지 프로세스 미정. §4 LLM 추출 파이프라인에 반영 필요
+- ~~avoidance_redesign/avoidance_certification 실제 문구 작성 주체 미지정~~ **(D-2, 2026-08-25 확정)** — 코드 템플릿 방식 채택. `app/pipeline/gate_matrix_table.py`의 `GATE_MATRIX_TABLE`(매트릭스 FAIL 셀)/`HARDCHECK_AVOIDANCE_*`(하드체크 FAIL)에 고정 문구로 반영, `judge_gate()`·`extract_b.py` 양쪽 연결 완료. 기존에 이미 시딩된 DB row 백필은 별도 후속(현재 이 컬럼을 읽는 소비자가 없어 후순위, `구현_현황_정리.md` 참조)
 - 카테고리 분류 모델(Category Classifier)과 본 DB 테이블 간 category 값 매핑 표 — 별도 「AI 모델 설계서」와 연계 필요
 - ~~gate_keywords.data_type_focus ↔ gate_matrix.data_type 이중 체계 정리~~ **(2026-07-05 해결 완료)** — data_type_focus는 포맷 참고용 태그로, 위험도 판단은 gate_matrix.data_type만 사용하기로 결정 (§3.2 참조)
 - ~~competitors.core_tags의 data_type 4종 간 "인접" 관계 정의~~ **(2026-07-12 해소)** — data_type이 2종(라이프스타일/생체지표)으로 축소되어 "다른 data_type" 조합이 하나뿐이므로 인접 관계를 별도 정의할 필요가 없어짐 (§3.5 참조)

@@ -18,6 +18,8 @@ from app.pipeline.article_ref import (
 )
 from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_TABLE,
+    HARDCHECK_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_AVOIDANCE_REDESIGN,
     HARDCHECK_VERDICT,
     VERDICT_PRIORITY,
     detect_invasive,
@@ -205,21 +207,29 @@ async def extract_B(state: PipelineState) -> dict:
             if hardcheck_fired:
                 verdict = HARDCHECK_VERDICT
                 exemption_note = None
+                avoidance_redesign = HARDCHECK_AVOIDANCE_REDESIGN
+                avoidance_certification = HARDCHECK_AVOIDANCE_CERTIFICATION
             elif review_fired:
                 # 코드는 침습 신호를 잡았는데 LLM은 아니라고 한 불일치. detect_invasive는 청크
                 # 전체를 훑어 정밀도가 낮으므로 FAIL로 확정하지 않고 검수 대기로 뺀다.
                 # TODO(human_review): interrupt 연결되면 CONDITIONAL 대신 관리자 검수로 보낼 것.
                 verdict = "CONDITIONAL"
                 exemption_note = None
+                avoidance_redesign = avoidance_certification = None
             elif item["boundary_case"]:
                 # TODO(human_review): 3단계로도 안 풀리는 경계 케이스 — interrupt로 관리자 검수에
                 # 넘겨야 하지만 아직 human_review 노드가 없어 CONDITIONAL로만 표시하고 넘어간다.
                 verdict = "CONDITIONAL"
                 exemption_note = None
+                avoidance_redesign = avoidance_certification = None
             else:
                 lookup = GATE_MATRIX_TABLE[(data_type, function_type)]
                 verdict = lookup["verdict"]
                 exemption_note = lookup["exemption_note"]
+                # D-2 확정(2026-08-25, 코드 템플릿) — 매트릭스 FAIL 셀만 값이 있고
+                # PASS/CONDITIONAL 셀은 키 자체가 없어 get()이 None을 돌려준다.
+                avoidance_redesign = lookup.get("avoidance_redesign")
+                avoidance_certification = lookup.get("avoidance_certification")
 
             legal_basis = {
                 "document_id": state["document_id"],
@@ -236,10 +246,8 @@ async def extract_B(state: PipelineState) -> dict:
                 # 그대로 재현해 검증할 수 있도록 draft에 실어 보낸다.
                 "invasive_signal": invasive_signal,
                 "invasive_keyword_hit": keyword_hit,
-                # TODO(D-2): avoidance_* 문구 작성 주체 미정(코드 고정 템플릿 vs LLM 생성).
-                # 결정 전까지 채우지 않는다 — verdict=FAIL이어도 None이다.
-                "avoidance_redesign": None,
-                "avoidance_certification": None,
+                "avoidance_redesign": avoidance_redesign,
+                "avoidance_certification": avoidance_certification,
                 "risk_code": None,  # TODO: GATE01_ENG01~02 연계 코드 미확정 (db_구축_설계서.md §3.2)
                 "priority": VERDICT_PRIORITY[verdict],
                 "legal_basis": legal_basis,
