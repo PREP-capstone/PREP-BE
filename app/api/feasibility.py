@@ -17,6 +17,7 @@ from sqlalchemy import select
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
 from app.domain.market_lookup import CategoryKeys, MatchLevel, relaxation_stages
 from app.domain.scoring import grade_by_threshold
+from app.domain.trend_client import assess_domestic_demand
 from app.db.models import (
     AnalysisSession,
     ApiCatalog,
@@ -399,11 +400,12 @@ async def assess_data_feasibility(
 
 # ── 시장 현실성(§03) — 작업 #7(3번 담당). 판정엔진_개발설계서.md §8. ──────────────
 #
-# 국내 수요(app_store_ranking + 검색 트렌드)는 이 API 범위 밖이다: app_store_ranking은
-# 팀이 유료 API/비공식 수집 이슈로 보류했고(Notion "웰니스 창업 아이디어 검진 시스템"
-# §8), 검색 트렌드 임계값은 산출됐으나 성장군/정체군 그룹 가정이 예상과 어긋나 팀
-# 재검토 대기 중이다(같은 문서 §7.7). 둘 다 준비되면 SECTION 2-3 판단근거 ①로
-# 별도 추가한다.
+# 국내 수요 판단근거 ①은 app_store_ranking(팀이 유료 API/비공식 수집 이슈로 보류,
+# Notion "웰니스 창업 아이디어 검진 시스템" §8)은 여전히 범위 밖이지만, 검색
+# 트렌드(app/domain/trend_client.py)는 2026-08-24부로 연결했다. 다만 원래 3단계
+# (급성장/완만/하락) 설계가 실측 임계값 음수 이상치로 무너져 2단계(상위권/하위권)로
+# 단순화한 상태라, 이 해석 자체가 여전히 팀 재검토 대상이다 — trend_client.py 모듈
+# docstring 참고.
 
 _COMPETITOR_CARD_LIMIT = 3
 _SATURATED_THRESHOLD = 5
@@ -441,6 +443,10 @@ class MarketFeasibilityResult(BaseModel):
     platform_competitor_exists: bool
     payment_precedent: str | None
     competitor_cards: list[CompetitorCard]
+    # 판단근거① 국내 수요 — Naver 키 없음/호출 실패/임계값 미시딩이면 None
+    # (app/domain/trend_client.py 참고). match_level과 무관하게 category_1만 있으면
+    # 계산 시도한다 — 경쟁사 매칭과 검색 트렌드는 서로 다른 데이터 소스라서.
+    domestic_demand: Literal["상위권", "하위권"] | None
 
 
 class MarketFeasibilityResponse(ApiResponse):
@@ -513,6 +519,10 @@ async def assess_market_feasibility(
         match_level, competitors = await _find_competitors(session, keys)
         payment_precedent = await _find_payment_precedent(session, keys)
 
+    # 경쟁사 매칭(DB)과 검색 트렌드(외부 API)는 서로 다른 소스라 match_level과
+    # 무관하게 category_1만 있으면 독립적으로 계산한다.
+    domestic_demand = await assess_domestic_demand(keys.category_1)
+
     if match_level == "insufficient_data":
         return MarketFeasibilityResponse(
             isSuccess=True,
@@ -526,6 +536,7 @@ async def assess_market_feasibility(
                 platform_competitor_exists=False,
                 payment_precedent=payment_precedent,
                 competitor_cards=[],
+                domestic_demand=domestic_demand,
             ),
         )
 
@@ -553,5 +564,6 @@ async def assess_market_feasibility(
                 )
                 for row in competitors[:_COMPETITOR_CARD_LIMIT]
             ],
+            domestic_demand=domestic_demand,
         ),
     )

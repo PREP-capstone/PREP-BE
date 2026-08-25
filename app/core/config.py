@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     chroma_persist_directory: str = "data/chroma"
     chroma_collection_name: str = "evidence_chunks"
     category_model_dir: str = "data/models/best_healthcare_model_2line"
+    naver_client_id: str = ""
+    naver_client_secret: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -14,7 +14,8 @@ from app.api.analysis_sessions import (
     create_analysis_session,
     create_health_data,
 )
-from app.api.evaluate import EvaluateRequest, evaluate_analysis
+from app.api.evaluate import EvaluateRequest, _find_competitor_prices, _find_overall_actions, evaluate_analysis
+from app.api.feasibility import DataFeasibilityResult, MarketFeasibilityResult
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import HealthDataItemInput
 
@@ -70,13 +71,22 @@ async def test_evaluate_fail_branch_disables_market_and_business_model() -> None
         assert any(link.target_section == "SECTION 2-1 규제 위험도" for link in response.result.section_links)
         assert any("GATE FAIL" in action.action_text for action in response.result.next_actions)
         assert any(action.action_text.startswith("개인정보 보호법") for action in response.result.next_actions)
+        # FAIL 분기는 data_feasibility/market_feasibility가 None이라(§5.4) 공통(무관)
+        # 트리거만 매칭돼야 한다 — data_level/market_level 조건은 안 걸려야 함.
+        assert response.result.overall_actions
+        assert {a.tag for a in response.result.overall_actions} <= {"[지금 당장]", "[출시 전 필수]"}
     finally:
         await _delete_session(session_id)
 
 
+@pytest.mark.llm
 async def test_evaluate_pass_branch_fills_all_six() -> None:
     """생체지표+단순기록 PASS 세션 — 6개 필드 전부 값이 채워져야 한다
-    (market/business_model은 시드 매칭이 없으면 insufficient_data일 수 있지만 None은 아님)."""
+    (market/business_model은 시드 매칭이 없으면 insufficient_data일 수 있지만 None은 아님).
+
+    market_feasibility/business_model이 채워지면 differentiation_point·bm_card_summaries
+    생성 시도도 함께 일어나 실제 OpenAI 호출이 나간다(app/api/evaluate.py) — 비용
+    발생을 기본 실행에서 막기 위해 llm 마커를 붙인다. `-m "not llm"`이 기본값."""
     session_id = await _create_session(
         "사용자가 측정한 심박수를 기록하고 히스토리로 조회한다.",
         [HealthDataItemInput(name="심박수", data_type="numeric", unit="bpm", source="user_input")],
@@ -94,6 +104,7 @@ async def test_evaluate_pass_branch_fills_all_six() -> None:
         assert response.result.business_model is not None
         assert any(link.target_section == "SECTION 1 GATE" for link in response.result.section_links)
         assert any("예측·진단" in action.action_text for action in response.result.next_actions)
+        assert response.result.overall_actions
     finally:
         await _delete_session(session_id)
 
@@ -101,3 +112,61 @@ async def test_evaluate_pass_branch_fills_all_six() -> None:
 async def test_evaluate_returns_404_for_unknown_session() -> None:
     response = await evaluate_analysis(EvaluateRequest(session_id="no_such_session"))
     assert response.status_code == 404
+
+
+def _data_feasibility(risk_level: str) -> DataFeasibilityResult:
+    return DataFeasibilityResult(
+        data_feasibility_score=1, risk_level=risk_level, available_sources=[], privacy_risks=[]
+    )
+
+
+def _market_feasibility(grade: str | None) -> MarketFeasibilityResult:
+    return MarketFeasibilityResult(
+        match_level="insufficient_data" if grade is None else "exact_match",
+        competitor_count=0,
+        saturation=None,
+        market_realism_grade=grade,
+        platform_competitor_exists=False,
+        payment_precedent=None,
+        competitor_cards=[],
+        domestic_demand=None,
+    )
+
+
+@pytest.mark.db
+async def test_find_overall_actions_matches_only_common_when_axes_are_none() -> None:
+    # GATE FAIL 분기와 동일한 입력(둘 다 None) — data_level/market_level 트리거는
+    # 걸리면 안 되고 공통(무관) 트리거만 매칭돼야 한다.
+    actions = await _find_overall_actions(None, None)
+    assert actions
+    assert all(a.tag in ("[지금 당장]", "[출시 전 필수]") for a in actions)
+
+
+@pytest.mark.db
+async def test_find_overall_actions_maps_english_risk_level_to_korean_trigger() -> None:
+    # data_feasibility.risk_level은 영문(LOW/MEDIUM/HIGH)인데 action_templates.trigger_value는
+    # 국문(쉬움/보통/어려움)이라 매핑이 정확해야 매칭된다 — 안 맞으면 조용히 공통 항목만 나오고
+    # data_level 트리거 액션(시드: act_data_hard_1/2)이 빠진다.
+    actions = await _find_overall_actions(_data_feasibility("HIGH"), None)
+    assert any("MVP" in a.action_text for a in actions)
+
+
+@pytest.mark.db
+async def test_find_overall_actions_caps_at_four_per_tag() -> None:
+    actions = await _find_overall_actions(_data_feasibility("HIGH"), _market_feasibility("낮음"))
+    by_tag: dict[str, int] = {}
+    for action in actions:
+        by_tag[action.tag] = by_tag.get(action.tag, 0) + 1
+    assert all(count <= 4 for count in by_tag.values())
+
+
+@pytest.mark.db
+async def test_find_competitor_prices_is_deterministic_for_duplicate_names() -> None:
+    # 코드 리뷰로 확인(2026-08-25) — competitors.name은 PK가 아니라 "삼성헬스"처럼
+    # 동명 행이 실제로 여러 건(서로 다른 competitor_id, 가격도 다름) 존재한다.
+    # 매 호출 같은 결과가 나와야 하고(비결정적 dict 덮어쓰기 금지), 빈 문자열
+    # 가격 행이 있어도 다른 행의 실제 가격으로 채워져야 한다.
+    first = await _find_competitor_prices({"삼성헬스"})
+    second = await _find_competitor_prices({"삼성헬스"})
+    assert first == second
+    assert first.get("삼성헬스")

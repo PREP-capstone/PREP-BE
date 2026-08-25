@@ -19,4 +19,4 @@ jobs:
           python-version-file: .python-version
           cache: pip
       - run: pip install -r requirements.txt
-      - run: pytest -m "not db and not ml_model"
+      - run: pytest -m "not db and not ml_model and not llm and not naver"
