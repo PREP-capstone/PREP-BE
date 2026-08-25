@@ -14,8 +14,16 @@ from app.api.analysis_sessions import (
     create_analysis_session,
     create_health_data,
 )
-from app.api.evaluate import EvaluateRequest, _find_competitor_prices, _find_overall_actions, evaluate_analysis
+from app.api.business_model import BusinessModelResult
+from app.api.evaluate import (
+    EvaluateRequest,
+    _compute_overall_signal,
+    _find_competitor_prices,
+    _find_overall_actions,
+    evaluate_analysis,
+)
 from app.api.feasibility import DataFeasibilityResult, MarketFeasibilityResult
+from app.api.judgement import GateResponse, RegulatoryRiskResponse
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import HealthDataItemInput
 
@@ -45,9 +53,13 @@ async def _delete_session(session_id: str) -> None:
         await session.commit()
 
 
+@pytest.mark.llm
 async def test_evaluate_fail_branch_disables_market_and_business_model() -> None:
     """침습적 하드체크 FAIL 세션 — gate/regulatory-risk/correction-candidates는 채워지고
-    데이터확보/시장현실성/수익구조는 전부 None이어야 한다."""
+    데이터확보/시장현실성/수익구조는 전부 None이어야 한다.
+
+    FAIL이어도 SECTION 3/0(LLM④⑤)은 계속 만들어진다(§5.4 "리포트를 종료하지 않는다")
+    — 실제 OpenAI 호출이 나가므로 llm 마커가 필요하다."""
     session_id = await _create_session(
         "CGM 연속혈당측정기와 연동해 심박수를 실시간으로 기록한다.",
         [
@@ -75,6 +87,9 @@ async def test_evaluate_fail_branch_disables_market_and_business_model() -> None
         # 트리거만 매칭돼야 한다 — data_level/market_level 조건은 안 걸려야 함.
         assert response.result.overall_actions
         assert {a.tag for a in response.result.overall_actions} <= {"[지금 당장]", "[출시 전 필수]"}
+        assert response.result.overall_signal in ("빨강", "노랑", "초록")
+        assert response.result.overall_summary
+        assert response.result.one_liner
     finally:
         await _delete_session(session_id)
 
@@ -105,6 +120,9 @@ async def test_evaluate_pass_branch_fills_all_six() -> None:
         assert any(link.target_section == "SECTION 1 GATE" for link in response.result.section_links)
         assert any("예측·진단" in action.action_text for action in response.result.next_actions)
         assert response.result.overall_actions
+        assert response.result.overall_signal in ("빨강", "노랑", "초록")
+        assert response.result.overall_summary
+        assert response.result.one_liner
     finally:
         await _delete_session(session_id)
 
@@ -116,7 +134,12 @@ async def test_evaluate_returns_404_for_unknown_session() -> None:
 
 def _data_feasibility(risk_level: str) -> DataFeasibilityResult:
     return DataFeasibilityResult(
-        data_feasibility_score=1, risk_level=risk_level, available_sources=[], privacy_risks=[]
+        data_feasibility_score=1,
+        risk_level=risk_level,
+        available_sources=[],
+        privacy_risks=[],
+        standard_scale_candidates=[],
+        mvp_roadmap=[],
     )
 
 
@@ -131,6 +154,85 @@ def _market_feasibility(grade: str | None) -> MarketFeasibilityResult:
         competitor_cards=[],
         domestic_demand=None,
     )
+
+
+def _gate(verdict: str = "PASS") -> GateResponse:
+    return GateResponse(
+        data_type="생체지표",
+        function_type="단순기록",
+        acquire_method="수동입력",
+        invasive_signal=False,
+        verdict=verdict,
+        hardcheck_fired=False,
+        avoidance_redesign=None,
+        avoidance_certification=None,
+        reasoning=[],
+    )
+
+
+def _regulatory_risk(grade: str) -> RegulatoryRiskResponse:
+    return RegulatoryRiskResponse(
+        regulatory_score=0,
+        regulatory_grade=grade,
+        privacy_score=0,
+        privacy_grade="낮음",
+        advertising_score=0,
+        advertising_grade="낮음",
+        matched_rules=[],
+        applicable_laws=[],
+        service_law_description=None,
+    )
+
+
+def _business_model(match_level: str) -> BusinessModelResult:
+    return BusinessModelResult(match_level=match_level, recommendations=[])
+
+
+def test_overall_signal_red_when_regulatory_grade_is_high() -> None:
+    assert _compute_overall_signal(_gate(), _regulatory_risk("높음"), None, None, None) == "빨강"
+
+
+def test_overall_signal_red_when_data_feasibility_is_high() -> None:
+    signal = _compute_overall_signal(
+        _gate(), _regulatory_risk("낮음"), _data_feasibility("HIGH"), None, None
+    )
+    assert signal == "빨강"
+
+
+def test_overall_signal_green_when_all_four_conditions_met() -> None:
+    signal = _compute_overall_signal(
+        _gate(),
+        _regulatory_risk("낮음"),
+        _data_feasibility("LOW"),
+        _market_feasibility("높음"),
+        _business_model("exact_match"),
+    )
+    assert signal == "초록"
+
+
+def test_overall_signal_yellow_when_business_model_insufficient() -> None:
+    # §11.1 — 시장현실성/수익구조는 상관지표라 "BM추천 존재"가 안전장치. 나머지 3개
+    # 조건을 만족해도 BM 추천이 insufficient_data면 초록이 아니라 노랑이어야 한다.
+    signal = _compute_overall_signal(
+        _gate(),
+        _regulatory_risk("낮음"),
+        _data_feasibility("LOW"),
+        _market_feasibility("높음"),
+        _business_model("insufficient_data"),
+    )
+    assert signal == "노랑"
+
+
+def test_overall_signal_yellow_on_fail_verdict_when_regulatory_not_high() -> None:
+    # GATE FAIL이면 data/market/BM이 전부 None이라(§5.4) 초록 조건(넷 다 필요)이
+    # 성립할 수 없다 — 별도 분기 없이도 §11.2와 같은 결과가 나와야 한다.
+    signal = _compute_overall_signal(_gate("FAIL"), _regulatory_risk("낮음"), None, None, None)
+    assert signal == "노랑"
+
+
+def test_overall_signal_red_on_fail_verdict_when_regulatory_high() -> None:
+    signal = _compute_overall_signal(_gate("FAIL"), _regulatory_risk("높음"), None, None, None)
+    assert signal == "빨강"
 
 
 @pytest.mark.db
