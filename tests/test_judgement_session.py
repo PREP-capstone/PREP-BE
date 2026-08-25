@@ -151,6 +151,25 @@ async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck(
         await _delete_session(session_id)
 
 
+async def test_gate_returns_conditional_via_matrix_for_lifestyle_prediction() -> None:
+    """라이프스타일+수치예측·진단은 CONDITIONAL이라 reasoning[1]이 "가장 높은 조합"이라고
+    단언하면 안 된다 — data_type을 구분 안 하던 예전 _FUNCTION_TYPE_DESCRIPTIONS 버그 회귀 테스트."""
+    session_id = await _create_session(
+        "걸음수 변화를 바탕으로 다음 주 걸음수를 예측해서 알려준다.",
+        [HealthDataItemInput(name="걸음수", data_type="numeric", unit="steps", source="user_input")],
+        service_actions=["predict"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "라이프스타일"
+        assert response.function_type == "수치예측·진단"
+        assert response.verdict == "CONDITIONAL"
+        assert "가장 높은 조합" not in response.reasoning[1]
+        assert "조건부 통과(CONDITIONAL)" in response.reasoning[-1]
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_gate_reasoning_explains_device_sync_without_invasive_signal() -> None:
     """생체지표+기기연동인데 침습 신호가 없어 하드체크를 피한 경우도 그 이유가 명시돼야 한다."""
     session_id = await _create_session(
@@ -163,6 +182,25 @@ async def test_gate_reasoning_explains_device_sync_without_invasive_signal() -> 
         assert response.verdict == "PASS"
         assert response.hardcheck_fired is False
         assert "침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다" in response.reasoning[0]
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_reasoning_explains_lifestyle_data_with_invasive_signal() -> None:
+    """라이프스타일 데이터는 is_invasive_hardcheck가 생체지표 전용이라 침습 신호가 있어도
+    하드체크가 절대 발동하지 않는다 — reasoning[2](침습 신호 감지)와 모순돼 보이지 않으려면
+    reasoning[0]에서도 그 이유가 설명돼야 한다."""
+    session_id = await _create_session(
+        "걸음수를 기록하는 서비스입니다. 침습 관련 표현이 설명문에 섞여 있습니다.",
+        [HealthDataItemInput(name="걸음수", data_type="numeric", unit="steps", source="user_input")],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "라이프스타일"
+        assert response.hardcheck_fired is False
+        assert response.invasive_signal is True
+        assert "침습적 신호가 감지됐지만 생체지표가 아니라 하드체크 대상이 아닙니다" in response.reasoning[0]
     finally:
         await _delete_session(session_id)
 

@@ -33,6 +33,7 @@ from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_TABLE,
     HARDCHECK_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_REDESIGN,
+    HARDCHECK_VERDICT,
     detect_invasive,
     is_invasive_hardcheck,
 )
@@ -170,21 +171,37 @@ def _classify_acquire_method(items: list[HealthDataItemInput]) -> str | None:
 _FUNCTION_TYPE_DESCRIPTIONS = {
     "단순기록": "기능은 단순 기록·조회 수준에 머물러 있어 비교·추이분석이나 수치예측·진단 기능은 포함되지 않습니다.",
     "비교·추이분석": "기능은 비교·추이분석 수준으로, 수치를 비교·해석해 보여주지만 예측·진단까지는 하지 않습니다.",
-    "수치예측·진단": "기능이 수치예측·진단 수준까지 포함돼 의료기기 해당 가능성이 가장 높은 조합입니다.",
 }
 
 
-def _describe_data_and_acquire(data_type: str, acquire_method: str | None, hardcheck_fired: bool) -> str:
+def _describe_function_type(data_type: str, function_type: str) -> str:
+    # "수치예측·진단"은 data_type에 따라 GATE_MATRIX_TABLE의 verdict가 갈린다
+    # (생체지표=FAIL, 라이프스타일=CONDITIONAL) — 문구도 그에 맞춰 갈라야 한다.
+    if function_type == "수치예측·진단":
+        if data_type == "생체지표":
+            return "기능이 수치예측·진단 수준까지 포함돼 의료기기 해당 가능성이 가장 높은 조합입니다."
+        return "기능이 수치예측·진단 수준까지 포함되지만, 라이프스타일 데이터라 조건부 통과(CONDITIONAL) 수준의 조합입니다."
+    return _FUNCTION_TYPE_DESCRIPTIONS[function_type]
+
+
+def _describe_data_and_acquire(
+    data_type: str, acquire_method: str | None, invasive_signal: bool, hardcheck_fired: bool
+) -> str:
     if hardcheck_fired:
-        return f"{data_type} 데이터를 {acquire_method}으로 수집하는 조합이라 침습적 하드체크 대상입니다."
-    if acquire_method is None:
-        return f"{data_type} 데이터를 다루지만 등록된 항목에서 수집 방법을 특정할 수 없습니다."
+        # data_type/acquire_method는 각각 다른 데이터 항목에서 나왔을 수 있다(_classify_data_type은
+        # 생체지표 항목 하나만 있어도, _classify_acquire_method는 전체 항목 중 우선순위가 가장 높은
+        # 수집방법을 고른다) — "이 조합"처럼 동일 항목을 암시하지 않도록 문구를 분리해서 서술한다.
+        return f"등록된 항목 중 {data_type}에 해당하는 항목이 있고, 전체 항목 기준 수집방법이 {acquire_method}으로 분류되어 침습적 하드체크 대상입니다."
     if data_type == "생체지표" and acquire_method == "기기연동":
         # hardcheck_fired=False인데 여기 도달했다는 건 invasive_signal=False였다는 뜻
         # (is_invasive_hardcheck는 생체지표+기기연동+invasive_signal 셋 다 True일 때만 발동).
         return "생체지표 데이터를 기기연동으로 수집하지만 침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다."
     if data_type == "생체지표":
         return f"생체지표 데이터를 다루지만 수집 방법이 기기연동이 아닌 {acquire_method}이라 침습적 하드체크 대상이 아닙니다."
+    if invasive_signal:
+        # data_type=="라이프스타일"이면 is_invasive_hardcheck가 절대 발동하지 않는다 — 침습 신호가
+        # 있어도 왜 하드체크로 안 이어지는지 명시해야 reasoning[2](침습 신호 감지)와 모순돼 보이지 않는다.
+        return f"{data_type} 데이터를 {acquire_method}으로 수집하며, 침습적 신호가 감지됐지만 생체지표가 아니라 하드체크 대상이 아닙니다."
     return f"{data_type} 데이터를 {acquire_method}으로 수집합니다."
 
 
@@ -194,7 +211,7 @@ def _describe_invasive_signal(invasive_signal: bool) -> str:
     return "서비스 설명·데이터 항목명 어디에서도 침습적 신호가 감지되지 않았습니다."
 
 
-def _describe_verdict(verdict: str, hardcheck_fired: bool) -> str:
+def _describe_verdict(verdict: str | None, hardcheck_fired: bool) -> str:
     if hardcheck_fired:
         return "생체지표·기기연동·침습적 신호가 모두 겹쳐 하드체크로 FAIL 판정됐습니다."
     if verdict == "PASS":
@@ -210,13 +227,16 @@ def _build_gate_reasoning(
     acquire_method: str | None,
     invasive_signal: bool,
     hardcheck_fired: bool,
-    verdict: str,
+    verdict: str | None = None,
 ) -> list[str]:
+    # 하드체크가 곧 FAIL을 뜻하므로 호출부가 verdict="FAIL"을 손으로 맞춰줄 필요 없이
+    # 여기서 HARDCHECK_VERDICT를 직접 쓴다 — 매트릭스 경로만 cell의 verdict를 그대로 받는다.
+    resolved_verdict = HARDCHECK_VERDICT if hardcheck_fired else verdict
     return [
-        _describe_data_and_acquire(data_type, acquire_method, hardcheck_fired),
-        _FUNCTION_TYPE_DESCRIPTIONS[function_type],
+        _describe_data_and_acquire(data_type, acquire_method, invasive_signal, hardcheck_fired),
+        _describe_function_type(data_type, function_type),
         _describe_invasive_signal(invasive_signal),
-        _describe_verdict(verdict, hardcheck_fired),
+        _describe_verdict(resolved_verdict, hardcheck_fired),
     ]
 
 
@@ -259,7 +279,7 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
             avoidance_redesign=HARDCHECK_AVOIDANCE_REDESIGN,
             avoidance_certification=HARDCHECK_AVOIDANCE_CERTIFICATION,
             reasoning=_build_gate_reasoning(
-                data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True, verdict="FAIL"
+                data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True
             ),
         )
 
