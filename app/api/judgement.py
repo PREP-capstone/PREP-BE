@@ -25,10 +25,18 @@ from app.db.models import (
 )
 from app.db.rule_version_queries import resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
+from app.domain.correction_llm import generate_correction_candidates
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
 from app.domain.scoring import grade_by_threshold
 from app.pipeline.correction_terms import keyword_score
-from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
+from app.pipeline.gate_matrix_table import (
+    GATE_MATRIX_TABLE,
+    HARDCHECK_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_AVOIDANCE_REDESIGN,
+    HARDCHECK_VERDICT,
+    detect_invasive,
+    is_invasive_hardcheck,
+)
 from app.schemas.common import ApiResponse, HealthDataItemInput, LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
@@ -119,6 +127,10 @@ class GateResponse(BaseModel):
     invasive_signal: bool
     verdict: str
     hardcheck_fired: bool
+    # GATE FAIL일 때 회피 방향 2가지(D-2, 코드 템플릿 방식). PASS/CONDITIONAL이면 둘 다 None.
+    avoidance_redesign: str | None
+    avoidance_certification: str | None
+    reasoning: list[str]
 
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -154,6 +166,78 @@ def _classify_acquire_method(items: list[HealthDataItemInput]) -> str | None:
         if method in methods:
             return method
     return None
+
+
+_FUNCTION_TYPE_DESCRIPTIONS = {
+    "단순기록": "기능은 단순 기록·조회 수준에 머물러 있어 비교·추이분석이나 수치예측·진단 기능은 포함되지 않습니다.",
+    "비교·추이분석": "기능은 비교·추이분석 수준으로, 수치를 비교·해석해 보여주지만 예측·진단까지는 하지 않습니다.",
+}
+
+
+def _describe_function_type(data_type: str, function_type: str) -> str:
+    # "수치예측·진단"은 data_type에 따라 GATE_MATRIX_TABLE의 verdict가 갈린다
+    # (생체지표=FAIL, 라이프스타일=CONDITIONAL) — 문구도 그에 맞춰 갈라야 한다.
+    if function_type == "수치예측·진단":
+        if data_type == "생체지표":
+            return "기능이 수치예측·진단 수준까지 포함돼 의료기기 해당 가능성이 가장 높은 조합입니다."
+        return "기능이 수치예측·진단 수준까지 포함되지만, 라이프스타일 데이터라 조건부 통과(CONDITIONAL) 수준의 조합입니다."
+    return _FUNCTION_TYPE_DESCRIPTIONS[function_type]
+
+
+def _describe_data_and_acquire(
+    data_type: str, acquire_method: str | None, invasive_signal: bool, hardcheck_fired: bool
+) -> str:
+    if hardcheck_fired:
+        # data_type/acquire_method는 각각 다른 데이터 항목에서 나왔을 수 있다(_classify_data_type은
+        # 생체지표 항목 하나만 있어도, _classify_acquire_method는 전체 항목 중 우선순위가 가장 높은
+        # 수집방법을 고른다) — "이 조합"처럼 동일 항목을 암시하지 않도록 문구를 분리해서 서술한다.
+        return f"등록된 항목 중 {data_type}에 해당하는 항목이 있고, 전체 항목 기준 수집방법이 {acquire_method}으로 분류되어 침습적 하드체크 대상입니다."
+    if data_type == "생체지표" and acquire_method == "기기연동":
+        # hardcheck_fired=False인데 여기 도달했다는 건 invasive_signal=False였다는 뜻
+        # (is_invasive_hardcheck는 생체지표+기기연동+invasive_signal 셋 다 True일 때만 발동).
+        return "생체지표 데이터를 기기연동으로 수집하지만 침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다."
+    if data_type == "생체지표":
+        return f"생체지표 데이터를 다루지만 수집 방법이 기기연동이 아닌 {acquire_method}이라 침습적 하드체크 대상이 아닙니다."
+    if invasive_signal:
+        # data_type=="라이프스타일"이면 is_invasive_hardcheck가 절대 발동하지 않는다 — 침습 신호가
+        # 있어도 왜 하드체크로 안 이어지는지 명시해야 reasoning[2](침습 신호 감지)와 모순돼 보이지 않는다.
+        return f"{data_type} 데이터를 {acquire_method}으로 수집하며, 침습적 신호가 감지됐지만 생체지표가 아니라 하드체크 대상이 아닙니다."
+    return f"{data_type} 데이터를 {acquire_method}으로 수집합니다."
+
+
+def _describe_invasive_signal(invasive_signal: bool) -> str:
+    if invasive_signal:
+        return "서비스 설명·데이터 항목명에서 침습적 신호가 감지됐습니다."
+    return "서비스 설명·데이터 항목명 어디에서도 침습적 신호가 감지되지 않았습니다."
+
+
+def _describe_verdict(verdict: str | None, hardcheck_fired: bool) -> str:
+    if hardcheck_fired:
+        return "생체지표·기기연동·침습적 신호가 모두 겹쳐 하드체크로 FAIL 판정됐습니다."
+    if verdict == "PASS":
+        return "위 조합은 GATE 매트릭스 기준 의료기기 해당 가능성이 낮은 조합으로 판정됐습니다(PASS)."
+    if verdict == "CONDITIONAL":
+        return "위 조합은 GATE 매트릭스 기준 조건부 통과(CONDITIONAL)로 판정됐습니다 — 추가 검토가 필요합니다."
+    return "위 조합은 GATE 매트릭스 기준 의료기기 해당 가능성이 높은 조합으로 판정됐습니다(FAIL)."
+
+
+def _build_gate_reasoning(
+    data_type: str,
+    function_type: str,
+    acquire_method: str | None,
+    invasive_signal: bool,
+    hardcheck_fired: bool,
+    verdict: str | None = None,
+) -> list[str]:
+    # 하드체크가 곧 FAIL을 뜻하므로 호출부가 verdict="FAIL"을 손으로 맞춰줄 필요 없이
+    # 여기서 HARDCHECK_VERDICT를 직접 쓴다 — 매트릭스 경로만 cell의 verdict를 그대로 받는다.
+    resolved_verdict = HARDCHECK_VERDICT if hardcheck_fired else verdict
+    return [
+        _describe_data_and_acquire(data_type, acquire_method, invasive_signal, hardcheck_fired),
+        _describe_function_type(data_type, function_type),
+        _describe_invasive_signal(invasive_signal),
+        _describe_verdict(resolved_verdict, hardcheck_fired),
+    ]
 
 
 def _detect_invasive_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
@@ -192,6 +276,11 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
             invasive_signal=invasive_signal,
             verdict="FAIL",
             hardcheck_fired=True,
+            avoidance_redesign=HARDCHECK_AVOIDANCE_REDESIGN,
+            avoidance_certification=HARDCHECK_AVOIDANCE_CERTIFICATION,
+            reasoning=_build_gate_reasoning(
+                data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True
+            ),
         )
 
     cell = GATE_MATRIX_TABLE[(data_type, function_type)]
@@ -202,6 +291,11 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         invasive_signal=invasive_signal,
         verdict=cell["verdict"],
         hardcheck_fired=False,
+        avoidance_redesign=cell.get("avoidance_redesign"),
+        avoidance_certification=cell.get("avoidance_certification"),
+        reasoning=_build_gate_reasoning(
+            data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
+        ),
     )
 
 
@@ -334,6 +428,59 @@ async def _match_correction_rules(
     return result
 
 
+async def _match_correction_rules_with_llm_fallback(
+    service_description: str, matched_keywords: list[GateKeyword], rule_version_ids: list[uuid.UUID]
+) -> list[CorrectionMatch]:
+    """규칙 기반(_match_correction_rules)이 0건일 때만 LLM①을 보완 호출한다(이슈 #58).
+
+    2026-08-23 실측 — gate_keywords 68개 중 하나도 안 걸리는 파라프레이즈 표현(복약지도 등)은
+    규칙 기반으로 원천적으로 못 잡는다. LLM 미가용(키 없음·호출 실패)이면 빈 리스트로
+    조용히 폴백 — correction-candidates 응답 전체가 LLM 장애로 깨지면 안 된다(§10.1).
+    """
+    matches = await _match_correction_rules(service_description, matched_keywords, rule_version_ids)
+    if matches:
+        return matches
+
+    try:
+        raw_candidates = await generate_correction_candidates(service_description)
+    except Exception:
+        # LLMUnavailable(키 없음·호출 실패로 이 모듈이 직접 올리는 것)뿐 아니라 그 외 예기치
+        # 못한 예외까지 전부 여기서 끊는다 — _fill_quotes()의 RAG 조회 실패 처리(위)와 같은
+        # 이유: 이 호출은 보조 정보라 장애가 나도 judge_correction_candidates() 전체(나아가
+        # evaluate.py의 asyncio.gather 안에서는 /evaluate 전체)를 절대 깨면 안 된다(§10.1).
+        return []
+
+    try:
+        # (risky_text, document_id, article) 기준 중복 제거 — risky_text만 쓰면 같은 문구를
+        # 서로 다른 법적 근거로 잡은 두 후보가 하나로 뭉개진다. 이 함수 자체가 LLM 장애 시
+        # 빈 리스트로 조용히 폴백하는 게 계약이라, 여기서 KeyError가 나도(strict json_schema라
+        # 사실상 안 나지만) 500 대신 빈 리스트로 빠져야 일관적이다.
+        deduped: dict[tuple[str, str, str], dict] = {
+            (item["risky_text"], item["legal_basis"]["document_id"], item["legal_basis"]["article"]): item
+            for item in raw_candidates
+        }
+        llm_matches = [
+            CorrectionMatch(
+                risky_text=item["risky_text"],
+                safe_text=item["safe_text"],
+                # judge_correction_candidates()는 이 두 점수를 응답에 노출하지 않는다(CorrectionMatch를
+                # 재사용하는 건 _fill_quotes() 그대로 태우기 위해서일 뿐) — 여기선 의미 없는 값.
+                regulatory_score=0,
+                advertising_score=0,
+                legal_basis=LegalBasis(
+                    document_id=item["legal_basis"]["document_id"], article=item["legal_basis"]["article"]
+                ),
+                exact_phrase_match=False,
+            )
+            for item in deduped.values()
+        ]
+    except (KeyError, TypeError):
+        return []
+
+    await _fill_quotes(llm_matches)
+    return llm_matches
+
+
 async def _find_service_law(service_type: str | None) -> ServiceLawMap | None:
     """service_law_map(§15.2)에서 service_type으로 직접 조회. service_type 없으면
     조회 자체를 건너뛴다 — category_1/category_2처럼 완화 단계가 없는 단일 PK 매칭."""
@@ -458,7 +605,7 @@ async def judge_correction_candidates(request: GateRequest) -> CorrectionCandida
 
     rule_version_ids = await resolve_active_rule_version_ids()
     matched_keywords = await _match_gate_keywords(analysis_session.service_description, rule_version_ids)
-    matches = await _match_correction_rules(
+    matches = await _match_correction_rules_with_llm_fallback(
         analysis_session.service_description, matched_keywords, rule_version_ids
     )
     return CorrectionCandidatesResponse(
