@@ -25,10 +25,13 @@ class LLMUnavailable(Exception):
     """OPENAI_API_KEY 미설정 또는 호출 실패 시."""
 
 
+_REQUEST_TIMEOUT_SECONDS = 15.0  # correction_llm.py(LLM①)와 통일 (D-16).
+
+
 def _build_client() -> AsyncOpenAI:
     if not settings.openai_api_key:
         raise LLMUnavailable("OPENAI_API_KEY가 설정되지 않았습니다.")
-    return AsyncOpenAI(api_key=settings.openai_api_key)
+    return AsyncOpenAI(api_key=settings.openai_api_key, timeout=_REQUEST_TIMEOUT_SECONDS)
 
 
 _DIFFERENTIATION_SCHEMA = {

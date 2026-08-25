@@ -1,10 +1,12 @@
 """app/domain/correction_llm.py 단위 테스트 — DB/네트워크 불필요. 이슈 #58."""
 
+import hashlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.redis_client import redis_client
 from app.domain import correction_llm
 
 
@@ -30,6 +32,15 @@ async def test_generate_correction_candidates_raises_without_api_key(monkeypatch
 
 async def test_generate_correction_candidates_parses_and_normalizes_article(monkeypatch) -> None:
     monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")
+    service_description = "약 시간표를 짜드려요"
+    cache_key = correction_llm._CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
+    try:
+        # 캐싱 도입(D-16) 이후 이 테스트가 실제 Redis에 쓴 캐시가 재실행 시 남아있으면
+        # AsyncOpenAI 모킹/파싱 로직을 안 타고 캐시값만 반환해 이 테스트의 의미가 없어진다.
+        await redis_client.delete(cache_key)
+    except Exception:
+        pass  # Redis 연결 불가(CI)면 애초에 캐시가 안 걸리니 그냥 진행한다.
+
     payload = json.dumps(
         {
             "candidates": [
@@ -45,8 +56,15 @@ async def test_generate_correction_candidates_parses_and_normalizes_article(monk
             ]
         }
     )
-    with _patched_client(payload):
-        result = await correction_llm.generate_correction_candidates("약 시간표를 짜드려요")
+    try:
+        with _patched_client(payload) as mock_openai_cls:
+            result = await correction_llm.generate_correction_candidates(service_description)
+        mock_openai_cls.assert_called_once()
+    finally:
+        try:
+            await redis_client.delete(cache_key)
+        except Exception:
+            pass
 
     assert result == [
         {
@@ -70,3 +88,41 @@ async def test_generate_correction_candidates_raises_on_missing_expected_key(mon
     with _patched_client(json.dumps({"unexpected_key": []})):
         with pytest.raises(correction_llm.LLMUnavailable):
             await correction_llm.generate_correction_candidates("아무 문장")
+
+
+async def test_generate_correction_candidates_uses_cache_on_second_call(monkeypatch) -> None:
+    """같은 service_description을 두 번 호출하면 두 번째는 캐시를 써서 OpenAI를 다시 안 부른다(D-16)."""
+    monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")
+    service_description = "마음 상태를 짚어드리고 조언해드려요"
+    cache_key = correction_llm._CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
+    try:
+        # 이전 테스트 실행에서 남은 캐시가 있으면 지운다 — Redis가 없는 환경(CI)에서는
+        # 이 캐싱 자체가 무의미하니 테스트를 건너뛴다(production 코드는 이미 try/except로
+        # Redis 장애를 흡수하지만, 이 테스트는 캐시 동작 자체를 검증하는 게 목적이라 다르다).
+        await redis_client.delete(cache_key)
+    except Exception:
+        pytest.skip("Redis에 연결할 수 없어 캐시 동작을 검증할 수 없습니다.")
+
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "risky_text": "마음 상태를 짚어드려요",
+                    "safe_text": "기분 변화를 기록해드려요",
+                    "legal_basis": {"document_id": "kr-medical-act-20260407", "article": "제5조"},
+                }
+            ]
+        }
+    )
+    try:
+        with _patched_client(payload) as mock_openai_cls_first:
+            first = await correction_llm.generate_correction_candidates(service_description)
+        mock_openai_cls_first.assert_called_once()
+
+        with _patched_client(payload) as mock_openai_cls_second:
+            second = await correction_llm.generate_correction_candidates(service_description)
+        mock_openai_cls_second.assert_not_called()
+
+        assert first == second
+    finally:
+        await redis_client.delete(cache_key)
