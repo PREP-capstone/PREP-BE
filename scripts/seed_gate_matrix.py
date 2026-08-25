@@ -90,8 +90,9 @@ async def seed() -> None:
                     "exemption_note": lookup["exemption_note"],
                     # 6칸 기본 조합은 침습적 하드체크 대상이 아니므로 비워둔다 (§3.2).
                     "acquire_method": None,
-                    "avoidance_redesign": lookup.get("avoidance_redesign"),
-                    "avoidance_certification": lookup.get("avoidance_certification"),
+                    # TODO(D-2): avoidance_* 문구 작성 주체 미정 — FAIL row도 아직 비워둔다.
+                    "avoidance_redesign": None,
+                    "avoidance_certification": None,
                     "risk_code": None,
                     "priority": VERDICT_PRIORITY[lookup["verdict"]],
                     "legal_basis": legal_basis,

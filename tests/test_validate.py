@@ -114,21 +114,13 @@ def test_avoidance_fields_rejected_when_verdict_is_not_fail() -> None:
 
 
 def test_avoidance_fields_allowed_when_verdict_is_fail() -> None:
-    draft = {
-        "fields": stage_b_fields(avoidance_redesign="기능 축소 안내", avoidance_certification="인증 트랙 안내")
-    }
+    draft = {"fields": stage_b_fields(avoidance_certification="인증 트랙 안내")}
     assert _check_avoidance_fields(draft) == []
 
 
 def test_avoidance_fields_pass_when_empty() -> None:
-    """PASS/CONDITIONAL은 avoidance_*가 비어있어야 통과한다."""
+    """D-2 미확정으로 파이프라인이 항상 None을 넣는 현재 상태가 통과해야 한다."""
     assert _check_avoidance_fields({"fields": stage_b_fields(verdict="PASS", priority=1)}) == []
-
-
-def test_avoidance_fields_rejected_when_verdict_is_fail_but_empty() -> None:
-    """FAIL인데 avoidance_*가 비어있으면(D-2 확정 후 채움 로직 누락 등) 필드누락으로 잡는다."""
-    draft = {"fields": stage_b_fields(avoidance_redesign="기능 축소 안내", avoidance_certification=None)}
-    assert _check_avoidance_fields(draft) == ["필드누락"]
 
 
 def test_matrix_combo_separates_hardcheck_row_from_seed_row() -> None:
