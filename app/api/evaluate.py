@@ -160,13 +160,25 @@ class BmCardSummary(BaseModel):
 
 
 async def _find_competitor_prices(competitor_names: set[str]) -> dict[str, str]:
+    """competitors.name은 PK가 아니라 동명 행이 여러 개 있을 수 있다(예: "삼성헬스"가
+    서로 다른 competitor_id로 3건 — 코드 리뷰로 확인, 2026-08-25). 이름 기준 dict
+    컴프리헨션으로 그냥 덮어쓰면 어느 행이 남을지 쿼리 순서에 좌우돼 비결정적이므로,
+    competitor_id로 정렬해 항상 같은 행이 이기게 고정한다."""
     if not competitor_names:
         return {}
     async with AsyncSessionLocal() as session:
         rows = (
-            await session.execute(select(Competitor.name, Competitor.price).where(Competitor.name.in_(competitor_names)))
+            await session.execute(
+                select(Competitor.name, Competitor.price)
+                .where(Competitor.name.in_(competitor_names))
+                .order_by(Competitor.competitor_id)
+            )
         ).all()
-    return {name: price for name, price in rows if price}
+    prices: dict[str, str] = {}
+    for name, price in rows:
+        if price and name not in prices:
+            prices[name] = price
+    return prices
 
 
 async def _build_bm_card_summaries(
@@ -326,9 +338,12 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
         data_feasibility = data_feasibility_response.result
         market_feasibility = market_feasibility_response.result
         business_model = business_model_response.result
-        overall_actions = await _find_overall_actions(data_feasibility, market_feasibility)
         service_description = session_detail.result.service_description
-        differentiation_point, bm_card_summaries = await asyncio.gather(
+        # 셋 다 서로 의존성이 없어 한 번에 묶는다 — 순서대로 await하면 DB
+        # 왕복(overall_actions)만큼 LLM 호출(differentiation_point/bm_card_summaries)
+        # 뒤로 지연이 더해진다(코드 리뷰로 확인된 개선점, 2026-08-25).
+        overall_actions, differentiation_point, bm_card_summaries = await asyncio.gather(
+            _find_overall_actions(data_feasibility, market_feasibility),
             _find_differentiation_point(service_description, market_feasibility),
             _build_bm_card_summaries(service_description, business_model),
         )

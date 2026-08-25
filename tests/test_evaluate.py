@@ -14,7 +14,7 @@ from app.api.analysis_sessions import (
     create_analysis_session,
     create_health_data,
 )
-from app.api.evaluate import EvaluateRequest, _find_overall_actions, evaluate_analysis
+from app.api.evaluate import EvaluateRequest, _find_competitor_prices, _find_overall_actions, evaluate_analysis
 from app.api.feasibility import DataFeasibilityResult, MarketFeasibilityResult
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import HealthDataItemInput
@@ -158,3 +158,15 @@ async def test_find_overall_actions_caps_at_four_per_tag() -> None:
     for action in actions:
         by_tag[action.tag] = by_tag.get(action.tag, 0) + 1
     assert all(count <= 4 for count in by_tag.values())
+
+
+@pytest.mark.db
+async def test_find_competitor_prices_is_deterministic_for_duplicate_names() -> None:
+    # 코드 리뷰로 확인(2026-08-25) — competitors.name은 PK가 아니라 "삼성헬스"처럼
+    # 동명 행이 실제로 여러 건(서로 다른 competitor_id, 가격도 다름) 존재한다.
+    # 매 호출 같은 결과가 나와야 하고(비결정적 dict 덮어쓰기 금지), 빈 문자열
+    # 가격 행이 있어도 다른 행의 실제 가격으로 채워져야 한다.
+    first = await _find_competitor_prices({"삼성헬스"})
+    second = await _find_competitor_prices({"삼성헬스"})
+    assert first == second
+    assert first.get("삼성헬스")

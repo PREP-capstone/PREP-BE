@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 
+import openai
 from openai import AsyncOpenAI
 
 from app.core.config import settings
@@ -61,19 +62,25 @@ async def generate_differentiation_point(service_description: str, competitor_ca
         or "(매칭된 경쟁사 없음)"
     )
 
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": _DIFFERENTIATION_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"서비스 설명: {service_description}\n\n경쟁 서비스:\n{competitors_text}",
-            },
-        ],
-        response_format={"type": "json_schema", "json_schema": _DIFFERENTIATION_SCHEMA},
-    )
-    parsed = json.loads(response.choices[0].message.content)
-    return parsed["differentiation_point"]
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": _DIFFERENTIATION_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"서비스 설명: {service_description}\n\n경쟁 서비스:\n{competitors_text}",
+                },
+            ],
+            response_format={"type": "json_schema", "json_schema": _DIFFERENTIATION_SCHEMA},
+        )
+        parsed = json.loads(response.choices[0].message.content)
+        return parsed["differentiation_point"]
+    except (openai.OpenAIError, json.JSONDecodeError, KeyError, IndexError, AttributeError) as error:
+        # 레이트리밋·타임아웃·malformed JSON 등 실제 호출 실패도 LLMUnavailable로 통일한다 —
+        # 이게 없으면 evaluate.py의 except LLMUnavailable을 뚫고 올라가 /evaluate 전체가
+        # 500으로 죽는다(코드 리뷰로 확인된 실제 버그, 2026-08-25).
+        raise LLMUnavailable(f"차별화 포인트 생성 실패: {error}") from error
 
 
 _BM_STRENGTH_SCHEMA = {
@@ -127,13 +134,16 @@ async def generate_bm_card_strengths(service_description: str, recommendations: 
         for r in recommendations
     )
 
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": _BM_STRENGTH_SYSTEM_PROMPT},
-            {"role": "user", "content": f"서비스 설명: {service_description}\n\nBM 후보:\n{cards_text}"},
-        ],
-        response_format={"type": "json_schema", "json_schema": _BM_STRENGTH_SCHEMA},
-    )
-    parsed = json.loads(response.choices[0].message.content)
-    return {card["bm_pattern"]: card["strength"] for card in parsed["cards"]}
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": _BM_STRENGTH_SYSTEM_PROMPT},
+                {"role": "user", "content": f"서비스 설명: {service_description}\n\nBM 후보:\n{cards_text}"},
+            ],
+            response_format={"type": "json_schema", "json_schema": _BM_STRENGTH_SCHEMA},
+        )
+        parsed = json.loads(response.choices[0].message.content)
+        return {card["bm_pattern"]: card["strength"] for card in parsed["cards"]}
+    except (openai.OpenAIError, json.JSONDecodeError, KeyError, IndexError, AttributeError) as error:
+        raise LLMUnavailable(f"BM 카드 강점 생성 실패: {error}") from error

@@ -5,6 +5,9 @@
 디그레이드 경로는 마커 없이 항상 돈다.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
+import openai
 import pytest
 
 from app.domain import report_llm
@@ -13,6 +16,18 @@ from app.domain.report_llm import LLMUnavailable, generate_bm_card_strengths, ge
 
 async def test_generate_differentiation_point_raises_without_api_key(monkeypatch) -> None:
     monkeypatch.setattr(report_llm.settings, "openai_api_key", "")
+    with pytest.raises(LLMUnavailable):
+        await generate_differentiation_point("테스트 서비스", [])
+
+
+async def test_generate_differentiation_point_converts_real_call_failure_to_llm_unavailable(monkeypatch) -> None:
+    # 코드 리뷰로 확인된 실제 버그(2026-08-25) — 키가 있어도 호출 자체(레이트리밋·
+    # 타임아웃 등)가 실패하면 이전엔 LLMUnavailable이 아니라 openai 예외가 그대로
+    # 전파돼 evaluate.py의 except LLMUnavailable을 뚫고 /evaluate 전체가 500이 났다.
+    failing_client = MagicMock()
+    failing_client.chat.completions.create = AsyncMock(side_effect=openai.OpenAIError("rate limited"))
+    monkeypatch.setattr(report_llm, "_build_client", lambda: failing_client)
+
     with pytest.raises(LLMUnavailable):
         await generate_differentiation_point("테스트 서비스", [])
 

@@ -24,7 +24,7 @@ import json
 from datetime import date, timedelta
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.redis_client import redis_client
@@ -110,11 +110,21 @@ async def _fetch_trend_ratios(keyword: str) -> list[float]:
 
 
 async def _load_threshold() -> float:
-    async with AsyncSessionLocal() as session:
-        row = await session.get(TrendSignalConfig, "trend_slope_threshold")
+    # DB 연결 실패·값 파싱 실패도 전부 TrendUnavailable로 통일한다 — 안 그러면
+    # assess_domestic_demand()의 except TrendUnavailable을 뚫고 올라가 /feasibility/market
+    # 전체가 500으로 죽는다(코드 리뷰로 확인된 실제 버그, 2026-08-25).
+    try:
+        async with AsyncSessionLocal() as session:
+            row = await session.get(TrendSignalConfig, "trend_slope_threshold")
+    except SQLAlchemyError as error:
+        raise TrendUnavailable(f"trend_signal_config 조회 실패: {error}") from error
+
     if row is None:
         raise TrendUnavailable("trend_signal_config.trend_slope_threshold가 시딩되지 않았습니다.")
-    return float(row.value)
+    try:
+        return float(row.value)
+    except (TypeError, ValueError) as error:
+        raise TrendUnavailable(f"trend_slope_threshold 값이 숫자가 아닙니다: {row.value!r}") from error
 
 
 async def assess_domestic_demand(category_1: str | None) -> str | None:

@@ -5,10 +5,18 @@
 임계값 조회)도 함께 필요해 db 마커도 같이 붙인다.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from app.domain import trend_client
-from app.domain.trend_client import CATEGORY_TO_KEYWORD, _linear_regression_slope, assess_domestic_demand
+from app.domain.trend_client import (
+    CATEGORY_TO_KEYWORD,
+    TrendUnavailable,
+    _linear_regression_slope,
+    _load_threshold,
+    assess_domestic_demand,
+)
 
 
 def test_category_to_keyword_covers_all_eight_category_1_labels() -> None:
@@ -53,3 +61,19 @@ async def test_assess_domestic_demand_returns_none_without_naver_credentials(mon
 async def test_assess_domestic_demand_real_call_returns_valid_tier() -> None:
     demand = await assess_domestic_demand("운동")
     assert demand in ("상위권", "하위권")
+
+
+async def test_load_threshold_raises_trend_unavailable_on_non_numeric_value(monkeypatch) -> None:
+    # 코드 리뷰로 확인된 실제 버그(2026-08-25) — trend_slope_threshold 값이 숫자로
+    # 파싱 안 되면 이전엔 TrendUnavailable이 아니라 ValueError가 그대로 전파돼
+    # assess_domestic_demand()의 except TrendUnavailable을 뚫고 올라갔다.
+    fake_row = MagicMock(value="not-a-number")
+    fake_session = AsyncMock()
+    fake_session.get = AsyncMock(return_value=fake_row)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(trend_client, "AsyncSessionLocal", lambda: fake_session)
+
+    with pytest.raises(TrendUnavailable):
+        await _load_threshold()
