@@ -315,7 +315,8 @@ def _check_derived_verdict(draft: ExtractedDraft) -> list[str]:
 def _check_avoidance_fields(draft: ExtractedDraft) -> list[str]:
     """avoidance_*는 verdict=FAIL일 때만 채울 수 있다 (db_구축_설계서.md §3.2).
 
-    문구 작성 주체는 미정(D-2)이라 현재 파이프라인은 항상 None을 넣지만, 검증은 미리 걸어둔다.
+    문구 작성 주체는 D-2 확정(2026-08-25, 코드 템플릿 — gate_matrix_table.py 상수/딕셔너리)으로
+    extract_b.py가 채운다. 이 검증은 문구 출처와 무관하게 "FAIL 아니면 비어있어야 한다"만 본다.
     """
     fields = draft["fields"]
     if fields["verdict"] == "FAIL":
