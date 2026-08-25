@@ -21,6 +21,7 @@ def match(document_id: str, article: str) -> CorrectionMatch:
         advertising_score=0,
         legal_basis=LegalBasis(document_id=document_id, article=article),
         exact_phrase_match=True,
+        match_source="rule",
     )
 
 

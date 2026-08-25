@@ -21,17 +21,25 @@ LLMUnavailable을 올린다. judge_correction_candidates()가 이를 잡아 빈 
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import openai
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+from app.core.redis_client import redis_client
 from app.pipeline.article_ref import normalize_article
 
 # 이 호출은 evaluate.py의 asyncio.gather 안에서 다른 API들과 나란히 대기된다 — 무한정 걸리면
 # /evaluate 전체가 그만큼 늘어진다. trend_client.py의 외부 API 타임아웃(10초)과 같은 결.
 _REQUEST_TIMEOUT_SECONDS = 15.0
+
+# temperature=0이라 같은 service_description은 항상 같은 결과를 내므로 캐싱이 안전하다(D-16).
+# trend_client.py(24시간)보다 짧게 잡는다 — 법령/가이드 문서가 갱신되면 프롬프트의
+# _KNOWN_DOCUMENTS 목록도 바뀔 수 있어서 하루씩 묵히면 갱신 반영이 너무 늦어진다.
+_CACHE_TTL_SECONDS = 60 * 60
+_CACHE_KEY_PREFIX = "correction_candidates:"
 
 # judgement.py._RAG_TRUSTED_DOCUMENT_IDS와 동일 — LLM이 legal_basis.document_id를 이
 # 목록 중에서 고르면 _fill_quotes()가 실제 원문을 채울 수 있다. 목록 밖 값을 내도 에러는
@@ -125,6 +133,14 @@ async def generate_correction_candidates(service_description: str) -> list[dict]
     evidence_chunks.section_id와 표기가 안 맞으면 _fill_quotes()의 원문 조회가 그냥 조용히
     실패(quote=None)하므로, 여기서 맞춰두는 편이 quote 채워질 확률을 높인다.
     """
+    cache_key = _CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached is not None:
+            return json.loads(cached)
+    except Exception:
+        pass  # 캐시 조회 실패는 치명적이지 않다 — 그냥 다시 계산한다.
+
     client = _build_client()
     try:
         # 이 경로는 요청마다(호출 실패 시에도) 매번 새 클라이언트를 만드는 offline
@@ -154,4 +170,9 @@ async def generate_correction_candidates(service_description: str) -> list[dict]
             item["legal_basis"]["article"] = normalize_article(item["legal_basis"]["article"])
     except (KeyError, TypeError) as error:
         raise LLMUnavailable(f"OpenAI 응답 형식이 예상과 다릅니다: {error}") from error
+
+    try:
+        await redis_client.set(cache_key, json.dumps(candidates), ex=_CACHE_TTL_SECONDS)
+    except Exception:
+        pass  # 캐시 저장 실패도 치명적이지 않다.
     return candidates
