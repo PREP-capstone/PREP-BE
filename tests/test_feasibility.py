@@ -16,10 +16,12 @@ from app.api.analysis_sessions import (
 )
 from app.api.feasibility import (
     FeasibilityRequest,
+    _difficulty_level_for_risk,
     _risk_level_for_score,
     _tokens_overlap_with_name,
     assess_data_feasibility,
 )
+from app.db.models import MvpStrategyTemplate, StandardScale
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import HealthDataItemInput
 
@@ -32,6 +34,12 @@ def test_risk_level_thresholds_match_design_doc() -> None:
     assert _risk_level_for_score(10) == "MEDIUM"
     assert _risk_level_for_score(12) == "HIGH"
     assert _risk_level_for_score(30) == "HIGH"
+
+
+def test_difficulty_level_maps_from_api_risk_level_to_template_label() -> None:
+    assert _difficulty_level_for_risk("LOW") == "쉬움"
+    assert _difficulty_level_for_risk("MEDIUM") == "보통"
+    assert _difficulty_level_for_risk("HIGH") == "어려움"
 
 
 def test_tokens_overlap_matches_compound_word_against_short_catalog_token() -> None:
@@ -51,8 +59,8 @@ def test_feasibility_request_rejects_required_data_payload() -> None:
         FeasibilityRequest.model_validate({"session_id": "s", "required_data": []})
 
 
-async def _create_session(name: str = "feasibility-test") -> str:
-    request = CreateAnalysisSessionRequest(service_name=name, service_description="d")
+async def _create_session(name: str = "feasibility-test", category_1: str | None = None) -> str:
+    request = CreateAnalysisSessionRequest(service_name=name, service_description="d", category_1=category_1)
     response = await create_analysis_session(request)
     return response.result.session_id
 
@@ -60,6 +68,79 @@ async def _create_session(name: str = "feasibility-test") -> str:
 async def _delete_session(session_id: str) -> None:
     async with AsyncSessionLocal() as session:
         await session.execute(delete(AnalysisSession).where(AnalysisSession.session_id == session_id))
+        await session.commit()
+
+
+async def _seed_report_support_rows() -> None:
+    await _delete_report_support_rows()
+    async with AsyncSessionLocal() as session:
+        session.add_all(
+            [
+                StandardScale(
+                    scale_id="test_scale_isi",
+                    name="ISI",
+                    full_name="Insomnia Severity Index",
+                    category_1="테스트수면",
+                    item_count=7,
+                    scoring_range="0-28",
+                    license_type="사용 조건 확인 필요",
+                    source_url="https://example.com/isi",
+                    note="수면 자가입력 대체 근거",
+                ),
+                StandardScale(
+                    scale_id="test_scale_sleep_token",
+                    name="A-수면 자가보고 척도",
+                    full_name="Sleep Self-Report Scale",
+                    category_1="다른카테고리",
+                    item_count=5,
+                    scoring_range="0-20",
+                    license_type="테스트",
+                    source_url="https://example.com/sleep-token",
+                    note="수면 시간 입력을 표준 척도로 대체할 때 쓰는 테스트 후보",
+                ),
+                MvpStrategyTemplate(
+                    template_id="test_mvp_medium_1",
+                    category_1="테스트수면",
+                    difficulty_level="보통",
+                    stage=1,
+                    title="핵심 데이터만 수동 입력으로 검증",
+                    description="초기에는 수동 입력 기반으로 데이터 가치를 검증한다.",
+                ),
+                MvpStrategyTemplate(
+                    template_id="test_mvp_medium_2",
+                    category_1=None,
+                    difficulty_level="보통",
+                    stage=2,
+                    title="공통 연동 후보 API 검증",
+                    description="사용 빈도가 높은 데이터부터 연동 후보를 검증한다.",
+                ),
+                MvpStrategyTemplate(
+                    template_id="test_mvp_medium_3",
+                    category_1=None,
+                    difficulty_level="보통",
+                    stage=3,
+                    title="공통 자동화 범위 확장",
+                    description="검증된 데이터부터 자동 수집으로 확장한다.",
+                ),
+            ]
+        )
+        await session.commit()
+
+
+async def _delete_report_support_rows() -> None:
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            delete(StandardScale).where(
+                StandardScale.scale_id.in_(["test_scale_isi", "test_scale_sleep_token"])
+            )
+        )
+        await session.execute(
+            delete(MvpStrategyTemplate).where(
+                MvpStrategyTemplate.template_id.in_(
+                    ["test_mvp_medium_1", "test_mvp_medium_2", "test_mvp_medium_3"]
+                )
+            )
+        )
         await session.commit()
 
 
@@ -86,6 +167,32 @@ async def test_data_feasibility_score_takes_max_across_items_not_sum() -> None:
         assert result.result.risk_level == "MEDIUM"
     finally:
         await _delete_session(session_id)
+
+
+@pytest.mark.db
+async def test_data_feasibility_includes_standard_scale_candidates_and_mvp_roadmap() -> None:
+    session_id = await _create_session(category_1="테스트수면")
+    await _seed_report_support_rows()
+    try:
+        request = HealthDataUpsertRequest(
+            health_data_items=[
+                HealthDataItemInput(name="수면 시간", data_type="numeric", source="device_sync"),
+                HealthDataItemInput(name="수면 시간", data_type="numeric", source="user_input"),
+            ]
+        )
+        await create_health_data(session_id, request)
+
+        result = await assess_data_feasibility(FeasibilityRequest(session_id=session_id))
+
+        assert result.result.risk_level == "MEDIUM"
+        candidate_ids = {candidate.scale_id for candidate in result.result.standard_scale_candidates}
+        assert "test_scale_isi" in candidate_ids
+        assert "test_scale_sleep_token" in candidate_ids
+        assert [step.stage for step in result.result.mvp_roadmap] == [1, 2, 3]
+        assert result.result.mvp_roadmap[0].title == "핵심 데이터만 수동 입력으로 검증"
+    finally:
+        await _delete_session(session_id)
+        await _delete_report_support_rows()
 
 
 @pytest.mark.db
