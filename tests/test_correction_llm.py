@@ -32,6 +32,15 @@ async def test_generate_correction_candidates_raises_without_api_key(monkeypatch
 
 async def test_generate_correction_candidates_parses_and_normalizes_article(monkeypatch) -> None:
     monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")
+    service_description = "약 시간표를 짜드려요"
+    cache_key = correction_llm._CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
+    try:
+        # 캐싱 도입(D-16) 이후 이 테스트가 실제 Redis에 쓴 캐시가 재실행 시 남아있으면
+        # AsyncOpenAI 모킹/파싱 로직을 안 타고 캐시값만 반환해 이 테스트의 의미가 없어진다.
+        await redis_client.delete(cache_key)
+    except Exception:
+        pass  # Redis 연결 불가(CI)면 애초에 캐시가 안 걸리니 그냥 진행한다.
+
     payload = json.dumps(
         {
             "candidates": [
@@ -47,8 +56,15 @@ async def test_generate_correction_candidates_parses_and_normalizes_article(monk
             ]
         }
     )
-    with _patched_client(payload):
-        result = await correction_llm.generate_correction_candidates("약 시간표를 짜드려요")
+    try:
+        with _patched_client(payload) as mock_openai_cls:
+            result = await correction_llm.generate_correction_candidates(service_description)
+        mock_openai_cls.assert_called_once()
+    finally:
+        try:
+            await redis_client.delete(cache_key)
+        except Exception:
+            pass
 
     assert result == [
         {
