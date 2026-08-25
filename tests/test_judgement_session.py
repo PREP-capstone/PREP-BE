@@ -57,6 +57,8 @@ async def test_gate_uses_stored_health_data_and_service_actions() -> None:
         assert response.data_type == "생체지표"
         assert response.function_type == "단순기록"
         assert response.verdict == "PASS"
+        assert len(response.reasoning) == 4
+        assert "하드체크 대상이 아닙니다" in response.reasoning[0]
     finally:
         await _delete_session(session_id)
 
@@ -77,6 +79,7 @@ async def test_gate_returns_conditional_for_biomarker_trend_analysis() -> None:
         assert response.data_type == "생체지표"
         assert response.function_type == "비교·추이분석"
         assert response.verdict == "CONDITIONAL"
+        assert "조건부 통과(CONDITIONAL)" in response.reasoning[-1]
     finally:
         await _delete_session(session_id)
 
@@ -102,6 +105,41 @@ async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
         response = await judge_gate(GateRequest(session_id=session_id))
         assert response.verdict == "FAIL"
         assert response.hardcheck_fired is True
+        assert "하드체크로 FAIL 판정" in response.reasoning[-1]
+        assert "침습적 신호가 감지됐습니다" in response.reasoning[2]
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck() -> None:
+    """생체지표+수치예측·진단(수동입력, 기기연동 아님)은 하드체크 없이 매트릭스 조회만으로 FAIL."""
+    session_id = await _create_session(
+        "사용자가 측정한 심박수 수치를 예측해서 알려준다.",
+        [HealthDataItemInput(name="심박수", data_type="numeric", unit="bpm", source="user_input")],
+        service_actions=["predict"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.verdict == "FAIL"
+        assert response.hardcheck_fired is False
+        assert "가장 높은 조합" in response.reasoning[1]
+        assert "매트릭스 기준" in response.reasoning[-1]
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_reasoning_explains_device_sync_without_invasive_signal() -> None:
+    """생체지표+기기연동인데 침습 신호가 없어 하드체크를 피한 경우도 그 이유가 명시돼야 한다."""
+    session_id = await _create_session(
+        "사용자가 측정한 심박수를 기록한다.",
+        [HealthDataItemInput(name="심박수", data_type="numeric", unit="bpm", source="device_sync")],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.verdict == "PASS"
+        assert response.hardcheck_fired is False
+        assert "침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다" in response.reasoning[0]
     finally:
         await _delete_session(session_id)
 
