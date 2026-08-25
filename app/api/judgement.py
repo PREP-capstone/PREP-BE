@@ -28,7 +28,13 @@ from app.db.session import AsyncSessionLocal
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
 from app.domain.scoring import grade_by_threshold
 from app.pipeline.correction_terms import keyword_score
-from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, detect_invasive, is_invasive_hardcheck
+from app.pipeline.gate_matrix_table import (
+    GATE_MATRIX_TABLE,
+    HARDCHECK_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_AVOIDANCE_REDESIGN,
+    detect_invasive,
+    is_invasive_hardcheck,
+)
 from app.schemas.common import ApiResponse, HealthDataItemInput, LegalBasis
 
 router = APIRouter(prefix="/api/v1/judgement", tags=["judgement"])
@@ -119,6 +125,9 @@ class GateResponse(BaseModel):
     invasive_signal: bool
     verdict: str
     hardcheck_fired: bool
+    # GATE FAIL일 때 회피 방향 2가지(D-2, 코드 템플릿 방식). PASS/CONDITIONAL이면 둘 다 None.
+    avoidance_redesign: str | None
+    avoidance_certification: str | None
     reasoning: list[str]
 
 
@@ -246,6 +255,8 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
             invasive_signal=invasive_signal,
             verdict="FAIL",
             hardcheck_fired=True,
+            avoidance_redesign=HARDCHECK_AVOIDANCE_REDESIGN,
+            avoidance_certification=HARDCHECK_AVOIDANCE_CERTIFICATION,
             reasoning=_build_gate_reasoning(
                 data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True, verdict="FAIL"
             ),
@@ -259,6 +270,8 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         invasive_signal=invasive_signal,
         verdict=cell["verdict"],
         hardcheck_fired=False,
+        avoidance_redesign=cell.get("avoidance_redesign"),
+        avoidance_certification=cell.get("avoidance_certification"),
         reasoning=_build_gate_reasoning(
             data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
         ),

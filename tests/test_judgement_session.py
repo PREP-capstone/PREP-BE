@@ -18,6 +18,10 @@ from app.api.analysis_sessions import (
 )
 from app.api.judgement import GateRequest, judge_correction_candidates, judge_gate, judge_regulatory_risk
 from app.db.session import AsyncSessionLocal
+from app.pipeline.gate_matrix_table import (
+    HARDCHECK_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_AVOIDANCE_REDESIGN,
+)
 from app.schemas.common import HealthDataItemInput
 
 pytestmark = pytest.mark.db
@@ -57,6 +61,8 @@ async def test_gate_uses_stored_health_data_and_service_actions() -> None:
         assert response.data_type == "생체지표"
         assert response.function_type == "단순기록"
         assert response.verdict == "PASS"
+        assert response.avoidance_redesign is None
+        assert response.avoidance_certification is None
         assert len(response.reasoning) == 4
         assert "하드체크 대상이 아닙니다" in response.reasoning[0]
     finally:
@@ -79,6 +85,8 @@ async def test_gate_returns_conditional_for_biomarker_trend_analysis() -> None:
         assert response.data_type == "생체지표"
         assert response.function_type == "비교·추이분석"
         assert response.verdict == "CONDITIONAL"
+        assert response.avoidance_redesign is None
+        assert response.avoidance_certification is None
         assert "조건부 통과(CONDITIONAL)" in response.reasoning[-1]
     finally:
         await _delete_session(session_id)
@@ -105,6 +113,9 @@ async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
         response = await judge_gate(GateRequest(session_id=session_id))
         assert response.verdict == "FAIL"
         assert response.hardcheck_fired is True
+        # 하드체크 FAIL은 매트릭스를 안 거치므로 avoidance 문구도 하드체크 전용 상수여야 한다(D-2).
+        assert response.avoidance_redesign == HARDCHECK_AVOIDANCE_REDESIGN
+        assert response.avoidance_certification == HARDCHECK_AVOIDANCE_CERTIFICATION
         assert "하드체크로 FAIL 판정" in response.reasoning[-1]
         assert "침습적 신호가 감지됐습니다" in response.reasoning[2]
     finally:
@@ -112,7 +123,12 @@ async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
 
 
 async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck() -> None:
-    """생체지표+수치예측·진단(수동입력, 기기연동 아님)은 하드체크 없이 매트릭스 조회만으로 FAIL."""
+    """생체지표+수치예측·진단(수동입력, 기기연동 아님)은 하드체크 없이 매트릭스 조회만으로 FAIL.
+
+    device_sync가 아니라 user_input을 써서 하드체크(기기연동 필요)가 아닌 매트릭스 FAIL
+    경로를 타도록 한다 — test_gate_fails_on_invasive_device_sync_hardcheck와 다른 코드 경로.
+    avoidance 문구도 매트릭스 FAIL 경로에서 채워지는지 같이 검증한다.
+    """
     session_id = await _create_session(
         "사용자가 측정한 심박수 수치를 예측해서 알려준다.",
         [HealthDataItemInput(name="심박수", data_type="numeric", unit="bpm", source="user_input")],
@@ -120,8 +136,12 @@ async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck(
     )
     try:
         response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "생체지표"
+        assert response.function_type == "수치예측·진단"
         assert response.verdict == "FAIL"
         assert response.hardcheck_fired is False
+        assert response.avoidance_redesign is not None
+        assert response.avoidance_certification is not None
         assert "가장 높은 조합" in response.reasoning[1]
         assert "매트릭스 기준" in response.reasoning[-1]
     finally:

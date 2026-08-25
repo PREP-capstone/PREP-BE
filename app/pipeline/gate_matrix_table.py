@@ -12,10 +12,29 @@ ACQUIRE_METHOD_ENUM = {"수동입력", "기기연동", "OS연동"}
 # 복수 조합 시 우선순위(FAIL > CONDITIONAL > PASS, db_구축_설계서.md §3.2)
 VERDICT_PRIORITY = {"FAIL": 3, "CONDITIONAL": 2, "PASS": 1}
 
+# D-2 확정(2026-08-25, 코드 템플릿 방식) — verdict=FAIL 셀에만 avoidance_redesign/
+# avoidance_certification을 채운다. PASS/CONDITIONAL 셀은 회피가 필요 없으므로 키 자체를
+# 안 둔다 — 조회 쪽(judgement.py)이 dict.get()으로 없으면 None 처리.
+#
+# 매트릭스 FAIL과 하드체크 FAIL 둘 다 인증 경로 안내 뒷문장이 같아서(§3.2 근거 조문도 동일)
+# _CERTIFICATION_GUIDANCE로 공유한다 — 조문·절차가 바뀔 때 한 곳만 고치면 되도록.
+_CERTIFICATION_GUIDANCE = (
+    "정식 의료기기 인증(허가·인증·신고)이 필요합니다. "
+    "식품의약품안전처 의료기기 인증 절차(의료기기법 제8조)를 확인하세요."
+)
+
 GATE_MATRIX_TABLE: dict[tuple[str, str], dict] = {
     ("생체지표", "단순기록"): {"verdict": "PASS", "exemption_note": None},
     ("생체지표", "비교·추이분석"): {"verdict": "CONDITIONAL", "exemption_note": None},
-    ("생체지표", "수치예측·진단"): {"verdict": "FAIL", "exemption_note": None},
+    ("생체지표", "수치예측·진단"): {
+        "verdict": "FAIL",
+        "exemption_note": None,
+        "avoidance_redesign": (
+            "수치 예측·진단(위험 수치 경고, 이상 여부 판단 등) 기능을 제거하고 측정값을 "
+            "저장·기록하거나 추이만 보여주는 형태로 축소하면 PASS/CONDITIONAL로 전환될 수 있습니다."
+        ),
+        "avoidance_certification": f"예측·진단 기능을 그대로 유지하려면 {_CERTIFICATION_GUIDANCE}",
+    },
     ("라이프스타일", "단순기록"): {"verdict": "PASS", "exemption_note": None},
     ("라이프스타일", "비교·추이분석"): {"verdict": "PASS", "exemption_note": None},
     ("라이프스타일", "수치예측·진단"): {"verdict": "CONDITIONAL", "exemption_note": None},
@@ -32,6 +51,13 @@ GATE_MATRIX_TABLE: dict[tuple[str, str], dict] = {
 # gate_keywords.verdict의 값이고 gate_matrix.verdict는 PASS/CONDITIONAL/FAIL 3종 닫힌 enum이다
 # (§3.2, 2026-07-05 확정). 여기서는 매트릭스 enum을 따라 FAIL을 쓴다 — 팀 확인 필요 항목.
 HARDCHECK_VERDICT = "FAIL"
+
+# 하드체크 FAIL은 매트릭스를 안 거치므로 avoidance 문구도 별도로 둔다(§3.2, D-2 코드 템플릿).
+HARDCHECK_AVOIDANCE_REDESIGN = (
+    "채혈·삽입형 센서처럼 각질층을 관통하는 침습적 측정 방식을 비침습 방식으로 바꾸거나, "
+    "기기연동을 없애고 사용자가 직접 입력하는 방식으로 전환하면 하드체크 대상에서 제외됩니다."
+)
+HARDCHECK_AVOIDANCE_CERTIFICATION = f"침습적 측정 기능을 그대로 유지하려면 {_CERTIFICATION_GUIDANCE}"
 
 # D-1 확정 (2026-08-12) — 판단 기준은 **"각질층을 관통하는가"**.
 # 근거: 지침서-0091-03 고위해도 2번 "피부 뚫어 혈액 채취, 체내 삽입".

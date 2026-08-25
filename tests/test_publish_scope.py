@@ -110,6 +110,7 @@ async def test_stage_b_new_fields_are_persisted(restore_db) -> None:
     assert row.acquire_method == "기기연동"
     assert row.legal_basis_doc == "doc-b"
     assert row.legal_basis_article == "IV.3"
-    # D-2 미확정 — 파이프라인은 아직 avoidance_* 문구를 채우지 않는다
+    # stage_b_draft()가 avoidance_*를 None으로 고정해 만든 fixture라 None인 것 — publish()가
+    # fields의 값을 그대로 저장하는지만 보는 테스트다(D-2 이후 실제 값은 extract_b.py가 채움).
     assert row.avoidance_redesign is None
     assert row.avoidance_certification is None
