@@ -1,10 +1,12 @@
 """app/domain/correction_llm.py 단위 테스트 — DB/네트워크 불필요. 이슈 #58."""
 
+import hashlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.redis_client import redis_client
 from app.domain import correction_llm
 
 
@@ -70,3 +72,35 @@ async def test_generate_correction_candidates_raises_on_missing_expected_key(mon
     with _patched_client(json.dumps({"unexpected_key": []})):
         with pytest.raises(correction_llm.LLMUnavailable):
             await correction_llm.generate_correction_candidates("아무 문장")
+
+
+async def test_generate_correction_candidates_uses_cache_on_second_call(monkeypatch) -> None:
+    """같은 service_description을 두 번 호출하면 두 번째는 캐시를 써서 OpenAI를 다시 안 부른다(D-16)."""
+    monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")
+    service_description = "마음 상태를 짚어드리고 조언해드려요"
+    cache_key = correction_llm._CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
+    await redis_client.delete(cache_key)  # 이전 테스트 실행에서 남은 캐시가 있으면 지운다.
+
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "risky_text": "마음 상태를 짚어드려요",
+                    "safe_text": "기분 변화를 기록해드려요",
+                    "legal_basis": {"document_id": "kr-medical-act-20260407", "article": "제5조"},
+                }
+            ]
+        }
+    )
+    try:
+        with _patched_client(payload) as mock_openai_cls_first:
+            first = await correction_llm.generate_correction_candidates(service_description)
+        mock_openai_cls_first.assert_called_once()
+
+        with _patched_client(payload) as mock_openai_cls_second:
+            second = await correction_llm.generate_correction_candidates(service_description)
+        mock_openai_cls_second.assert_not_called()
+
+        assert first == second
+    finally:
+        await redis_client.delete(cache_key)
