@@ -261,6 +261,7 @@ async def test_correction_candidates_matches_stored_service_description() -> Non
     try:
         response = await judge_correction_candidates(GateRequest(session_id=session_id))
         assert any(c.risky_text == "복약지도" for c in response.candidates)
+        assert all(c.match_source == "rule" for c in response.candidates)
     finally:
         await _delete_session(session_id)
 
@@ -325,6 +326,7 @@ async def test_correction_candidates_calls_llm_fallback_when_no_rule_based_match
         assert candidate.risky_text == "약 시간표를 짜드려요"
         assert candidate.safe_text == "복약 알림을 보내드려요"
         assert candidate.exact_phrase_match is False
+        assert candidate.match_source == "llm"
         assert candidate.legal_basis.document_id == "kr-pharmaceutical-affairs-act-20260621"
     finally:
         await _delete_session(session_id)

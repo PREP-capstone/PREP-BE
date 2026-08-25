@@ -7,6 +7,7 @@ data_type(라이프스타일/생체지표)과는 이름만 같고 뜻이 다르�
 
 import asyncio
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -355,6 +356,9 @@ class CorrectionMatch(BaseModel):
     advertising_score: int
     legal_basis: LegalBasis
     exact_phrase_match: bool
+    # 규칙 기반(correction_rules) 매칭인지 LLM①(이슈 #58) 폴백 추정인지 (D-15). exact_phrase_match와
+    # 달리 keyword_hit으로 매칭된 정상 규칙 기반 항목도 포함해 "규칙 vs LLM"을 명확히 구분한다.
+    match_source: Literal["rule", "llm"]
 
 
 async def _match_gate_keywords(service_description: str, rule_version_ids: list[uuid.UUID]) -> list[GateKeyword]:
@@ -422,6 +426,7 @@ async def _match_correction_rules(
             advertising_score=row.advertising_score,
             legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
             exact_phrase_match=bool(phrase_hit),
+            match_source="rule",
         )
     result = list(matched.values())
     await _fill_quotes(result)
@@ -471,6 +476,7 @@ async def _match_correction_rules_with_llm_fallback(
                     document_id=item["legal_basis"]["document_id"], article=item["legal_basis"]["article"]
                 ),
                 exact_phrase_match=False,
+                match_source="llm",
             )
             for item in deduped.values()
         ]
@@ -586,6 +592,7 @@ class CorrectionCandidate(BaseModel):
     safe_text: str
     legal_basis: LegalBasis
     exact_phrase_match: bool
+    match_source: Literal["rule", "llm"]
 
 
 class CorrectionCandidatesResponse(BaseModel):
@@ -615,6 +622,7 @@ async def judge_correction_candidates(request: GateRequest) -> CorrectionCandida
                 safe_text=m.safe_text,
                 legal_basis=m.legal_basis,
                 exact_phrase_match=m.exact_phrase_match,
+                match_source=m.match_source,
             )
             for m in matches
         ]
