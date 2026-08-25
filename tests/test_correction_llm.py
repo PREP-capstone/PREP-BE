@@ -79,7 +79,13 @@ async def test_generate_correction_candidates_uses_cache_on_second_call(monkeypa
     monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")
     service_description = "마음 상태를 짚어드리고 조언해드려요"
     cache_key = correction_llm._CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
-    await redis_client.delete(cache_key)  # 이전 테스트 실행에서 남은 캐시가 있으면 지운다.
+    try:
+        # 이전 테스트 실행에서 남은 캐시가 있으면 지운다 — Redis가 없는 환경(CI)에서는
+        # 이 캐싱 자체가 무의미하니 테스트를 건너뛴다(production 코드는 이미 try/except로
+        # Redis 장애를 흡수하지만, 이 테스트는 캐시 동작 자체를 검증하는 게 목적이라 다르다).
+        await redis_client.delete(cache_key)
+    except Exception:
+        pytest.skip("Redis에 연결할 수 없어 캐시 동작을 검증할 수 없습니다.")
 
     payload = json.dumps(
         {
