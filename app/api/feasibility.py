@@ -257,28 +257,33 @@ async def _find_mvp_roadmap(
 ) -> list[MvpRoadmapStep]:
     difficulty_level = _difficulty_level_for_risk(risk_level)
 
-    category_rows: list[MvpStrategyTemplate] = []
+    category_by_stage: dict[int, MvpStrategyTemplate] = {}
     if category_1:
         category_rows = (
             await session.execute(
                 select(MvpStrategyTemplate)
                 .where(MvpStrategyTemplate.difficulty_level == difficulty_level)
                 .where(MvpStrategyTemplate.category_1 == category_1)
-                .order_by(MvpStrategyTemplate.stage)
+                .order_by(MvpStrategyTemplate.stage, MvpStrategyTemplate.template_id)
             )
         ).scalars().all()
+        category_by_stage = {row.stage: row for row in category_rows}
 
-    rows = category_rows
-    if not rows:
-        rows = (
-            await session.execute(
-                select(MvpStrategyTemplate)
-                .where(MvpStrategyTemplate.difficulty_level == difficulty_level)
-                .where(MvpStrategyTemplate.category_1.is_(None))
-                .order_by(MvpStrategyTemplate.stage)
-            )
-        ).scalars().all()
+    common_rows = (
+        await session.execute(
+            select(MvpStrategyTemplate)
+            .where(MvpStrategyTemplate.difficulty_level == difficulty_level)
+            .where(MvpStrategyTemplate.category_1.is_(None))
+            .order_by(MvpStrategyTemplate.stage, MvpStrategyTemplate.template_id)
+        )
+    ).scalars().all()
+    common_by_stage = {row.stage: row for row in common_rows}
 
+    rows = [
+        row
+        for stage in sorted(set(category_by_stage) | set(common_by_stage))
+        if (row := category_by_stage.get(stage) or common_by_stage.get(stage)) is not None
+    ]
     return [
         MvpRoadmapStep(stage=row.stage, title=row.title, description=row.description)
         for row in rows
