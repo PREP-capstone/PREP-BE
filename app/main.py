@@ -26,11 +26,14 @@ app = FastAPI(
     title="PREP API",
     lifespan=lifespan,
 )
-# 인증이 없는 API(토큰/쿠키 미사용)라 credentials 위험 없이 전체 허용 — 프론트 배포
-# 도메인이 정해지면 그때 allow_origins를 좁힌다.
+# 로컬 개발 서버는 포트를 아직 몰라서 정규식으로 허용한다(localhost/127.0.0.1 전 포트).
+# TODO: 프론트 배포 도메인 확정되면 allow_origins에 실제 값 채우기(예: "https://실제도메인").
+# 인증이 없는 API라 allow_credentials는 안 씀 — 그래서 "*"도 기술적으론 가능하지만,
+# 구체적 origin으로 좁혀두는 게 더 안전하다.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_methods=["*"],
     allow_headers=["*"],
 )
