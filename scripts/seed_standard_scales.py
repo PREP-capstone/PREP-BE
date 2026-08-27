@@ -85,7 +85,7 @@ STANDARD_SCALES = [
         "scale_id": "scale_eq_5d_5l",
         "name": "EQ-5D-5L",
         "full_name": "EuroQol 5-Dimension 5-Level",
-        "category_1": "만성질환관리",
+        "category_1": "만성질환",
         "item_count": 5,
         "scoring_range": "5 dimensions + VAS",
         "license_type": "라이선스 확인 필요",
