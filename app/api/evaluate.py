@@ -312,7 +312,7 @@ def _build_report_context(
         lines.append(f"데이터 확보 가능성: {data_feasibility.risk_level}")
     if market_feasibility is not None:
         lines.append(
-            f"시장 현실성: {market_feasibility.market_realism_grade}"
+            f"시장 현실성: {market_feasibility.market_realism_grade or '미확인'}"
             f"(경쟁사 {market_feasibility.competitor_count}개, 국내수요 {market_feasibility.domestic_demand or '미확인'})"
         )
     if business_model is not None and business_model.recommendations:
@@ -327,7 +327,28 @@ def _build_report_context(
     return "\n".join(lines)
 
 
+# report_llm.py의 _REQUEST_TIMEOUT_SECONDS(개별 OpenAI 호출 타임아웃, D-16, 15.0초)보다
+# 반드시 커야 한다 — 이 값이 더 작거나 같으면 스테이지 wait_for가 개별 호출 타임아웃보다
+# 먼저 끊겨 클라이언트 타임아웃이 무의미해진다(코드 리뷰로 지적, 2026-08-26).
 _AI_STAGE_TIMEOUT_SECONDS = 20.0
+
+
+async def _or_none(coro):
+    """LLMUnavailable(키 없음·호출 실패)이면 None — LLM④⑤ 공통 폴백 규칙."""
+    try:
+        return await coro
+    except LLMUnavailable:
+        return None
+
+
+async def _with_stage_timeout(coros: list, fallback: tuple):
+    """§12 1·2단계 공용 — 스테이지 전체에 상한을 둬서(D-16 논의, 2026-08-25) 개별
+    호출이 오래 걸려도 /evaluate가 무한정 늘어지지 않게 한다. 시간 초과면 fallback을
+    그대로 반환 — 이미 각 결과가 nullable이라 기존 폴백 패턴과 동일하다."""
+    try:
+        return await asyncio.wait_for(asyncio.gather(*coros), timeout=_AI_STAGE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return fallback
 
 
 async def _run_llm_stage1(
@@ -335,43 +356,23 @@ async def _run_llm_stage1(
     market_feasibility: MarketFeasibilityResult | None,
     business_model: BusinessModelResult | None,
 ) -> tuple[str | None, list[BmCardSummary]]:
-    """LLM②③ 병렬 — §12 1단계. 스테이지 전체에 상한을 둬서(D-16, 코드 리뷰 논의
-    2026-08-25) 개별 호출이 오래 걸려도 /evaluate가 무한정 늘어지지 않게 한다.
-    시간 초과면 둘 다 None/빈 값 — 이미 nullable이라 기존 폴백 패턴 그대로 이어진다."""
-    try:
-        return await asyncio.wait_for(
-            asyncio.gather(
-                _find_differentiation_point(service_description, market_feasibility),
-                _build_bm_card_summaries(service_description, business_model),
-            ),
-            timeout=_AI_STAGE_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        return None, []
+    """LLM②③ 병렬 — §12 1단계."""
+    return await _with_stage_timeout(
+        [
+            _find_differentiation_point(service_description, market_feasibility),
+            _build_bm_card_summaries(service_description, business_model),
+        ],
+        (None, []),
+    )
 
 
 async def _run_llm_stage2(report_context: str) -> tuple[str | None, str | None]:
     """LLM④⑤ 병렬 — §12 2단계(1단계 뒤에 순차로 오되, ④⑤끼리는 병렬 —
-    "총 지연 = max(①②③) + max(④⑤)"). 마찬가지로 스테이지 전체에 상한을 둔다."""
-
-    async def _summary() -> str | None:
-        try:
-            return await generate_overall_summary(report_context)
-        except LLMUnavailable:
-            return None
-
-    async def _one_liner() -> str | None:
-        try:
-            return await generate_one_liner(report_context)
-        except LLMUnavailable:
-            return None
-
-    try:
-        return await asyncio.wait_for(
-            asyncio.gather(_summary(), _one_liner()), timeout=_AI_STAGE_TIMEOUT_SECONDS
-        )
-    except asyncio.TimeoutError:
-        return None, None
+    "총 지연 = max(①②③) + max(④⑤)")."""
+    return await _with_stage_timeout(
+        [_or_none(generate_overall_summary(report_context)), _or_none(generate_one_liner(report_context))],
+        (None, None),
+    )
 
 
 async def _find_next_actions(gate: GateResponse, regulatory_risk: RegulatoryRiskResponse) -> list[NextAction]:
@@ -503,8 +504,7 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
         )
         differentiation_point, bm_card_summaries = stage1_result
 
-    # §11 종합 신호등 — GATE FAIL이면 data_feasibility/market_feasibility/business_model이
-    # 전부 None이라 초록 조건이 성립 불가능해서 별도 분기 없이도 §11.2와 같은 결과가 나온다.
+    # §11 종합 신호등 — GATE FAIL 분기 처리는 _compute_overall_signal docstring 참고.
     overall_signal = _compute_overall_signal(
         gate, regulatory_risk, data_feasibility, market_feasibility, business_model
     )

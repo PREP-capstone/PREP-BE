@@ -80,10 +80,12 @@ async def generate_differentiation_point(service_description: str, competitor_ca
         )
         parsed = json.loads(response.choices[0].message.content)
         return parsed["differentiation_point"]
-    except (openai.OpenAIError, json.JSONDecodeError, KeyError, IndexError, AttributeError) as error:
+    except (openai.OpenAIError, json.JSONDecodeError, TypeError, KeyError, IndexError, AttributeError) as error:
         # 레이트리밋·타임아웃·malformed JSON 등 실제 호출 실패도 LLMUnavailable로 통일한다 —
         # 이게 없으면 evaluate.py의 except LLMUnavailable을 뚫고 올라가 /evaluate 전체가
-        # 500으로 죽는다(코드 리뷰로 확인된 실제 버그, 2026-08-25).
+        # 500으로 죽는다(코드 리뷰로 확인된 실제 버그, 2026-08-25). content-filter 거부 시
+        # message.content가 None이 되어 json.loads(None)이 TypeError를 던지는 경우도
+        # 포함한다(코드 리뷰로 확인, 2026-08-26).
         raise LLMUnavailable(f"차별화 포인트 생성 실패: {error}") from error
 
 
@@ -149,7 +151,7 @@ async def generate_bm_card_strengths(service_description: str, recommendations: 
         )
         parsed = json.loads(response.choices[0].message.content)
         return {card["bm_pattern"]: card["strength"] for card in parsed["cards"]}
-    except (openai.OpenAIError, json.JSONDecodeError, KeyError, IndexError, AttributeError) as error:
+    except (openai.OpenAIError, json.JSONDecodeError, TypeError, KeyError, IndexError, AttributeError) as error:
         raise LLMUnavailable(f"BM 카드 강점 생성 실패: {error}") from error
 
 
@@ -197,7 +199,9 @@ async def generate_overall_summary(report_context: str) -> str:
         )
         parsed = json.loads(response.choices[0].message.content)
         return parsed["overall_summary"]
-    except (openai.OpenAIError, json.JSONDecodeError, KeyError, IndexError, AttributeError) as error:
+    except (openai.OpenAIError, json.JSONDecodeError, TypeError, KeyError, IndexError, AttributeError) as error:
+        # content-filter 거부 등으로 message.content가 None이면 json.loads(None)이
+        # TypeError를 던진다 — 코드 리뷰로 확인(2026-08-26), 빠지면 /evaluate 전체가 500.
         raise LLMUnavailable(f"종합 요약 생성 실패: {error}") from error
 
 
@@ -239,5 +243,5 @@ async def generate_one_liner(report_context: str) -> str:
         )
         parsed = json.loads(response.choices[0].message.content)
         return parsed["one_liner"]
-    except (openai.OpenAIError, json.JSONDecodeError, KeyError, IndexError, AttributeError) as error:
+    except (openai.OpenAIError, json.JSONDecodeError, TypeError, KeyError, IndexError, AttributeError) as error:
         raise LLMUnavailable(f"한 줄 총평 생성 실패: {error}") from error
