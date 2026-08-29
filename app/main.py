@@ -11,6 +11,7 @@ from app.api.evaluate import router as evaluate_router
 from app.api.feasibility import router as feasibility_router
 from app.api.judgement import router as judgement_router
 from app.api.rag import router as rag_router
+from app.core.config import settings
 from app.core.redis_client import redis_client
 from app.db.session import engine
 
@@ -26,13 +27,12 @@ app = FastAPI(
     title="PREP API",
     lifespan=lifespan,
 )
-# 프로덕션 프론트 도메인은 명시 허용, 로컬 개발 서버는 포트를 아직 몰라서 정규식으로
-# 허용한다(localhost/127.0.0.1 전 포트). 인증이 없는 API라 allow_credentials는 안 씀 —
-# 그래서 "*"도 기술적으론 가능하지만, 구체적 origin으로 좁혀두는 게 더 안전하다.
+# 프로덕션 FE 도메인은 환경변수로 관리한다. 인증이 없는 MVP API라
+# allow_credentials는 쓰지 않고, 기본값은 prepwell.shop + prep-fe.vercel.app + 로컬 개발 서버다.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://prepwell.shop"],
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+    allow_origins=settings.cors_allowed_origins,
+    allow_origin_regex=settings.cors_allow_origin_regex or None,
     allow_methods=["*"],
     allow_headers=["*"],
 )
