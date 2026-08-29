@@ -29,6 +29,31 @@ jobs:
           printf '%s' "$ENV_PRODUCTION" > .env.production
           scp .env.production "$EC2_USER@$EC2_HOST:$EC2_APP_DIR/.env.production"
 
+      - name: Download category model release (있으면)
+        id: model
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p model_artifact
+          if gh release download \
+            --repo PREP-capstone/PREP-AI \
+            --pattern "best_healthcare_model_onnx.zip" \
+            --dir model_artifact; then
+            unzip -o model_artifact/best_healthcare_model_onnx.zip -d model_artifact
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::PREP-AI에 아직 카테고리 모델 release가 없습니다 — 모델 배포를 건너뜁니다."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload category model to EC2
+        if: steps.model.outputs.found == 'true'
+        run: |
+          ssh "$EC2_USER@$EC2_HOST" "mkdir -p '$EC2_APP_DIR/data/models'"
+          rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" \
+            model_artifact/category_classifier_onnx/ \
+            "$EC2_USER@$EC2_HOST:$EC2_APP_DIR/data/models/category_classifier_onnx/"
+
       - name: Deploy application
         run: |
           ssh "$EC2_USER@$EC2_HOST" "

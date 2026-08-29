@@ -14,6 +14,9 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - prep_chroma_data:/app/data/chroma
+      # 카테고리 분류 모델(ONNX) — 이미지에 안 구움(.dockerignore로 제외), 배포 시
+      # deploy.yml이 PREP-AI release에서 받아 EC2의 이 경로에 미리 배치해둔다.
+      - ./data/models:/app/data/models:ro
     depends_on:
       redis:
         condition: service_healthy
