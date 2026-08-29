@@ -44,6 +44,29 @@ async def test_predict_returns_503_when_model_directory_missing(monkeypatch) -> 
         category_classifier._load.cache_clear()
 
 
+def test_validate_label_config_accepts_matching_labels(tmp_path) -> None:
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        '{"category_1_labels": ["수면", "정신건강", "운동", "식단", "만성질환", "여성건강", "유전자", "미용"], '
+        '"category_2_labels": ["정보제공", "데이터기록관리", "매칭연결", "개입치료"]}',
+        encoding="utf-8",
+    )
+
+    category_classifier._validate_label_config(str(tmp_path))
+
+
+def test_validate_label_config_rejects_mismatched_labels(tmp_path) -> None:
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text(
+        '{"category_1_labels": ["만성질환", "수면"], '
+        '"category_2_labels": ["정보제공", "데이터기록관리", "매칭연결", "개입치료"]}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CategoryModelUnavailable):
+        category_classifier._validate_label_config(str(tmp_path))
+
+
 @pytest.mark.ml_model
 def test_predict_categories_returns_valid_labels_with_confidence() -> None:
     # 실측 정확도(Avg Macro F1 0.6775, 2026-08-23 기준 계속 학습 중)가 아직 높지

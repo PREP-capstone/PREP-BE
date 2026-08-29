@@ -28,7 +28,9 @@ WordPiece). PREP-AI release 패키징 시 이 필드를 `BertTokenizerFast`로 �
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from pathlib import Path
 
 from app.core.config import settings
 
@@ -63,6 +65,17 @@ class CategoryModelUnavailable(Exception):
     이 API 호출 시점에만 503으로 알린다."""
 
 
+def _validate_label_config(model_dir: str) -> None:
+    labels_path = Path(model_dir) / "labels.json"
+    try:
+        labels = json.loads(labels_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CategoryModelUnavailable(f"카테고리 라벨 설정을 읽을 수 없습니다: {labels_path}") from error
+
+    if labels.get("category_1_labels") != CATEGORY_1_LABELS or labels.get("category_2_labels") != CATEGORY_2_LABELS:
+        raise CategoryModelUnavailable(f"카테고리 라벨 설정이 코드와 일치하지 않습니다: {labels_path}")
+
+
 @lru_cache(maxsize=1)
 def _load():
     try:
@@ -73,6 +86,7 @@ def _load():
 
     model_dir = settings.category_model_dir
     model_path = f"{model_dir}/{settings.category_model_file}"
+    _validate_label_config(model_dir)
     try:
         tokenizer = BertTokenizerFast.from_pretrained(model_dir)
         session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
