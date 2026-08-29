@@ -35,3 +35,9 @@ def test_cors_allows_configured_production_origin():
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://prepwell.shop"
+
+
+def test_cors_rejects_other_vercel_origin():
+    response = _preflight("https://unknown-preview.vercel.app")
+
+    assert "access-control-allow-origin" not in response.headers

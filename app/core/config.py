@@ -15,10 +15,8 @@ class Settings(BaseSettings):
     rag_retrieval_top_k: int = 5
     chroma_persist_directory: str = "data/chroma"
     chroma_collection_name: str = "evidence_chunks"
-    cors_allow_origins: str = "https://prepwell.shop"
-    cors_allow_origin_regex: str = (
-        r"https://.*\.vercel\.app|http://(localhost|127\.0\.0\.1):[0-9]+"
-    )
+    cors_allow_origins: str = "https://prepwell.shop,https://prep-fe.vercel.app"
+    cors_allow_origin_regex: str = r"http://(localhost|127\.0\.0\.1):[0-9]+"
     # 2026-08-29 ONNX Runtime 백엔드로 교체 — app/domain/category_classifier.py 참고.
     # category_model_dir는 PREP-AI release(category_classifier_onnx/) 압축 해제 경로.
     category_model_dir: str = "data/models/category_classifier_onnx"
