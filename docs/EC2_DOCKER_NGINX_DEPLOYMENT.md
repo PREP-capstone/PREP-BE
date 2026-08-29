@@ -267,3 +267,81 @@ docker volume ls | grep prep_chroma
 - Chroma는 RDS가 아니라 Docker volume에 저장된다.
 - EC2를 삭제하면 volume도 같이 사라질 수 있으므로 필요하면 snapshot/backup 정책을 별도로 잡는다.
 - FastAPI 컨테이너를 여러 개로 scale-out하기 전에는 Chroma server 전환을 먼저 검토한다.
+
+## 9. 카테고리 ONNX 모델 배치
+
+`POST /api/v1/category-classifier/predict`는 PREP-AI에서 생성한 ONNX 모델을 로드한다.
+모델 파일은 Git에 커밋하지 않고, EC2의 애플리케이션 디렉터리 아래에 별도로 배치한다.
+
+EC2 실제 경로:
+
+```text
+/home/ubuntu/PREP-BE/data/models/category_classifier_onnx/
+```
+
+컨테이너 내부 경로:
+
+```text
+/app/data/models/category_classifier_onnx/
+```
+
+필요 파일:
+
+```text
+category_classifier_onnx/
+├── model_quantized.onnx
+├── tokenizer.json
+├── tokenizer_config.json
+├── labels.json
+└── model_meta.json
+```
+
+`labels.json`은 BE 코드의 라벨 순서와 일치해야 한다. 일치하지 않으면
+`CATEGORY_MODEL_UNAVAILABLE`로 503을 반환한다.
+
+```json
+{
+  "category_1_labels": ["수면", "정신건강", "운동", "식단", "만성질환", "여성건강", "유전자", "미용"],
+  "category_2_labels": ["정보제공", "데이터기록관리", "매칭연결", "개입치료"]
+}
+```
+
+`compose.prod.yml`은 EC2의 모델 디렉터리를 컨테이너에 읽기 전용으로 마운트한다.
+
+```yaml
+volumes:
+  - prep_chroma_data:/app/data/chroma
+  - ./data/models:/app/data/models:ro
+```
+
+`.env.production`에는 컨테이너 내부 경로를 지정한다.
+
+```env
+CATEGORY_MODEL_DIR=/app/data/models/category_classifier_onnx
+CATEGORY_MODEL_FILE=model_quantized.onnx
+CATEGORY_MODEL_BACKEND=onnx
+```
+
+수동 배치 예시:
+
+```bash
+mkdir -p /home/ubuntu/PREP-BE/data/models
+unzip best_healthcare_model_onnx.zip -d /home/ubuntu/PREP-BE/data/models
+docker compose -p prep-be -f compose.prod.yml restart api
+```
+
+배치 확인:
+
+```bash
+docker compose -p prep-be -f compose.prod.yml exec -T api \
+  ls -la /app/data/models/category_classifier_onnx
+```
+
+API 확인:
+
+```bash
+curl -X POST https://api.prepwell.shop/api/v1/category-classifier/predict \
+  -H "Content-Type: application/json" \
+  -d '{"service_description":"사용자의 혈당 수치를 기록하고 변화 추이를 보여주는 건강관리 앱"}'
+```
+
