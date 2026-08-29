@@ -45,15 +45,18 @@ POST /api/v1/rag/search
 ## 카테고리 분류 모델 (STEP 1)
 
 `category_1`(8종)·`category_2`(4종) 동시 추론(`POST /api/v1/category-classifier/predict`)은
-klue/roberta-base 인코더 + 헤드 2개(category_head/function_head)로 구성된 커스텀
-멀티태스크 체크포인트(`best_healthcare_model_2line`, Avg Macro F1 0.6775 — 축1
-0.7033/축2 0.6518, 2026-08-23 기준, 계속 학습 중)를 로컬에서 로드한다. 체크포인트는
-git에 없다(`data/models/`는 `.gitignore`) — 배치 후 `CATEGORY_MODEL_DIR`(기본값
-`data/models/best_healthcare_model_2line`)이 그 경로를 가리키게 한다.
+[PREP-AI](https://github.com/PREP-capstone/PREP-AI) 저장소가 만든 ONNX(int8 양자화)
+모델을 ONNX Runtime으로 로컬에서 로드한다(2026-08-29 PyTorch 직접 로드 방식에서
+교체). 모델 원본은 klue/roberta-base 인코더 + 헤드 2개(category_head/function_head)
+멀티태스크 체크포인트다. 모델 파일은 git에 없다(`data/models/`는 `.gitignore`) —
+[PREP-AI Releases](https://github.com/PREP-capstone/PREP-AI/releases)에서
+`best_healthcare_model_onnx.zip`을 받아 풀어두고, `CATEGORY_MODEL_DIR`(기본값
+`data/models/category_classifier_onnx`)이 그 경로를 가리키게 한다.
 
 ```bash
 mkdir -p data/models
-unzip best_healthcare_model_2line.zip -d data/models
+gh release download --repo PREP-capstone/PREP-AI --pattern "best_healthcare_model_onnx.zip" -O - \
+  | bsdtar -xf - -C data/models
 .venv/bin/pip install -r requirements.txt
 ```
 
@@ -63,9 +66,11 @@ unzip best_healthcare_model_2line.zip -d data/models
 `pytest -m "not ml_model"`.
 
 ⚠️ 이 모델을 다른 곳에서도 로드할 계획이면 `app/domain/category_classifier.py`
-모듈 docstring의 두 함정(AutoTokenizer 대신 BertTokenizerFast, pooler_output
-대신 last_hidden_state[:,0])을 꼭 참고할 것 — 둘 다 겉보기엔 에러 없이
-돌아가면서 예측만 조용히 틀어진다.
+모듈 docstring의 함정(AutoTokenizer 대신 BertTokenizerFast)을 꼭 참고할 것 —
+겉보기엔 에러 없이 돌아가면서 예측만 조용히 틀어진다.
+
+운영 배포 시 이 모델 파일이 EC2/컨테이너까지 자동으로 배치되는 흐름은
+`docs/EC2_DOCKER_NGINX_DEPLOYMENT.md` §9 참고.
 
 ## 국내 수요(검색 트렌드) 연동
 

@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     rag_retrieval_top_k: int = 5
     chroma_persist_directory: str = "data/chroma"
     chroma_collection_name: str = "evidence_chunks"
-    category_model_dir: str = "data/models/best_healthcare_model_2line"
+    # 2026-08-29 ONNX Runtime 백엔드로 교체 — app/domain/category_classifier.py 참고.
+    # category_model_dir는 PREP-AI release(category_classifier_onnx/) 압축 해제 경로.
+    category_model_dir: str = "data/models/category_classifier_onnx"
+    category_model_file: str = "model_quantized.onnx"
+    category_model_backend: str = "onnx"
     naver_client_id: str = ""
     naver_client_secret: str = ""
 
