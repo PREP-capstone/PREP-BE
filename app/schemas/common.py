@@ -49,4 +49,5 @@ class LegalBasis(BaseModel):
 
     document_id: str
     article: str
+    title: str | None = None  # DOCUMENT_TITLES(app/domain/legal_documents.py) 매핑에 없으면 None
     quote: str | None = None
