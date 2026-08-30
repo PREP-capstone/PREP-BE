@@ -101,10 +101,20 @@ def _precedent_service_names(competitor_refs: list[str], competitor_names: dict[
     return names
 
 
-def _bm_description(pattern: str | None) -> str | None:
+def _normalize_bm_pattern(pattern: str | None) -> str | None:
     if pattern is None:
         return None
-    return _BM_DESCRIPTIONS.get(pattern)
+    normalized = pattern.strip()
+    for separator in ("(", "[", " / ", " - "):
+        normalized = normalized.split(separator, 1)[0].strip()
+    return normalized or None
+
+
+def _bm_description(pattern: str | None) -> str | None:
+    normalized = _normalize_bm_pattern(pattern)
+    if normalized is None:
+        return None
+    return _BM_DESCRIPTIONS.get(normalized)
 
 
 def _not_found_response() -> JSONResponse:
