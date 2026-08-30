@@ -11,11 +11,11 @@ from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
-from app.domain.market_lookup import CategoryKeys, MatchLevel, relaxation_stages
+from app.domain.market_lookup import CategoryKeys, MatchLevel, describe_match_level, relaxation_stages
 from app.domain.scoring import grade_by_threshold
 from app.domain.trend_client import assess_domestic_demand
 from app.db.models import (
@@ -436,11 +436,13 @@ class CompetitorCard(BaseModel):
 
 
 class MarketFeasibilityResult(BaseModel):
-    match_level: MatchLevel
-    competitor_count: int
+    match_level: MatchLevel = Field(exclude=True)
+    match_scope_description: str
+    competitor_count: int = Field(exclude=True)
     saturation: Saturation | None
     market_realism_grade: MarketRealismGrade | None
     platform_competitor_exists: bool
+    platform_competitor_summary: str
     payment_precedent: str | None
     competitor_cards: list[CompetitorCard]
     # 판단근거① 국내 수요 — Naver 키 없음/호출 실패/임계값 미시딩이면 None
@@ -451,6 +453,12 @@ class MarketFeasibilityResult(BaseModel):
 
 class MarketFeasibilityResponse(ApiResponse):
     result: MarketFeasibilityResult
+
+
+def _platform_competitor_summary(platform_exists: bool) -> str:
+    if platform_exists:
+        return "유사 범위 안에 플랫폼급 경쟁사가 있어 차별화 근거를 더 강하게 제시해야 합니다."
+    return "유사 범위 안에 플랫폼급 경쟁사는 확인되지 않았습니다."
 
 
 def _saturation_for_count(count: int, platform_exists: bool) -> Saturation:
@@ -530,10 +538,12 @@ async def assess_market_feasibility(
             message="유사 경쟁사 데이터가 부족해 시장 현실성을 판단할 수 없습니다.",
             result=MarketFeasibilityResult(
                 match_level=match_level,
+                match_scope_description=describe_match_level(match_level),
                 competitor_count=0,
                 saturation=None,
                 market_realism_grade=None,
                 platform_competitor_exists=False,
+                platform_competitor_summary=_platform_competitor_summary(False),
                 payment_precedent=payment_precedent,
                 competitor_cards=[],
                 domestic_demand=domestic_demand,
@@ -550,10 +560,12 @@ async def assess_market_feasibility(
         message="시장 현실성 판단이 완료되었습니다.",
         result=MarketFeasibilityResult(
             match_level=match_level,
+            match_scope_description=describe_match_level(match_level),
             competitor_count=competitor_count,
             saturation=saturation,
             market_realism_grade=_SATURATION_TO_GRADE[saturation],
             platform_competitor_exists=platform_exists,
+            platform_competitor_summary=_platform_competitor_summary(platform_exists),
             payment_precedent=payment_precedent,
             competitor_cards=[
                 CompetitorCard(

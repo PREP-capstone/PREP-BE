@@ -9,7 +9,9 @@ from sqlalchemy import delete
 from app.api.analysis_sessions import AnalysisSession, CreateAnalysisSessionRequest, create_analysis_session
 from app.api.feasibility import (
     MarketFeasibilityRequest,
+    MarketFeasibilityResult,
     _badge_for_tier,
+    _platform_competitor_summary,
     _saturation_for_count,
     assess_market_feasibility,
 )
@@ -69,3 +71,30 @@ async def test_market_feasibility_is_insufficient_data_without_category_axes() -
         assert response.result.competitor_cards == []
     finally:
         await _delete_session(session_id)
+
+
+def test_platform_competitor_summary() -> None:
+    assert _platform_competitor_summary(True) == "유사 범위 안에 플랫폼급 경쟁사가 있어 차별화 근거를 더 강하게 제시해야 합니다."
+    assert _platform_competitor_summary(False) == "유사 범위 안에 플랫폼급 경쟁사는 확인되지 않았습니다."
+
+
+def test_market_result_hides_internal_count_and_match_label_from_json() -> None:
+    result = MarketFeasibilityResult(
+        match_level="exact_match",
+        match_scope_description="설명",
+        competitor_count=5,
+        saturation="Saturated",
+        market_realism_grade="낮음",
+        platform_competitor_exists=True,
+        platform_competitor_summary="플랫폼급 경쟁사 존재",
+        payment_precedent="많음",
+        competitor_cards=[],
+        domestic_demand=None,
+    )
+
+    payload = result.model_dump()
+
+    assert "match_level" not in payload
+    assert "competitor_count" not in payload
+    assert payload["match_scope_description"] == "설명"
+    assert payload["platform_competitor_summary"] == "플랫폼급 경쟁사 존재"

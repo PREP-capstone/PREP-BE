@@ -160,8 +160,9 @@ async def _find_differentiation_point(
 
 class BmCardSummary(BaseModel):
     bm_pattern: str | None
-    frequency_score: int | None
     precedent_level: str | None
+    precedent_services: list[str]
+    bm_description: str | None
     price: str | None
     strength: str | None
 
@@ -223,8 +224,9 @@ async def _build_bm_card_summaries(
         summaries.append(
             BmCardSummary(
                 bm_pattern=rec.bm_pattern,
-                frequency_score=rec.frequency_score,
                 precedent_level=rec.precedent_level,
+                precedent_services=rec.precedent_services,
+                bm_description=rec.bm_description,
                 price=price,
                 strength=strengths.get(rec.bm_pattern) if rec.bm_pattern else None,
             )
@@ -317,14 +319,19 @@ def _build_report_context(
     if market_feasibility is not None:
         lines.append(
             f"시장 현실성: {market_feasibility.market_realism_grade or '미확인'}"
-            f"(경쟁사 {market_feasibility.competitor_count}개, 국내수요 {market_feasibility.domestic_demand or '미확인'})"
+            f"({market_feasibility.platform_competitor_summary}, 국내수요 {market_feasibility.domestic_demand or '미확인'})"
         )
+        lines.append(f"시장 매칭 범위: {market_feasibility.match_scope_description}")
     if business_model is not None and business_model.recommendations:
         bm_names = ", ".join(r.bm_pattern for r in business_model.recommendations if r.bm_pattern)
         lines.append(f"추천 BM: {bm_names or '검증 필요'}")
     if differentiation_point:
         lines.append(f"차별화 포인트: {differentiation_point}")
     for summary in bm_card_summaries:
+        if summary.bm_description:
+            lines.append(f"BM({summary.bm_pattern}) 설명: {summary.bm_description}")
+        if summary.precedent_services:
+            lines.append(f"BM({summary.bm_pattern}) 선례 서비스: {', '.join(summary.precedent_services)}")
         if summary.strength:
             lines.append(f"BM({summary.bm_pattern}) 강점: {summary.strength}")
 

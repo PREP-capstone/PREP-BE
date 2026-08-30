@@ -146,10 +146,12 @@ def _data_feasibility(risk_level: str) -> DataFeasibilityResult:
 def _market_feasibility(grade: str | None) -> MarketFeasibilityResult:
     return MarketFeasibilityResult(
         match_level="insufficient_data" if grade is None else "exact_match",
+        match_scope_description="카테고리, 세부 기능, 타깃, 서비스 형태가 모두 같은 선례를 기준으로 비교했습니다.",
         competitor_count=0,
         saturation=None,
         market_realism_grade=grade,
         platform_competitor_exists=False,
+        platform_competitor_summary="유사 범위 안에 플랫폼급 경쟁사는 확인되지 않았습니다.",
         payment_precedent=None,
         competitor_cards=[],
         domestic_demand=None,
@@ -186,7 +188,7 @@ def _regulatory_risk(grade: str) -> RegulatoryRiskResponse:
 
 
 def _business_model(match_level: str) -> BusinessModelResult:
-    return BusinessModelResult(match_level=match_level, recommendations=[])
+    return BusinessModelResult(match_level=match_level, match_scope_description="설명", recommendations=[])
 
 
 def test_overall_signal_red_when_regulatory_grade_is_high() -> None:
