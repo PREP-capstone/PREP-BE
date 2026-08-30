@@ -87,11 +87,11 @@ market_lookup.py`에 두 API가 공유하는 구현이 있다.
 
 ```json
 {
-  "match_level": "exact_match|relaxed_service_type|relaxed_category_only|insufficient_data",
-  "competitor_count": 3,
+  "match_scope_description": "카테고리, 세부 기능, 타깃, 서비스 형태가 모두 같은 선례를 기준으로 비교했습니다.",
   "saturation": "Opportunity|Challenging|Saturated|null",
   "market_realism_grade": "높음|중간|낮음|null",
   "platform_competitor_exists": true,
+  "platform_competitor_summary": "유사 범위 안에 플랫폼급 경쟁사가 있어 차별화 근거를 더 강하게 제시해야 합니다.",
   "payment_precedent": "적음|보통|많음|null",
   "competitor_cards": [
     {
@@ -105,19 +105,15 @@ market_lookup.py`에 두 API가 공유하는 구현이 있다.
 }
 ```
 
-- 포화도 매핑(§8.1/§8.4): `competitor_count` 0~2 → Opportunity/높음, 3~4 →
-  Challenging/중간, 5+ → Saturated/낮음. `platform_competitor_exists`는 매칭된
-  경쟁사 중 `tier='플랫폼'`이 있는지를 별도로 표시한다 — §8.1의 "n≥5 AND tier=플랫폼
-  존재 → Saturated 확정" 조건을 그대로 5+ 케이스에 적용하되, 신호등 등급 자체는
-  개수만으로도 이미 Saturated로 확정하고 이 필드는 "개수로만 낮음"과 "대형 플랫폼까지
-  확인된 낮음"을 리포트에서 구분하는 용도로 쓴다.
+- 내부 계산은 여전히 경쟁사 수 기준으로 수행하지만, API 응답에는 `competitor_count`를 노출하지 않는다.
+  리포트/FE는 `platform_competitor_exists`와 `platform_competitor_summary`를 사용한다.
+- `match_scope_description`: 내부 `match_level` 라벨 대신 사용자에게 보여줄 매칭 범위 설명이다.
+  예: "서비스 형태는 제외하고 카테고리, 세부 기능, 타깃이 같은 선례를 기준으로 비교했습니다."
 - `competitor_cards`: `LIMIT 3`. `feature`는 `competitors.core_tags`, `limitation`은
   `competitors.limitation`을 그대로 노출한다.
 - `payment_precedent`: `bm_mapping.precedent_level`(§9.3의 "지불 의향" 판단근거).
-  경쟁사 매칭과 별개로 자체 완화 조회를 수행하므로 `match_level`과 다른 단계에서
-  나온 값일 수 있다.
-- `match_level == "insufficient_data"`일 때 `saturation`/`market_realism_grade`는
-  `null`, `competitor_cards`는 빈 배열.
+  경쟁사 매칭과 별개로 자체 완화 조회를 수행할 수 있다.
+- 데이터가 부족할 때 `saturation`/`market_realism_grade`는 `null`, `competitor_cards`는 빈 배열.
 
 ### 국내 수요 (§8.3 판단근거 ①) — `domestic_demand`
 
@@ -177,26 +173,23 @@ NAVER API HUB(Cloud Platform, `naverapihub.apigw.ntruss.com`)는 **완전히 다
 
 ```json
 {
-  "match_level": "exact_match|relaxed_service_type|relaxed_category_only|insufficient_data",
+  "match_scope_description": "서비스 형태는 제외하고 카테고리, 세부 기능, 타깃이 같은 선례를 기준으로 비교했습니다.",
   "recommendations": [
     {
       "bm_pattern": "Freemium|Subscription|Add-on|Lock-in|Two-sided Market|Pay Per Use|Sensor As A Service|Leverage Customer Data|Digitization|Self-service|Performance-based Contracting|Razor And Blade",
-      "frequency_score": 2,
-      "frequency_score_global": 2,
       "precedent_level": "적음|보통|많음|null",
-      "contributing_competitor_ids": "string|null"
+      "precedent_services": ["string"],
+      "bm_description": "월간 또는 연간 구독료를 받고 지속적인 관리 기능을 제공하는 모델입니다."
     }
   ]
 }
 ```
 
-- `LIMIT 2`, `ORDER BY frequency_score DESC`.
-- `match_level == "insufficient_data"`이면 `recommendations: []`, 카드 4줄 요약 문장
-  없이 "검증 필요"로만 표시(§9.2) — 수치·근거를 임의 생성하지 않는다.
-- 카드 4줄 요약(가격대·전환율·강점)은 이 API 범위 밖이다: 가격대는
-  `competitors.price`(☆ 신설 완료, 이 API 응답엔 미포함 — 필요 시 market API의
-  경쟁 카드와 조합), 전환율은 수집 가능성 자체가 미확인(§9.3), 강점은 LLM ③ 생성
-  영역(§12).
+- 추천 정렬은 내부적으로 `frequency_score DESC`를 사용하지만, API 응답에는 빈도 수치를 노출하지 않는다.
+- `match_scope_description`: 내부 `match_level` 라벨 대신 사용자에게 보여줄 매칭 범위 설명이다.
+- `precedent_services`: 해당 BM 선례로 집계된 서비스명 목록이다.
+- `bm_description`: BM 패턴을 리포트에 바로 표시할 수 있도록 풀어쓴 설명이다.
+- 데이터가 부족하면 `recommendations: []`, 메시지는 "검증 필요 — 근거 부족"으로 반환한다.
 
 ---
 

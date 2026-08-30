@@ -7,7 +7,13 @@ import pytest
 from sqlalchemy import delete
 
 from app.api.analysis_sessions import AnalysisSession, CreateAnalysisSessionRequest, create_analysis_session
-from app.api.business_model import BusinessModelRequest, recommend_business_model
+from app.api.business_model import (
+    BmRecommendation,
+    BusinessModelRequest,
+    BusinessModelResult,
+    _precedent_service_names,
+    recommend_business_model,
+)
 from app.db.session import AsyncSessionLocal
 
 
@@ -55,3 +61,39 @@ async def test_recommend_limits_to_two_cards() -> None:
         assert len(response.result.recommendations) <= 2
     finally:
         await _delete_session(session_id)
+
+
+def test_business_model_result_hides_internal_frequency_and_match_label_from_json() -> None:
+    result = BusinessModelResult(
+        match_level="exact_match",
+        match_scope_description="카테고리, 세부 기능, 타깃, 서비스 형태가 모두 같은 선례를 기준으로 비교했습니다.",
+        recommendations=[
+            BmRecommendation(
+                bm_pattern="Subscription",
+                frequency_score=3,
+                frequency_score_global=5,
+                precedent_level="많음",
+                precedent_services=["삼성헬스", "눔"],
+                bm_description="월간 또는 연간 구독료를 받고 지속적인 관리 기능을 제공하는 모델입니다.",
+                contributing_competitor_ids="삼성헬스,눔",
+            )
+        ],
+    )
+
+    payload = result.model_dump()
+    recommendation = payload["recommendations"][0]
+
+    assert "match_level" not in payload
+    assert "frequency_score" not in recommendation
+    assert "frequency_score_global" not in recommendation
+    assert "contributing_competitor_ids" not in recommendation
+    assert recommendation["precedent_services"] == ["삼성헬스", "눔"]
+
+
+def test_precedent_service_names_resolves_competitor_ids() -> None:
+    names = _precedent_service_names(
+        ["comp_samsung_health", "comp_noom", "comp_samsung_health"],
+        {"comp_samsung_health": "삼성헬스", "comp_noom": "눔"},
+    )
+
+    assert names == ["삼성헬스", "눔"]

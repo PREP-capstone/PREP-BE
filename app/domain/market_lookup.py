@@ -26,6 +26,17 @@ class CategoryKeys:
     target: str | None
     service_type: str | None
 
+_MATCH_LEVEL_DESCRIPTIONS: dict[MatchLevel, str] = {
+    "exact_match": "카테고리, 세부 기능, 타깃, 서비스 형태가 모두 같은 선례를 기준으로 비교했습니다.",
+    "relaxed_service_type": "서비스 형태는 제외하고 카테고리, 세부 기능, 타깃이 같은 선례를 기준으로 비교했습니다.",
+    "relaxed_category_only": "타깃과 서비스 형태는 제외하고 카테고리와 세부 기능이 같은 선례를 기준으로 비교했습니다.",
+    "insufficient_data": "카테고리 정보가 부족하거나 비교 가능한 선례가 아직 충분하지 않습니다.",
+}
+
+
+def describe_match_level(match_level: MatchLevel) -> str:
+    return _MATCH_LEVEL_DESCRIPTIONS[match_level]
+
 
 def relaxation_stages(model, keys: CategoryKeys) -> list[tuple[MatchLevel, list]]:
     """시도할 (match_level, SQLAlchemy where절 목록) 목록을 완화 순서대로 반환한다.
