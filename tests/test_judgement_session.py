@@ -266,6 +266,39 @@ async def test_correction_candidates_matches_stored_service_description() -> Non
         await _delete_session(session_id)
 
 
+async def test_correction_candidates_legal_basis_title() -> None:
+    """DOCUMENT_TITLES에 있는 document_id는 legal_basis.title이 채워지고,
+    매핑에 없는 document_id(LLM① 폴백이 낼 수 있음)는 None으로 빠져야 한다."""
+    session_id = await _create_session(
+        "사용자에게 복약지도를 제공하고 복용 시간을 알려준다.",
+        [HealthDataItemInput(name="복용약물", data_type="text", source="user_input")],
+    )
+    try:
+        response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        candidate = next(c for c in response.candidates if c.risky_text == "복약지도")
+        assert candidate.legal_basis.document_id == "kr-pharmaceutical-affairs-act-20260621"
+        assert candidate.legal_basis.title == "약사법"
+
+        llm_result = [
+            {
+                "risky_text": "약 시간표를 짜드려요",
+                "safe_text": "복약 알림을 보내드려요",
+                "legal_basis": {"document_id": "kr-unmapped-test-doc-00000000", "article": "제1조"},
+            }
+        ]
+        with (
+            patch("app.api.judgement._match_correction_rules", new=AsyncMock(return_value=[])),
+            patch(
+                "app.api.judgement.generate_correction_candidates",
+                new=AsyncMock(return_value=llm_result),
+            ),
+        ):
+            fallback_response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert fallback_response.candidates[0].legal_basis.title is None
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_correction_candidates_does_not_require_health_data() -> None:
     """correction-candidates는 service_description만 쓰고 health_data_items를
     참조하지 않으므로, health-data 미등록 세션이어도 409 없이 동작해야 한다."""
