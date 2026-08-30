@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import desc, select
 
-from app.db.models import AnalysisSession, BmMapping
+from app.db.models import AnalysisSession, BmMapping, Competitor
 from app.db.session import AsyncSessionLocal
 from app.domain.market_lookup import CategoryKeys, MatchLevel, describe_match_level, relaxation_stages
 from app.schemas.common import ApiResponse
@@ -73,10 +73,32 @@ _BM_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _split_precedent_services(value: str | None) -> list[str]:
+def _split_competitor_refs(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+async def _find_competitor_names(session, competitor_refs: set[str]) -> dict[str, str]:
+    if not competitor_refs:
+        return {}
+    rows = (
+        await session.execute(
+            select(Competitor.competitor_id, Competitor.name)
+            .where(Competitor.competitor_id.in_(competitor_refs))
+            .order_by(Competitor.competitor_id)
+        )
+    ).all()
+    return {competitor_id: name for competitor_id, name in rows}
+
+
+def _precedent_service_names(competitor_refs: list[str], competitor_names: dict[str, str]) -> list[str]:
+    names: list[str] = []
+    for competitor_ref in competitor_refs:
+        name = competitor_names.get(competitor_ref, competitor_ref)
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def _bm_description(pattern: str | None) -> str | None:
@@ -131,6 +153,16 @@ async def recommend_business_model(request: BusinessModelRequest) -> BusinessMod
             service_type=analysis_session.service_type,
         )
         match_level, rows = await _find_recommendations(session, keys)
+        competitor_refs_by_mapping = {
+            row.mapping_id: _split_competitor_refs(row.contributing_competitor_ids)
+            for row in rows
+        }
+        competitor_refs = {
+            competitor_ref
+            for refs in competitor_refs_by_mapping.values()
+            for competitor_ref in refs
+        }
+        competitor_names = await _find_competitor_names(session, competitor_refs)
 
     return BusinessModelResponse(
         isSuccess=True,
@@ -145,7 +177,9 @@ async def recommend_business_model(request: BusinessModelRequest) -> BusinessMod
                     frequency_score=row.frequency_score,
                     frequency_score_global=row.frequency_score_global,
                     precedent_level=row.precedent_level,
-                    precedent_services=_split_precedent_services(row.contributing_competitor_ids),
+                    precedent_services=_precedent_service_names(
+                        competitor_refs_by_mapping[row.mapping_id], competitor_names
+                    ),
                     bm_description=_bm_description(row.bm_pattern),
                     contributing_competitor_ids=row.contributing_competitor_ids,
                 )

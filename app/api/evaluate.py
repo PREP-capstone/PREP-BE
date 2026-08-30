@@ -167,25 +167,34 @@ class BmCardSummary(BaseModel):
     strength: str | None
 
 
-async def _find_competitor_prices(competitor_names: set[str]) -> dict[str, str]:
-    """competitors.name은 PK가 아니라 동명 행이 여러 개 있을 수 있다(예: "삼성헬스"가
-    서로 다른 competitor_id로 3건 — 코드 리뷰로 확인, 2026-08-25). 이름 기준 dict
-    컴프리헨션으로 그냥 덮어쓰면 어느 행이 남을지 쿼리 순서에 좌우돼 비결정적이므로,
-    competitor_id로 정렬해 항상 같은 행이 이기게 고정한다."""
-    if not competitor_names:
+async def _find_competitor_prices(competitor_refs: set[str]) -> dict[str, str]:
+    """BM mapping은 설계상 contributing_competitor_ids에 competitor_id를 담는다.
+
+    과거 seed/테스트가 이름 문자열을 넣던 경우도 있어 id와 name을 둘 다 조회하되,
+    반환 dict는 competitor_id와 name 양쪽 키를 채운다. 가격 선택은 competitor_id 정렬로
+    고정해 동명 서비스가 여러 행이어도 매 호출 같은 값이 나온다.
+    """
+    if not competitor_refs:
         return {}
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(Competitor.name, Competitor.price)
-                .where(Competitor.name.in_(competitor_names))
+                select(Competitor.competitor_id, Competitor.name, Competitor.price)
+                .where(
+                    or_(
+                        Competitor.competitor_id.in_(competitor_refs),
+                        Competitor.name.in_(competitor_refs),
+                    )
+                )
                 .order_by(Competitor.competitor_id)
             )
         ).all()
     prices: dict[str, str] = {}
-    for name, price in rows:
-        if price and name not in prices:
-            prices[name] = price
+    for competitor_id, name, price in rows:
+        if not price:
+            continue
+        prices.setdefault(competitor_id, price)
+        prices.setdefault(name, price)
     return prices
 
 
@@ -200,11 +209,13 @@ async def _build_bm_card_summaries(
     if business_model is None or not business_model.recommendations:
         return []
 
-    all_names: set[str] = set()
+    all_competitor_refs: set[str] = set()
     for rec in business_model.recommendations:
         if rec.contributing_competitor_ids:
-            all_names.update(name.strip() for name in rec.contributing_competitor_ids.split(","))
-    prices = await _find_competitor_prices(all_names)
+            all_competitor_refs.update(
+                ref.strip() for ref in rec.contributing_competitor_ids.split(",") if ref.strip()
+            )
+    prices = await _find_competitor_prices(all_competitor_refs)
 
     try:
         strengths = await generate_bm_card_strengths(
@@ -219,8 +230,8 @@ async def _build_bm_card_summaries(
 
     summaries = []
     for rec in business_model.recommendations:
-        names = [name.strip() for name in (rec.contributing_competitor_ids or "").split(",") if name.strip()]
-        price = next((prices[name] for name in names if name in prices), None)
+        competitor_refs = [ref.strip() for ref in (rec.contributing_competitor_ids or "").split(",") if ref.strip()]
+        price = next((prices[ref] for ref in competitor_refs if ref in prices), None)
         summaries.append(
             BmCardSummary(
                 bm_pattern=rec.bm_pattern,

@@ -7,7 +7,13 @@ import pytest
 from sqlalchemy import delete
 
 from app.api.analysis_sessions import AnalysisSession, CreateAnalysisSessionRequest, create_analysis_session
-from app.api.business_model import BmRecommendation, BusinessModelRequest, BusinessModelResult, recommend_business_model
+from app.api.business_model import (
+    BmRecommendation,
+    BusinessModelRequest,
+    BusinessModelResult,
+    _precedent_service_names,
+    recommend_business_model,
+)
 from app.db.session import AsyncSessionLocal
 
 
@@ -82,3 +88,12 @@ def test_business_model_result_hides_internal_frequency_and_match_label_from_jso
     assert "frequency_score_global" not in recommendation
     assert "contributing_competitor_ids" not in recommendation
     assert recommendation["precedent_services"] == ["삼성헬스", "눔"]
+
+
+def test_precedent_service_names_resolves_competitor_ids() -> None:
+    names = _precedent_service_names(
+        ["comp_samsung_health", "comp_noom", "comp_samsung_health"],
+        {"comp_samsung_health": "삼성헬스", "comp_noom": "눔"},
+    )
+
+    assert names == ["삼성헬스", "눔"]
