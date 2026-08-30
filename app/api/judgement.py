@@ -28,6 +28,7 @@ from app.db.rule_version_queries import resolve_active_rule_version_ids
 from app.db.session import AsyncSessionLocal
 from app.domain.correction_llm import generate_correction_candidates
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
+from app.domain.legal_documents import DOCUMENT_TITLES
 from app.domain.scoring import grade_by_threshold
 from app.pipeline.correction_terms import keyword_score
 from app.pipeline.gate_matrix_table import (
@@ -424,7 +425,11 @@ async def _match_correction_rules(
             safe_text=row.safe_text,
             regulatory_score=row.regulatory_score,
             advertising_score=row.advertising_score,
-            legal_basis=LegalBasis(document_id=row.legal_basis_doc, article=row.legal_basis_article),
+            legal_basis=LegalBasis(
+                document_id=row.legal_basis_doc,
+                article=row.legal_basis_article,
+                title=DOCUMENT_TITLES.get(row.legal_basis_doc),
+            ),
             exact_phrase_match=bool(phrase_hit),
             match_source="rule",
         )
@@ -473,7 +478,9 @@ async def _match_correction_rules_with_llm_fallback(
                 regulatory_score=0,
                 advertising_score=0,
                 legal_basis=LegalBasis(
-                    document_id=item["legal_basis"]["document_id"], article=item["legal_basis"]["article"]
+                    document_id=item["legal_basis"]["document_id"],
+                    article=item["legal_basis"]["article"],
+                    title=DOCUMENT_TITLES.get(item["legal_basis"]["document_id"]),
                 ),
                 exact_phrase_match=False,
                 match_source="llm",
