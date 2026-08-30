@@ -11,6 +11,7 @@ from app.api.business_model import (
     BmRecommendation,
     BusinessModelRequest,
     BusinessModelResult,
+    _bm_description,
     _precedent_service_names,
     recommend_business_model,
 )
@@ -97,3 +98,9 @@ def test_precedent_service_names_resolves_competitor_ids() -> None:
     )
 
     assert names == ["삼성헬스", "눔"]
+
+
+def test_bm_description_normalizes_korean_suffix() -> None:
+    assert _bm_description("Freemium(프리미엄)") == "기본 기능은 무료로 제공하고 고급 기능이나 추가 분석을 유료로 전환하는 모델입니다."
+    assert _bm_description("Subscription(구독형)") == "월간 또는 연간 구독료를 받고 지속적인 관리 기능을 제공하는 모델입니다."
+    assert _bm_description("Add-on - 애드온") == "기본 서비스 위에 리포트, 코칭, 기기 연동 같은 부가 기능을 추가 판매하는 모델입니다."
