@@ -196,7 +196,7 @@ def test_overall_signal_red_when_regulatory_grade_is_high() -> None:
 def test_overall_signal_red_when_only_privacy_axis_is_high() -> None:
     # regulatory_grade(의료행위표현 축)는 '중간'이라도 privacy_grade(개인정보 축)가
     # '높음'이면 3축 최고값(final_regulatory_grade)이 '높음'이라 빨강이어야 한다.
-    # regulatory_grade만 보고 판정하면 이 케이스를 놓쳐 노랑으로 샌다(PR #66 버그).
+    # regulatory_grade만 보고 판정하면 이 케이스를 놓쳐 노랑으로 새는 기존 버그가 있었다.
     regulatory_risk = RegulatoryRiskResponse(
         regulatory_score=1,
         regulatory_grade="중간",

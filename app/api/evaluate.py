@@ -252,7 +252,7 @@ def _compute_overall_signal(
 
     빨강/초록 판정 모두 final_regulatory_grade(3축 최고값, db_구축_설계서.md §3.3.2)를
     써야 한다 — regulatory_grade는 의료행위표현 축 하나뿐이라, privacy_grade나
-    advertising_grade만 '높음'인 경우를 놓치는 버그가 있었다(2026-08-30, PR #66).
+    advertising_grade만 '높음'인 경우를 놓치는 기존 버그가 있었다(2026-08-30 확인).
     """
     if regulatory_risk.final_regulatory_grade == "높음":
         return "빨강"
