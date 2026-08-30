@@ -79,8 +79,9 @@ Authorization: Bearer `<accessToken>`
 
 ### Description
 
-3축(의료행위표현/개인정보민감도/광고표현위험) 점수·등급을 계산한다. 등급은
-**최고값 채택**(합산 아님) — `db_구축_설계서.md` §3.3.2, `판정엔진_개발설계서.md` §6.3.
+3축(의료행위표현/개인정보민감도/광고표현위험) 점수·등급을 계산한다. `final_regulatory_grade`는
+3축 등급 중 **최고값 채택**(합산 아님) — `db_구축_설계서.md` §3.3.2, `판정엔진_개발설계서.md` §6.3,
+§11 종합 신호등이 참조하는 값이 이거다(축별 `regulatory_grade` 하나만 보면 안 됨).
 
 ### Request
 
@@ -96,6 +97,7 @@ Authorization: Bearer `<accessToken>`
   "privacy_grade": "낮음|중간|높음",
   "advertising_score": 0,
   "advertising_grade": "낮음|중간|높음",
+  "final_regulatory_grade": "낮음|중간|높음",
   "matched_rules": [
     {
       "legal_basis": { "document_id": "string", "article": "string", "quote": null },

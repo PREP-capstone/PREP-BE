@@ -249,15 +249,19 @@ def _compute_overall_signal(
     business_model이 전부 None인 상태라 초록 조건(넷 다 필요) 자체가 성립 불가능하므로
     별도 분기 없이 아래 일반 로직을 그대로 태워도 같은 결과가 나온다: 규제위험도
     높음이면 빨강, 아니면(None 체크로 초록 조건이 항상 거짓이 되어) 노랑.
+
+    빨강/초록 판정 모두 final_regulatory_grade(3축 최고값, db_구축_설계서.md §3.3.2)를
+    써야 한다 — regulatory_grade는 의료행위표현 축 하나뿐이라, privacy_grade나
+    advertising_grade만 '높음'인 경우를 놓치는 버그가 있었다(2026-08-30, PR #66).
     """
-    if regulatory_risk.regulatory_grade == "높음":
+    if regulatory_risk.final_regulatory_grade == "높음":
         return "빨강"
     if data_feasibility is not None and data_feasibility.risk_level == "HIGH":
         return "빨강"
 
     bm_exists = business_model is not None and business_model.match_level != "insufficient_data"
     if (
-        regulatory_risk.regulatory_grade == "낮음"
+        regulatory_risk.final_regulatory_grade == "낮음"
         and data_feasibility is not None
         and data_feasibility.risk_level in ("LOW", "MEDIUM")
         and market_feasibility is not None
@@ -299,7 +303,7 @@ def _build_report_context(
             f"인증 - {gate.avoidance_certification or '없음'}"
         )
     lines.append(
-        f"규제 위험도: {regulatory_risk.regulatory_grade}"
+        f"규제 위험도: {regulatory_risk.final_regulatory_grade}"
         f"(의료행위표현 {regulatory_risk.regulatory_score}, 개인정보 {regulatory_risk.privacy_grade},"
         f" 광고표현 {regulatory_risk.advertising_grade})"
     )

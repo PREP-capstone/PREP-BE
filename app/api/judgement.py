@@ -29,7 +29,7 @@ from app.db.session import AsyncSessionLocal
 from app.domain.correction_llm import generate_correction_candidates
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
 from app.domain.legal_documents import DOCUMENT_TITLES
-from app.domain.scoring import grade_by_threshold
+from app.domain.scoring import grade_by_threshold, max_grade
 from app.pipeline.correction_terms import keyword_score
 from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_TABLE,
@@ -322,6 +322,9 @@ class RegulatoryRiskResponse(BaseModel):
     privacy_grade: str
     advertising_score: int
     advertising_grade: str
+    # 3축 최고값 채택(db_구축_설계서.md §3.3.2 흐름 5단계) — SECTION 0 종합 신호등(§11)이
+    # 보는 값은 이거지, 의료행위표현 축만 담은 regulatory_grade가 아니다.
+    final_regulatory_grade: str
     matched_rules: list[MatchedRule]
     # 판단근거③(서비스 형태 기반 적용 법령) — service_type 미입력이거나 매칭 없으면 빈 값.
     applicable_laws: list[str]
@@ -585,6 +588,7 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse 
         privacy_grade=grades["privacy_score"],
         advertising_score=advertising_score,
         advertising_grade=grades["advertising_score"],
+        final_regulatory_grade=max_grade(list(grades.values())),
         matched_rules=matched_rules,
         applicable_laws=service_law.applicable_laws if service_law else [],
         service_law_description=service_law.description if service_law else None,

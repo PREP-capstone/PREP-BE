@@ -178,6 +178,7 @@ def _regulatory_risk(grade: str) -> RegulatoryRiskResponse:
         privacy_grade="낮음",
         advertising_score=0,
         advertising_grade="낮음",
+        final_regulatory_grade=grade,
         matched_rules=[],
         applicable_laws=[],
         service_law_description=None,
@@ -190,6 +191,25 @@ def _business_model(match_level: str) -> BusinessModelResult:
 
 def test_overall_signal_red_when_regulatory_grade_is_high() -> None:
     assert _compute_overall_signal(_gate(), _regulatory_risk("높음"), None, None, None) == "빨강"
+
+
+def test_overall_signal_red_when_only_privacy_axis_is_high() -> None:
+    # regulatory_grade(의료행위표현 축)는 '중간'이라도 privacy_grade(개인정보 축)가
+    # '높음'이면 3축 최고값(final_regulatory_grade)이 '높음'이라 빨강이어야 한다.
+    # regulatory_grade만 보고 판정하면 이 케이스를 놓쳐 노랑으로 샌다(PR #66 버그).
+    regulatory_risk = RegulatoryRiskResponse(
+        regulatory_score=1,
+        regulatory_grade="중간",
+        privacy_score=3,
+        privacy_grade="높음",
+        advertising_score=0,
+        advertising_grade="낮음",
+        final_regulatory_grade="높음",
+        matched_rules=[],
+        applicable_laws=[],
+        service_law_description=None,
+    )
+    assert _compute_overall_signal(_gate(), regulatory_risk, None, None, None) == "빨강"
 
 
 def test_overall_signal_red_when_data_feasibility_is_high() -> None:
