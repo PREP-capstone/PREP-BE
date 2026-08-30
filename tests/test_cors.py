@@ -23,6 +23,13 @@ def test_cors_allows_vercel_origin():
     assert response.headers["access-control-allow-origin"] == "https://prep-fe.vercel.app"
 
 
+def test_cors_allows_actual_vercel_production_origin():
+    response = _preflight("https://prep-fe-phi.vercel.app")
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://prep-fe-phi.vercel.app"
+
+
 def test_cors_allows_localhost_origin():
     response = _preflight("http://localhost:3000")
 
