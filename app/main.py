@@ -28,7 +28,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 # 프로덕션 FE 도메인은 환경변수로 관리한다. 인증이 없는 MVP API라
-# allow_credentials는 쓰지 않고, 기본값은 prepwell.shop + prep-fe.vercel.app + 로컬 개발 서버다.
+# allow_credentials는 쓰지 않고, 기본값은 PREP 프로덕션/FE Vercel 도메인 + 로컬 개발 서버다.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
