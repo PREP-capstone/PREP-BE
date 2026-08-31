@@ -220,16 +220,19 @@ GitHub repo → `Settings` → `Secrets and variables` → `Actions` → `New re
 | `EC2_SSH_KEY` | EC2 접속 private key 전체 내용 |
 | `EC2_APP_DIR` | `/home/ubuntu/PREP-BE` |
 | `ENV_PRODUCTION` | `.env.production` 전체 내용 |
+| `AI_REPO_TOKEN` | PREP-AI Release artifact 읽기 권한이 있는 GitHub PAT |
 
 `main` 브랜치에 push되면 `.github/workflows/deploy.yml`이 EC2에 접속해 아래 작업을 수행한다.
 
-1. `git fetch origin main`
-2. `git reset --hard origin/main`
-3. `.env.production` 갱신
-4. `docker compose -f compose.prod.yml up -d --build`
-5. `alembic upgrade head`
-6. `check_deploy_ready.py --skip-chroma`
-7. `/api/v1/health` 확인
+1. PREP-AI 최신 Release에서 `best_healthcare_model_onnx.zip` 다운로드
+2. 모델 zip과 `.env.production`을 EC2에 업로드
+3. `git fetch origin main`
+4. `git reset --hard origin/main`
+5. `data/models/category_classifier_onnx`에 ONNX 모델 압축 해제
+6. `docker compose -f compose.prod.yml up -d --build`
+7. `alembic upgrade head`
+8. `check_deploy_ready.py --skip-chroma`
+9. `/api/v1/health`와 `/api/v1/category-classifier/predict` 확인
 
 ## 7. 운영 명령어
 
@@ -330,6 +333,11 @@ unzip best_healthcare_model_onnx.zip -d /home/ubuntu/PREP-BE/data/models
 docker compose -p prep-be -f compose.prod.yml restart api
 ```
 
+GitHub Actions 배포에서는 수동 배치가 필요 없다. `AI_REPO_TOKEN` secret이 있으면
+workflow가 PREP-AI 최신 Release의 `best_healthcare_model_onnx.zip`을 받아 EC2에
+업로드하고, 기존 `data/models/category_classifier_onnx`를 교체한 뒤 컨테이너를
+재기동한다.
+
 배치 확인:
 
 ```bash
@@ -344,4 +352,3 @@ curl -X POST https://api.prepwell.shop/api/v1/category-classifier/predict \
   -H "Content-Type: application/json" \
   -d '{"service_description":"사용자의 혈당 수치를 기록하고 변화 추이를 보여주는 건강관리 앱"}'
 ```
-

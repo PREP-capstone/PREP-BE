@@ -13,6 +13,7 @@ jobs:
       EC2_USER: ${{ secrets.EC2_USER }}
       EC2_APP_DIR: ${{ secrets.EC2_APP_DIR }}
       ENV_PRODUCTION: ${{ secrets.ENV_PRODUCTION }}
+      AI_MODEL_ARCHIVE: best_healthcare_model_onnx.zip
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +23,21 @@ jobs:
           printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Download category classifier model
+        run: |
+          mkdir -p model-artifact
+          gh release download \
+            --repo PREP-capstone/PREP-AI \
+            --pattern "$AI_MODEL_ARCHIVE" \
+            --dir model-artifact \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.AI_REPO_TOKEN }}
+
+      - name: Upload category classifier model
+        run: |
+          scp "model-artifact/$AI_MODEL_ARCHIVE" "$EC2_USER@$EC2_HOST:$EC2_APP_DIR/$AI_MODEL_ARCHIVE"
 
       - name: Upload production env when provided
         if: env.ENV_PRODUCTION != ''
@@ -36,6 +52,15 @@ jobs:
             cd '$EC2_APP_DIR'
             git fetch origin main
             git reset --hard origin/main
+            if ! command -v unzip >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y unzip
+            fi
+            sudo mkdir -p data/models
+            sudo rm -rf data/models/category_classifier_onnx
+            sudo unzip -oq '$AI_MODEL_ARCHIVE' -d data/models
+            sudo chown -R \$USER:\$USER data/models
+            chmod -R a+rX data/models/category_classifier_onnx
             docker compose -p prep-be -f compose.prod.yml down --remove-orphans || true
             docker ps -aq --filter 'name=prep-api' --filter 'name=prep-redis' | xargs -r docker rm -f
             docker compose -p prep-be -f compose.prod.yml up -d --build --remove-orphans
@@ -43,4 +68,7 @@ jobs:
             docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/seed_standard_scales.py
             docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/check_deploy_ready.py --skip-chroma
             curl -fsS http://127.0.0.1:8000/api/v1/health
+            curl -fsS -X POST http://127.0.0.1:8000/api/v1/category-classifier/predict \
+              -H 'Content-Type: application/json' \
+              -d '{\"service_description\":\"사용자의 혈당 수치를 기록하고 변화 추이를 보여주는 건강관리 앱\"}'
           "
