@@ -338,6 +338,11 @@ workflow가 PREP-AI 최신 Release의 `best_healthcare_model_onnx.zip`을 받아
 업로드하고, 기존 `data/models/category_classifier_onnx`를 교체한 뒤 컨테이너를
 재기동한다.
 
+AI repo에서 Windows 계열 도구로 zip을 만들면 내부 경로가
+`category_classifier_onnx\labels.json`처럼 백슬래시를 포함할 수 있다. 운영 배포는
+`scripts/extract_model_archive.py`로 압축을 풀어 백슬래시를 `/`로 정규화한다.
+그래도 Release artifact는 가능하면 아래처럼 POSIX 경로 구조로 만드는 것을 권장한다.
+
 배치 확인:
 
 ```bash
