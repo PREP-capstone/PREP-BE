@@ -52,13 +52,9 @@ jobs:
             cd '$EC2_APP_DIR'
             git fetch origin main
             git reset --hard origin/main
-            if ! command -v unzip >/dev/null 2>&1; then
-              sudo apt-get update
-              sudo apt-get install -y unzip
-            fi
             sudo mkdir -p data/models
             sudo rm -rf data/models/category_classifier_onnx
-            sudo unzip -oq '$AI_MODEL_ARCHIVE' -d data/models
+            sudo python3 scripts/extract_model_archive.py '$AI_MODEL_ARCHIVE' --target-dir data/models
             sudo chown -R \$USER:\$USER data/models
             chmod -R a+rX data/models/category_classifier_onnx
             docker compose -p prep-be -f compose.prod.yml down --remove-orphans || true
