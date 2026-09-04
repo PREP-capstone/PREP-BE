@@ -365,6 +365,32 @@ class CorrectionMatch(BaseModel):
     match_source: Literal["rule", "llm"]
 
 
+def _dedupe_matched_rules(matches: list[CorrectionMatch]) -> list[MatchedRule]:
+    """(document_id, article) 기준으로 matched_rules를 합친다.
+
+    generate_correction_rules.py의 combos()는 명사(당뇨/당뇨병 등)별로 별도 correction_rules
+    행을 만들지만 legal_basis는 동사(verb_substitution) 단위로 동일하다 — 그래서 서로 다른
+    risky_text가 같은 조문을 가리키는 경우가 흔한데, MatchedRule은 risky_text를 안 담으므로
+    이 경우 화면엔 완전히 동일한 카드가 여러 번 뜬다(이슈 보고: 당뇨/당뇨병 진단 케이스).
+    첫 등장 순서를 유지하고, exact_phrase_match는 하나라도 True면 True로 승격한다.
+
+    legal_basis는 model_copy()로 복사해서 담는다 — 원본 CorrectionMatch.legal_basis와
+    참조를 공유하면, 이후 누군가 matches를 다른 용도로 재사용하며 legal_basis를 건드릴 때
+    이미 반환된 matched_rules까지 조용히 같이 바뀔 수 있다.
+    """
+    by_basis: dict[tuple[str, str], MatchedRule] = {}
+    for m in matches:
+        key = (m.legal_basis.document_id, m.legal_basis.article)
+        existing = by_basis.get(key)
+        if existing is None:
+            by_basis[key] = MatchedRule(
+                legal_basis=m.legal_basis.model_copy(), exact_phrase_match=m.exact_phrase_match
+            )
+        elif m.exact_phrase_match and not existing.exact_phrase_match:
+            existing.exact_phrase_match = True
+    return list(by_basis.values())
+
+
 async def _match_gate_keywords(service_description: str, rule_version_ids: list[uuid.UUID]) -> list[GateKeyword]:
     """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다."""
     async with AsyncSessionLocal() as session:
@@ -567,9 +593,7 @@ async def judge_regulatory_risk(request: GateRequest) -> RegulatoryRiskResponse 
     regulatory_score = max((m.regulatory_score for m in matches), default=0)
     regulatory_score = max(regulatory_score, keyword_match_score)
     advertising_score = max((m.advertising_score for m in matches), default=0)
-    matched_rules = [
-        MatchedRule(legal_basis=m.legal_basis, exact_phrase_match=m.exact_phrase_match) for m in matches
-    ]
+    matched_rules = _dedupe_matched_rules(matches)
 
     scores = {
         "regulatory_score": regulatory_score,
