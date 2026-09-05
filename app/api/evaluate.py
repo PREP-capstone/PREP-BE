@@ -401,8 +401,10 @@ async def _find_next_actions(gate: GateResponse, regulatory_risk: RegulatoryRisk
     """action_templates(scope=SECTION) 조회 — SECTION 2-1·부록 "다음 액션 3~4개"
     (판정엔진_개발설계서.md §15.3). gate_verdict는 judge_gate, risk_level/sensitivity_level은
     judge_regulatory_risk 결과가 있어야 나와서 두 서브 호출이 끝난 뒤에만 조회 가능하다.
-    priority 상위 §15.3 기준대로 4개까지만 노출 — 조합 폭발 방지."""
+    priority 상위 §15.3 기준대로 4개까지만 노출 — 조합 폭발 방지. 공통(무관) 트리거는
+    _find_overall_actions와 동일하게 매칭 부족 시 채움용으로 항상 포함한다."""
     conditions = [
+        (ActionTemplate.trigger_type == "공통") & (ActionTemplate.trigger_value == "무관"),
         (ActionTemplate.trigger_type == "gate_verdict") & (ActionTemplate.trigger_value == gate.verdict),
         (ActionTemplate.trigger_type == "risk_level")
         & (ActionTemplate.trigger_value == regulatory_risk.regulatory_grade),

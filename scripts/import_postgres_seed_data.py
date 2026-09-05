@@ -105,9 +105,12 @@ def workbook_sheets(zip_file: ZipFile) -> dict[str, str]:
     sheets: dict[str, str] = {}
     for sheet in workbook.findall("a:sheets/a:sheet", NS):
         rel_id = sheet.attrib[f"{{{NS['r']}}}id"]
-        target = targets[rel_id]
+        # 관계 Target은 Excel 등 원본 저장 시 "worksheets/sheet1.xml"(상대경로)이지만,
+        # openpyxl로 재저장하면 "/xl/worksheets/sheet1.xml"(절대경로)로 바뀐다. 선행 "/"를
+        # 먼저 벗겨야 "xl/" 접두사가 중복(xl/xl/...)되지 않는다.
+        target = targets[rel_id].lstrip("/")
         if not target.startswith("xl/"):
-            target = "xl/" + target.lstrip("/")
+            target = "xl/" + target
         sheets[sheet.attrib["name"]] = target
     return sheets
 
@@ -126,13 +129,20 @@ def load_sheet(path: Path, sheet_name: str) -> list[list[str]]:
                 while len(values) <= index:
                     values.append("")
 
-                raw_value = cell.find("a:v", NS)
-                if raw_value is None:
-                    value = ""
-                elif cell.attrib.get("t") == "s":
-                    value = strings[int(raw_value.text or "0")]
+                cell_type = cell.attrib.get("t")
+                if cell_type == "inlineStr":
+                    # Excel/Google Sheets는 문자열을 공유 문자열 테이블(t="s")로 쓰지만,
+                    # openpyxl로 재저장하면 인라인 문자열(t="inlineStr", <is><t>)로 바뀐다.
+                    inline = cell.find("a:is", NS)
+                    value = "".join(t.text or "" for t in inline.findall(".//a:t", NS)) if inline is not None else ""
                 else:
-                    value = raw_value.text or ""
+                    raw_value = cell.find("a:v", NS)
+                    if raw_value is None:
+                        value = ""
+                    elif cell_type == "s":
+                        value = strings[int(raw_value.text or "0")]
+                    else:
+                        value = raw_value.text or ""
                 values[index] = value
             rows.append(values)
         return rows
