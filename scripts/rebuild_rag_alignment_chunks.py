@@ -28,6 +28,14 @@ MEDICAL_ACT_FILE_NAME = "의료법(법률)(제21524호)(20260407).pdf"
 NONMEDICAL_2022_FILE_NAME = "비의료 건강관리서비스 가이드라인_및_사례집(2차).pdf"
 NONMEDICAL_2022_SOURCE_LABEL = "data/rag/source_documents/nonmedical_health_guide_202209.pdf"
 NONMEDICAL_2022_SOURCE_URL = "https://eiec.kdi.re.kr/policy/materialView.do?num=229658"
+NONMEDICAL_2022_SOURCE_SHA256 = "117a4475ed09fb83108f107bf26ac8f69dcb14b32a7f4bacc854d6e0df0fe04b"
+NONMEDICAL_2022_REQUIRED_SECTIONS = {"II.3", "III.3", "Q11", "Q13"}
+NONMEDICAL_2022_REQUIRED_PHRASES = {
+    "II.3": "의료행위 판단 기준",
+    "III.3": "고혈압･당뇨병 환자 대상 서비스 예시",
+    "Q11": "의료법 제27조제1항 위반",
+    "Q13": "개인정보보호법",
+}
 
 
 @dataclass
@@ -314,7 +322,33 @@ def build_nonmedical_2022_chunks(nonmedical_2022_pdf: Path) -> list[Chunk]:
                 tag_privacy=section_id in {"Q12", "Q13"},
             )
         )
+    validate_nonmedical_2022_chunks(output)
     return output
+
+
+def validate_nonmedical_2022_chunks(chunks: list[Chunk]) -> None:
+    section_ids = [chunk.section_id for chunk in chunks]
+    duplicates = sorted({section_id for section_id in section_ids if section_ids.count(section_id) > 1})
+    if duplicates:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} duplicate section_id values: {duplicates}")
+
+    expected_count = 31
+    if len(chunks) != expected_count:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} expected {expected_count} chunks, got {len(chunks)}")
+
+    missing = sorted(NONMEDICAL_2022_REQUIRED_SECTIONS - set(section_ids))
+    if missing:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} missing required sections: {missing}")
+
+    by_section = {chunk.section_id: chunk for chunk in chunks}
+    for section_id, phrase in NONMEDICAL_2022_REQUIRED_PHRASES.items():
+        text = by_section[section_id].text
+        if phrase not in text:
+            raise ValueError(f"{NONMEDICAL_2022_DOC_ID} {section_id} missing phrase: {phrase}")
+
+    empty_sections = [chunk.section_id for chunk in chunks if not chunk.text.strip()]
+    if empty_sections:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} empty sections: {empty_sections}")
 
 
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -376,8 +410,8 @@ def upsert_nonmedical_2022_document() -> None:
         "tag_advertising": "false",
         "usage_scope": "BOTH",
         "source_url": NONMEDICAL_2022_SOURCE_URL,
-        "collection_source": "공식 보도자료 확인 / 원문 PDF 확보",
-        "processing_note": "룰베이스가 인용하는 2차본(2022.9) 기준 문서. 2019년 1차본과 판본이 다르므로 judgement 근거 조회는 이 document_id를 사용한다.",
+        "collection_source": "공식 보도자료로 2022.9 발간 사실 확인 / PDF 원문은 별도 보관 파일 기준",
+        "processing_note": f"룰베이스가 인용하는 2차본(2022.9) 기준 문서. 2019년 1차본과 판본이 다르므로 judgement 근거 조회는 이 document_id를 사용한다. 검증 파일 SHA256={NONMEDICAL_2022_SOURCE_SHA256}.",
     }
     for row in rows:
         if row["document_id"] == NONMEDICAL_2022_DOC_ID:

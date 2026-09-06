@@ -590,6 +590,8 @@ section_id = '별표7.제8호' 로 정확히 조회
 
 **처리 결과(2026-09-06)**: 2차본(2022.9) 원문 기준으로 metadata를 `active` 전환하고, `evidence_chunks_draft.csv`에 장/절 18개 + Q&A 13개 = **31개 청크**를 추가했습니다. `judgement/*` quote 조회 화이트리스트에도 `kr-mohw-nonmedical-health-guide-202209`를 추가해, 룰베이스가 이 document_id와 section_id를 인용하면 RAG에서 원문 quote를 조회할 수 있습니다.
 
+**출처/무결성 메모**: metadata의 `source_url`은 공식 발간 사실 확인용 보도자료 URL입니다. 청킹에 사용한 PDF 원문은 별도 보관 파일 기준이며, 검증한 파일의 SHA256은 `117a4475ed09fb83108f107bf26ac8f69dcb14b32a7f4bacc854d6e0df0fe04b`입니다.
+
 **현재 상태 (직접 확인함)**
 
 | 항목 | 상태 |
@@ -598,7 +600,7 @@ section_id = '별표7.제8호' 로 정확히 조회
 | `evidence_chunks_draft.csv` | 이 문서의 청크 **31건** |
 | `chunking_queue.csv` | `default_action=primary_chunk`, `pages=42` |
 | `local_file_path` | `data/rag/source_documents/nonmedical_health_guide_202209.pdf` |
-| `rebuild_rag_alignment_chunks.py` | `build_nonmedical_2022_chunks()` 추가. `--nonmedical-2022-pdf`로 원문 파일을 넘기면 재생성 가능 |
+| `rebuild_rag_alignment_chunks.py` | `build_nonmedical_2022_chunks()` 추가. `--nonmedical-2022-pdf`로 원문 파일을 넘기면 재생성 가능. 생성 결과는 31개/중복 없음/핵심 section 및 문구 포함 여부를 검증함 |
 
 **왜 중요했는지**: `correction_rules` **29건**이 이 문서를 `legal_basis_doc`으로 참조합니다. 잘못된 1차본을 보여주지 않기 위해 quote를 막아두던 상태에서, 2차본을 별도 document_id로 적재해 판본 불일치 위험을 해소했습니다.
 

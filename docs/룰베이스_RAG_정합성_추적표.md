@@ -9,6 +9,8 @@
 > `kr-mohw-nonmedical-health-guide-202209` metadata를 `active`로 전환하고, 장/절 18개 +
 > Q&A 13개 = **31개 청크**를 추가했다. section_id는 `I`, `II.3`, `III.3`, `Q11` 등
 > 룰베이스 참조용 정규화 표기를 사용하며, `judgement/*` quote 조회 화이트리스트에도 추가.
+> 공식 발간 사실은 보도자료 URL로 확인하고, 청킹 원문은 별도 보관 PDF 기준으로 검증
+> (SHA256 `117a4475ed09fb83108f107bf26ac8f69dcb14b32a7f4bacc854d6e0df0fe04b`).
 > v1.5 변경: **v1.4에서 발견한 웰니스판단기준·의료법 RDS 미반영 건, RAG 담당이 재청킹
 > 배포해서 해소됨.** RDS로 재확인 — 웰니스판단기준은 조문 단위 section_id 30개(`I`~`IV.2.나`
 > 등, `IV.3` 포함) 정상 적재, 의료법은 `제2조`/`제27조`/`제56조` 3개 정상 적재. mock
@@ -52,7 +54,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | 웰니스판단기준 0091-03 | 2026.2 개정 | `kr-mfds-wellness-0091-03-20260212` | `kr-mfds-wellness-0091-03-20260212` | ✅ 일치 | ✅ **조문 단위로 재청킹 완료** (PR #25) — 원문 17~18쪽과 대조해 구조 확인(`III.2.가` 등) | gate_matrix 6 + correction_rules 54 = **60건** | ✅ 해소 | 2026-08-17 | 재청킹 검증 과정에서 gate_matrix 2건(`III.가`→`III.2.가`, `III.다`→`III.2.다`)의 자체 표기 오류 발견·수정. correction_rules 54건(`IV.1~3` 계열)은 전부 정상 확인 |
 | 모바일 의료용 앱 안전관리 지침 | 2020.2 개정 | `kr-mfds-mobile-medical-app-guide-20200225` (2026-08-17 수정, 구 `kr-mobile-medical-app-guide-20200221`) | `kr-mfds-mobile-medical-app-guide-20200225` | ✅ **일치 확정** | 미확인 (RAG 청킹 대상에 이 문서 chunk 없음 — 확인 필요) | gate_matrix 1건 | ✅ 정상(document_id) / 🟡 청킹 확인 필요 | 2026-08-17 | 로컬 PDF(`kr-mobile-medical-app-guide-20200221.pdf`) 표지·제개정이력서 직접 확인 — "2020.2.21."은 문서 자체에 인쇄된 공식 승인일자(제·개정 이력서 2번 항목). PDF 파일 CreationDate는 2020-02-24. RAG의 2020-02-25는 MFDS 홈페이지 게시일로 추정 — 같은 문서, 날짜 출처만 다름. `MFDS-G-2026-03` 식별자 건 해소 |
-| 비의료 건강관리서비스 가이드라인 및 사례집 | **2차(2022.9)** | `kr-mohw-nonmedical-health-guide-202209` | `kr-mohw-nonmedical-health-guide-202209` | ✅ **일치** | ✅ 장/절 + Q&A 단위(`I`, `II.3`, `III.3`, `Q11` 등 31건) | correction_rules **29건** | ✅ 해소 | 2026-09-06 | 2019년 1차본은 일반 참고용으로 유지하고, 룰베이스 근거 조회는 2022년 2차본 document_id만 사용 |
+| 비의료 건강관리서비스 가이드라인 및 사례집 | **2차(2022.9)** | `kr-mohw-nonmedical-health-guide-202209` | `kr-mohw-nonmedical-health-guide-202209` | ✅ **일치** | ✅ 장/절 + Q&A 단위(`I`, `II.3`, `III.3`, `Q11` 등 31건) | correction_rules **29건** | ✅ 해소 | 2026-09-06 | 2019년 1차본은 일반 참고용으로 유지하고, 룰베이스 근거 조회는 2022년 2차본 document_id만 사용. 청킹 스크립트에서 31개/핵심 section/핵심 문구/중복 없음 검증 |
 | 약사법 | 시행 2026.6.21, 법률 제21109호 | `kr-pharmaceutical-affairs-act-20260621` | `kr-pharmaceutical-affairs-act-20260621` | ✅ 일치 | ✅ 조문 단위(`제2조`/`제20조`/`제23조`/`제23조의2`/`제24조`) | correction_rules 7건 | 🟡 일부 조치 필요 | 2026-08-17 | `제44조` 1건 미청킹 — 표2 참조 |
 | 의료기기법 | 시행 2026.7.1, 법률 제21263호 | `kr-medical-device-act-20260701` | `kr-medical-device-act-20260701` | ✅ 일치 | ✅ 조문 단위(`제2조`/`제24조`) | correction_rules 7건 | ✅ 정상 | 2026-08-17 | 인용 조문(`제2조`)이 청킹 범위 안 |
 | 의료기기법 시행규칙 별표7 | 시행 2026.7.1, 총리령 제2127호 | `kr-medical-device-act-rule-annex7-20260701` | `kr-medical-device-act-rule-annex7-20260701` | ✅ 일치 | ✅ 항목 단위(`별표7.제1호`~`제18호`) | RAG 전용(Stage C 룰추출 대상 아님, advertising_score 척도 근거로만 사용) | ✅ 정상 | 2026-08-17 | 18개 항목 전부 청킹 완료 확인 |
