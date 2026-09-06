@@ -41,17 +41,39 @@ async def test_whitelisted_document_gets_real_quote(monkeypatch) -> None:
 
 
 async def test_non_whitelisted_document_stays_none(monkeypatch) -> None:
-    """비의료 건강관리서비스 가이드라인은 판본 불일치(룰베이스_RAG_정합성_추적표.md 표1)라 화이트리스트 밖."""
     async def fake_lookup(request):
         raise AssertionError("화이트리스트 밖 문서는 RAG 조회를 호출하면 안 된다.")
 
     monkeypatch.setattr(judgement, "lookup_rag_chunks", fake_lookup)
 
-    m = match("kr-mohw-nonmedical-health-guide-202209", "II")
+    m = match("kr-unverified-guide", "II")
     await _fill_quotes([m])
     assert m.legal_basis.quote is None
     assert m.legal_basis.quote_status == "UNTRUSTED_DOCUMENT"
     assert "검증되지 않아" in m.legal_basis.quote_message
+
+
+async def test_nonmedical_2022_document_gets_real_quote(monkeypatch) -> None:
+    async def fake_lookup(request):
+        assert request.document_id == "kr-mohw-nonmedical-health-guide-202209"
+        assert request.section_ids == ["II.3"]
+        return SimpleNamespace(
+            result=[
+                SimpleNamespace(
+                    section_id="II.3",
+                    chunk_text="의료행위 판단 기준에 따라 비의료기관의 건강관리서비스 범위를 검토한다.",
+                )
+            ]
+        )
+
+    monkeypatch.setattr(judgement, "lookup_rag_chunks", fake_lookup)
+
+    m = match("kr-mohw-nonmedical-health-guide-202209", "II.3")
+    await _fill_quotes([m])
+    assert m.legal_basis.quote is not None
+    assert "의료행위 판단 기준" in m.legal_basis.quote
+    assert m.legal_basis.quote_status == "FOUND"
+    assert m.legal_basis.quote_message is None
 
 
 async def test_whitelisted_document_missing_chunk_stays_none(monkeypatch) -> None:
