@@ -117,6 +117,12 @@ _RAG_TRUSTED_DOCUMENT_IDS = {
     "kr-medical-act-20260407",
 }
 
+_QUOTE_UNTRUSTED_DOCUMENT_MESSAGE = (
+    "RAG 원문 판본 또는 청킹 상태가 아직 검증되지 않아 잘못된 원문 표시를 막기 위해 quote를 비워둡니다."
+)
+_QUOTE_MISSING_CHUNK_MESSAGE = "RAG 문서는 검증됐지만 요청한 section_id에 해당하는 chunk가 아직 없습니다."
+_QUOTE_LOOKUP_FAILED_MESSAGE = "RAG 근거 조회 중 오류가 발생해 quote를 비워둡니다."
+
 
 class GateRequest(BaseModel):
     session_id: str
@@ -412,6 +418,9 @@ async def _fill_quotes(matches: list[CorrectionMatch]) -> None:
     for match in matches:
         if match.legal_basis.document_id in _RAG_TRUSTED_DOCUMENT_IDS:
             by_document.setdefault(match.legal_basis.document_id, []).append(match)
+        else:
+            match.legal_basis.quote_status = "UNTRUSTED_DOCUMENT"
+            match.legal_basis.quote_message = _QUOTE_UNTRUSTED_DOCUMENT_MESSAGE
 
     for document_id, group in by_document.items():
         section_ids = list({m.legal_basis.article for m in group})
@@ -420,10 +429,19 @@ async def _fill_quotes(matches: list[CorrectionMatch]) -> None:
                 RagChunkLookupRequest(document_id=document_id, section_ids=section_ids)
             )
         except Exception:
+            for match in group:
+                match.legal_basis.quote_status = "LOOKUP_FAILED"
+                match.legal_basis.quote_message = _QUOTE_LOOKUP_FAILED_MESSAGE
             continue
         chunk_by_section = {chunk.section_id: chunk.chunk_text for chunk in response.result}
         for match in group:
             match.legal_basis.quote = chunk_by_section.get(match.legal_basis.article)
+            if match.legal_basis.quote is None:
+                match.legal_basis.quote_status = "MISSING_CHUNK"
+                match.legal_basis.quote_message = _QUOTE_MISSING_CHUNK_MESSAGE
+            else:
+                match.legal_basis.quote_status = "FOUND"
+                match.legal_basis.quote_message = None
 
 
 async def _match_correction_rules(
