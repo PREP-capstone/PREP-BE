@@ -51,3 +51,5 @@ class LegalBasis(BaseModel):
     article: str
     title: str | None = None  # DOCUMENT_TITLES(app/domain/legal_documents.py) 매핑에 없으면 None
     quote: str | None = None
+    quote_status: Literal["FOUND", "UNTRUSTED_DOCUMENT", "MISSING_CHUNK", "LOOKUP_FAILED"] | None = None
+    quote_message: str | None = None

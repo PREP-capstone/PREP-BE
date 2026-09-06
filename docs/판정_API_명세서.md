@@ -40,12 +40,28 @@ Authorization: Bearer `<accessToken>`
 ## 공용 응답 스키마 — `LegalBasis`
 
 ```json
-{ "document_id": "string", "article": "string", "quote": "string|null" }
+{
+  "document_id": "string",
+  "article": "string",
+  "title": "string|null",
+  "quote": "string|null",
+  "quote_status": "FOUND|UNTRUSTED_DOCUMENT|MISSING_CHUNK|LOOKUP_FAILED|null",
+  "quote_message": "string|null"
+}
 ```
 
 `quote`는 화이트리스트 문서(`judgement.py`의 `_RAG_TRUSTED_DOCUMENT_IDS`, 5개)에
 한해서만 RAG `rag/chunks/lookup`으로 채워진다. 그 외 문서는 판본 불일치·미청킹
 등으로 틀린 원문이 나올 위험이 있어 항상 `null`이다(§알려진 한계 참고).
+`quote_status`는 `quote`가 비어 있는 이유를 FE가 구분해서 표시할 수 있도록 내려준다.
+
+| quote_status | 의미 | FE 표시 권장 |
+|---|---|---|
+| `FOUND` | RAG에서 원문 quote 조회 성공 | quote 본문 표시 |
+| `UNTRUSTED_DOCUMENT` | 판본 불일치·청킹 미검증 등으로 화이트리스트 제외 | 원문 확인 중 / quote 영역 숨김 |
+| `MISSING_CHUNK` | 문서는 검증됐지만 해당 section_id chunk가 없음 | 조문 청킹 대기 / quote 영역 숨김 |
+| `LOOKUP_FAILED` | RAG 조회 중 오류 발생 | 근거 조회 일시 실패 |
+| `null` | 구버전 데이터 또는 quote 조회 대상 아님 | quote 없으면 영역 숨김 |
 
 ---
 
@@ -100,7 +116,14 @@ Authorization: Bearer `<accessToken>`
   "final_regulatory_grade": "낮음|중간|높음",
   "matched_rules": [
     {
-      "legal_basis": { "document_id": "string", "article": "string", "quote": null },
+      "legal_basis": {
+        "document_id": "string",
+        "article": "string",
+        "title": "string|null",
+        "quote": null,
+        "quote_status": "UNTRUSTED_DOCUMENT",
+        "quote_message": "RAG 원문 판본 또는 청킹 상태가 아직 검증되지 않아 잘못된 원문 표시를 막기 위해 quote를 비워둡니다."
+      },
       "exact_phrase_match": true
     }
   ]
@@ -133,7 +156,14 @@ Authorization: Bearer `<accessToken>`
     {
       "risky_text": "string",
       "safe_text": "string",
-      "legal_basis": { "document_id": "string", "article": "string", "quote": null },
+      "legal_basis": {
+        "document_id": "string",
+        "article": "string",
+        "title": "string|null",
+        "quote": null,
+        "quote_status": "UNTRUSTED_DOCUMENT",
+        "quote_message": "RAG 원문 판본 또는 청킹 상태가 아직 검증되지 않아 잘못된 원문 표시를 막기 위해 quote를 비워둡니다."
+      },
       "exact_phrase_match": true
     }
   ]
@@ -171,7 +201,8 @@ Authorization: Bearer `<accessToken>`
   시행규칙 별표7·의료법) 전부 RDS 실데이터로 정상 채워지는 것까지 확인됨
   (2026-08-20, `룰베이스_RAG_정합성_추적표.md` v1.5). 화이트리스트 밖 문서 또는
   화이트리스트 문서라도 아직 청킹 안 된 특정 조문(예: 약사법 `제44조`)은 에러 없이
-  `quote: null`로 남는다.
+  `quote: null`로 남는다. 이때 `quote_status`/`quote_message`로 미제공 사유를 함께
+  내려준다.
 
 ## 진행 상황 (이 API를 붙일 때 참고)
 
