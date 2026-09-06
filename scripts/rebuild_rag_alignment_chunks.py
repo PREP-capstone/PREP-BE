@@ -26,6 +26,16 @@ DEFAULT_SOURCE_DIR = ROOT / "data" / "rag" / "source_documents"
 WELLNESS_FILE_NAME = "의료기기와+개인용+건강관리(웰니스)제품+판단기준(지침).pdf"
 MEDICAL_ACT_FILE_NAME = "의료법(법률)(제21524호)(20260407).pdf"
 NONMEDICAL_2022_FILE_NAME = "비의료 건강관리서비스 가이드라인_및_사례집(2차).pdf"
+NONMEDICAL_2022_SOURCE_LABEL = "data/rag/source_documents/nonmedical_health_guide_202209.pdf"
+NONMEDICAL_2022_SOURCE_URL = "https://eiec.kdi.re.kr/policy/materialView.do?num=229658"
+NONMEDICAL_2022_SOURCE_SHA256 = "117a4475ed09fb83108f107bf26ac8f69dcb14b32a7f4bacc854d6e0df0fe04b"
+NONMEDICAL_2022_REQUIRED_SECTIONS = {"II.3", "III.3", "Q11", "Q13"}
+NONMEDICAL_2022_REQUIRED_PHRASES = {
+    "II.3": "의료행위 판단 기준",
+    "III.3": "고혈압･당뇨병 환자 대상 서비스 예시",
+    "Q11": "의료법 제27조제1항 위반",
+    "Q13": "개인정보보호법",
+}
 
 
 @dataclass
@@ -220,6 +230,127 @@ def build_medical_act_chunks(medical_act_pdf: Path) -> list[Chunk]:
     return output
 
 
+def build_nonmedical_2022_chunks(nonmedical_2022_pdf: Path) -> list[Chunk]:
+    lines = iter_lines_with_pages(extract_pdf_text(nonmedical_2022_pdf))
+    page_lines: dict[int, list[TextLine]] = {}
+    for line in lines:
+        page_lines.setdefault(line.page, []).append(line)
+
+    section_ranges = [
+        ("I", "개 요", 14, 15),
+        ("I.1", "목적", 14, 14),
+        ("I.2", "비의료 건강관리서비스 개념", 15, 15),
+        ("II", "비의료 건강관리서비스 판단 기준", 16, 24),
+        ("II.1", "비의료기관이 제공 가능한 건강관리서비스", 16, 17),
+        ("II.2", "비의료기관이 제공 불가능한 서비스", 18, 18),
+        ("II.3", "의료행위 판단 기준", 19, 21),
+        ("II.4", "비의료기관의 건강관리서비스 제공 시 유의할 사항", 22, 24),
+        ("III", "비의료 건강관리서비스 적용 사례", 25, 32),
+        ("III.1", "건강한 사람 대상 서비스 예시", 25, 25),
+        ("III.2", "비만관리(체중감량) 서비스 예시", 26, 26),
+        ("III.3", "고혈압･당뇨병 환자 대상 서비스 예시", 27, 27),
+        ("III.4", "기타 제공 서비스 예시", 28, 31),
+        ("III.5", "기타 제공 시 유의사항", 32, 32),
+        ("IV", "유권해석 절차", 33, 35),
+        ("IV.1", "신청 : 민원인 → 보건복지부", 33, 33),
+        ("IV.2", "자문 : 보건복지부 → 위원회", 33, 33),
+        ("IV.3", "유권해석 : 보건복지부 → 민원인", 33, 35),
+    ]
+
+    output: list[Chunk] = []
+    for section_id, title, page_start, page_end in section_ranges:
+        section_lines = [
+            line
+            for page in range(page_start, page_end + 1)
+            for line in page_lines.get(page, [])
+        ]
+        text = "\n".join(line.text for line in section_lines).strip()
+        output.append(
+            Chunk(
+                document_id=NONMEDICAL_2022_DOC_ID,
+                section_id=section_id,
+                section_title=title,
+                chunk_type="GUIDE_SECTION",
+                text=text,
+                page_start=page_start,
+                page_end=page_end,
+                source_url=NONMEDICAL_2022_SOURCE_URL,
+                local_file_path=NONMEDICAL_2022_SOURCE_LABEL,
+            )
+        )
+
+    current_question: tuple[str, str, list[TextLine]] | None = None
+    for item in [line for line in lines if line.page >= 38]:
+        question = re.match(r"^0?([1-9]|1[0-3])\s+(.+)$", item.text)
+        if question:
+            if current_question:
+                section_id, title, question_lines = current_question
+                output.append(
+                    Chunk(
+                        document_id=NONMEDICAL_2022_DOC_ID,
+                        section_id=section_id,
+                        section_title=title,
+                        chunk_type="GUIDE_QA",
+                        text="\n".join(line.text for line in question_lines).strip(),
+                        page_start=min(line.page for line in question_lines),
+                        page_end=max(line.page for line in question_lines),
+                        source_url=NONMEDICAL_2022_SOURCE_URL,
+                        local_file_path=NONMEDICAL_2022_SOURCE_LABEL,
+                        tag_privacy=section_id in {"Q12", "Q13"},
+                    )
+                )
+            question_number = int(question.group(1))
+            current_question = (f"Q{question_number}", question.group(2).strip(), [item])
+            continue
+
+        if current_question:
+            current_question[2].append(item)
+
+    if current_question:
+        section_id, title, question_lines = current_question
+        output.append(
+            Chunk(
+                document_id=NONMEDICAL_2022_DOC_ID,
+                section_id=section_id,
+                section_title=title,
+                chunk_type="GUIDE_QA",
+                text="\n".join(line.text for line in question_lines).strip(),
+                page_start=min(line.page for line in question_lines),
+                page_end=max(line.page for line in question_lines),
+                source_url=NONMEDICAL_2022_SOURCE_URL,
+                local_file_path=NONMEDICAL_2022_SOURCE_LABEL,
+                tag_privacy=section_id in {"Q12", "Q13"},
+            )
+        )
+    validate_nonmedical_2022_chunks(output)
+    return output
+
+
+def validate_nonmedical_2022_chunks(chunks: list[Chunk]) -> None:
+    section_ids = [chunk.section_id for chunk in chunks]
+    duplicates = sorted({section_id for section_id in section_ids if section_ids.count(section_id) > 1})
+    if duplicates:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} duplicate section_id values: {duplicates}")
+
+    expected_count = 31
+    if len(chunks) != expected_count:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} expected {expected_count} chunks, got {len(chunks)}")
+
+    missing = sorted(NONMEDICAL_2022_REQUIRED_SECTIONS - set(section_ids))
+    if missing:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} missing required sections: {missing}")
+
+    by_section = {chunk.section_id: chunk for chunk in chunks}
+    for section_id, phrase in NONMEDICAL_2022_REQUIRED_PHRASES.items():
+        text = by_section[section_id].text
+        if phrase not in text:
+            raise ValueError(f"{NONMEDICAL_2022_DOC_ID} {section_id} missing phrase: {phrase}")
+
+    empty_sections = [chunk.section_id for chunk in chunks if not chunk.text.strip()]
+    if empty_sections:
+        raise ValueError(f"{NONMEDICAL_2022_DOC_ID} empty sections: {empty_sections}")
+
+
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
@@ -262,54 +393,57 @@ def chunk_to_row(chunk: Chunk, order: int) -> dict[str, str]:
 
 def upsert_nonmedical_2022_document() -> None:
     fieldnames, rows = read_csv(DOCUMENTS_CSV)
-    if any(row["document_id"] == NONMEDICAL_2022_DOC_ID for row in rows):
-        return
-    rows.append(
-        {
-            "document_id": NONMEDICAL_2022_DOC_ID,
-            "law_id": "MOHW_NONMEDICAL_HEALTH_GUIDE_2ND",
-            "title": "비의료 건강관리서비스 가이드라인 및 사례집(2차)",
-            "doc_type": "GUIDE",
-            "source_subtype": "MOHW_GUIDE",
-            "issuing_org": "보건복지부",
-            "jurisdiction": "KR",
-            "rag_category": "의료규제 / 웰니스 / 비의료 건강관리",
-            "effective_date": "",
-            "publication_date": "2022-09-01",
-            "status": "pending_source",
-            "tag_regulatory": "true",
-            "tag_privacy": "true",
-            "tag_advertising": "false",
-            "usage_scope": "BOTH",
-            "source_url": "https://eiec.kdi.re.kr/policy/materialView.do?num=229658",
-            "collection_source": "공식 보도자료 확인 / 원문 PDF 확보 필요",
-            "processing_note": "룰베이스는 2차본(2022.9)을 인용한다. 공식 원문 PDF 확보 후 active 전환 및 청킹 필요.",
-        }
-    )
+    row_data = {
+        "document_id": NONMEDICAL_2022_DOC_ID,
+        "law_id": "MOHW_NONMEDICAL_HEALTH_GUIDE_2ND",
+        "title": "비의료 건강관리서비스 가이드라인 및 사례집(2차)",
+        "doc_type": "GUIDE",
+        "source_subtype": "MOHW_GUIDE",
+        "issuing_org": "보건복지부",
+        "jurisdiction": "KR",
+        "rag_category": "의료규제 / 웰니스 / 비의료 건강관리",
+        "effective_date": "",
+        "publication_date": "2022-09-01",
+        "status": "active",
+        "tag_regulatory": "true",
+        "tag_privacy": "true",
+        "tag_advertising": "false",
+        "usage_scope": "BOTH",
+        "source_url": NONMEDICAL_2022_SOURCE_URL,
+        "collection_source": "공식 보도자료로 2022.9 발간 사실 확인 / PDF 원문은 별도 보관 파일 기준",
+        "processing_note": f"룰베이스가 인용하는 2차본(2022.9) 기준 문서. 2019년 1차본과 판본이 다르므로 judgement 근거 조회는 이 document_id를 사용한다. 검증 파일 SHA256={NONMEDICAL_2022_SOURCE_SHA256}.",
+    }
+    for row in rows:
+        if row["document_id"] == NONMEDICAL_2022_DOC_ID:
+            row.update(row_data)
+            break
+    else:
+        rows.append(row_data)
     write_csv(DOCUMENTS_CSV, fieldnames, rows)
 
 
 def upsert_nonmedical_2022_queue(nonmedical_2022_pdf: Path) -> None:
     fieldnames, rows = read_csv(QUEUE_CSV)
-    if any(row["document_id"] == NONMEDICAL_2022_DOC_ID for row in rows):
-        return
     order_field = "queue_order" if "queue_order" in fieldnames else "priority"
-    next_priority = max(int(row[order_field]) for row in rows if row.get(order_field, "").isdigit()) + 1
-    rows.append(
-        {
-            order_field: str(next_priority),
-            "phase": "phase_1_core",
-            "document_id": NONMEDICAL_2022_DOC_ID,
-            "title": "비의료 건강관리서비스 가이드라인 및 사례집(2차)",
-            "status": "pending_source",
-            "file_role": "PRIMARY_TEXT",
-            "default_action": "needs_source",
-            "chunk_unit": "장/절/Q&A 단위",
-            "pages": "",
-            "local_file_path": source_document_label(nonmedical_2022_pdf),
-            "note": "룰베이스 correction_rules 29건 인용 문서. 2019년 1차본과 판본 불일치 방지를 위해 2차본 공식 PDF 확보 후 청킹.",
-        }
-    )
+    row_data = {
+        "phase": "phase_1_core",
+        "document_id": NONMEDICAL_2022_DOC_ID,
+        "title": "비의료 건강관리서비스 가이드라인 및 사례집(2차)",
+        "status": "active",
+        "file_role": "PRIMARY_TEXT",
+        "default_action": "primary_chunk",
+        "chunk_unit": "장/절/Q&A 단위",
+        "pages": "42",
+        "local_file_path": NONMEDICAL_2022_SOURCE_LABEL,
+        "note": "룰베이스 correction_rules 29건 인용 문서. 2022년 2차본 기준으로 장/절 및 Q&A 단위 청킹.",
+    }
+    for row in rows:
+        if row["document_id"] == NONMEDICAL_2022_DOC_ID:
+            row.update(row_data)
+            break
+    else:
+        next_priority = max(int(row[order_field]) for row in rows if row.get(order_field, "").isdigit()) + 1
+        rows.append({order_field: str(next_priority), **row_data})
     write_csv(QUEUE_CSV, fieldnames, rows)
 
 
@@ -326,15 +460,19 @@ def annotate_nonmedical_2019_document() -> None:
     write_csv(DOCUMENTS_CSV, fieldnames, rows)
 
 
-def rebuild_chunks(wellness_pdf: Path, medical_act_pdf: Path) -> None:
+def rebuild_chunks(wellness_pdf: Path, medical_act_pdf: Path, nonmedical_2022_pdf: Path) -> None:
     fieldnames, rows = read_csv(CHUNKS_CSV)
     rows = [
         row
         for row in rows
-        if row["document_id"] not in {WELLNESS_DOC_ID, MEDICAL_ACT_DOC_ID}
+        if row["document_id"] not in {WELLNESS_DOC_ID, MEDICAL_ACT_DOC_ID, NONMEDICAL_2022_DOC_ID}
     ]
 
-    generated = build_wellness_chunks(wellness_pdf) + build_medical_act_chunks(medical_act_pdf)
+    generated = (
+        build_wellness_chunks(wellness_pdf)
+        + build_medical_act_chunks(medical_act_pdf)
+        + build_nonmedical_2022_chunks(nonmedical_2022_pdf)
+    )
     start_order_by_doc: dict[str, int] = {}
     for chunk in generated:
         order = start_order_by_doc.get(chunk.document_id, 0) + 1
@@ -344,6 +482,7 @@ def rebuild_chunks(wellness_pdf: Path, medical_act_pdf: Path) -> None:
     write_csv(CHUNKS_CSV, fieldnames, rows)
     print(f"rebuilt {WELLNESS_DOC_ID}: {start_order_by_doc.get(WELLNESS_DOC_ID, 0)} chunks")
     print(f"rebuilt {MEDICAL_ACT_DOC_ID}: {start_order_by_doc.get(MEDICAL_ACT_DOC_ID, 0)} chunks")
+    print(f"rebuilt {NONMEDICAL_2022_DOC_ID}: {start_order_by_doc.get(NONMEDICAL_2022_DOC_ID, 0)} chunks")
     print(f"total chunks: {len(rows)}")
 
 
@@ -381,7 +520,7 @@ def main() -> int:
     nonmedical_2022_pdf = resolve_source_path(source_dir, args.nonmedical_2022_pdf, NONMEDICAL_2022_FILE_NAME)
 
     try:
-        rebuild_chunks(wellness_pdf, medical_act_pdf)
+        rebuild_chunks(wellness_pdf, medical_act_pdf, nonmedical_2022_pdf)
         upsert_nonmedical_2022_document()
         upsert_nonmedical_2022_queue(nonmedical_2022_pdf)
         annotate_nonmedical_2019_document()

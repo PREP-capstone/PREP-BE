@@ -584,25 +584,28 @@ section_id = '별표7.제8호' 로 정확히 조회
 
 **비용**: chunk 18개 증가. 33개 문서 전체 규모에서 무시할 수준이며, 각 항목이 짧아 chunk 크기도 적정합니다.
 
-### 6. 비의료 건강관리서비스 가이드라인 및 사례집 2차본(2022.9) PDF 미확보 — 최우선 확보 필요
+### 6. 비의료 건강관리서비스 가이드라인 및 사례집 2차본(2022.9) — 해소됨
 
-**증상**: 규제위험도 판정 결과에서 이 문서를 근거로 잡은 매치가 나올 때마다(예: 만성질환·개입치료 계열 테스트 케이스) `legal_basis.quote`가 항상 `null`로 나가 근거 원문이 리포트에 안 뜹니다. 사용자 입장에선 "사례집 항목만 내용이 안 보인다"로 체감됩니다.
+**기존 증상**: 규제위험도 판정 결과에서 이 문서를 근거로 잡은 매치가 나올 때마다(예: 만성질환·개입치료 계열 테스트 케이스) `legal_basis.quote`가 항상 `null`로 나가 근거 원문이 리포트에 안 떴습니다. 사용자 입장에선 "사례집 항목만 내용이 안 보인다"로 체감됐습니다.
+
+**처리 결과(2026-09-06)**: 2차본(2022.9) 원문 기준으로 metadata를 `active` 전환하고, `evidence_chunks_draft.csv`에 장/절 18개 + Q&A 13개 = **31개 청크**를 추가했습니다. `judgement/*` quote 조회 화이트리스트에도 `kr-mohw-nonmedical-health-guide-202209`를 추가해, 룰베이스가 이 document_id와 section_id를 인용하면 RAG에서 원문 quote를 조회할 수 있습니다.
+
+**출처/무결성 메모**: metadata의 `source_url`은 공식 발간 사실 확인용 보도자료 URL입니다. 청킹에 사용한 PDF 원문은 별도 보관 파일 기준이며, 검증한 파일의 SHA256은 `117a4475ed09fb83108f107bf26ac8f69dcb14b32a7f4bacc854d6e0df0fe04b`입니다.
 
 **현재 상태 (직접 확인함)**
 
 | 항목 | 상태 |
 | --- | --- |
-| `evidence_documents_draft.csv` | `kr-mohw-nonmedical-health-guide-202209` row는 존재하나 `status=pending_source` |
-| `evidence_chunks_draft.csv` | 이 문서의 청크 **0건** |
-| `chunking_queue.csv` | `default_action=needs_source`로 이미 대기 중. 비고: "룰베이스 correction_rules 29건 인용 문서. 2019년 1차본과 판본 불일치 방지를 위해 2차본 공식 PDF 확보 후 청킹" |
-| `local_file_path` | `/Users/munchaerin/Desktop/졸프 data/비의료 건강관리서비스 가이드라인_및_사례집(2차).pdf` — 원본 PC에만 있고 다른 환경엔 없음 |
-| `rebuild_rag_alignment_chunks.py` | 웰니스판단기준·의료법 청킹 함수(`build_wellness_chunks`/`build_medical_act_chunks`)는 있지만 이 문서용 청킹 함수는 아직 미구현 |
+| `evidence_documents_draft.csv` | `kr-mohw-nonmedical-health-guide-202209` row `status=active` |
+| `evidence_chunks_draft.csv` | 이 문서의 청크 **31건** |
+| `chunking_queue.csv` | `default_action=primary_chunk`, `pages=42` |
+| `local_file_path` | `data/rag/source_documents/nonmedical_health_guide_202209.pdf` |
+| `rebuild_rag_alignment_chunks.py` | `build_nonmedical_2022_chunks()` 추가. `--nonmedical-2022-pdf`로 원문 파일을 넘기면 재생성 가능. 생성 결과는 31개/중복 없음/핵심 section 및 문구 포함 여부를 검증함 |
 
-**왜 최우선인지**: `룰베이스_RAG_정합성_추적표.md` 표1에서 이 문서만 유일하게 🔴(조치 필요) 상태로 남아있고, `correction_rules` **29건**이 이 문서를 `legal_basis_doc`으로 참조합니다 — 판정엔진이 인용하는 8개 문서 중 인용 건수가 가장 많은 문서인데 근거 원문을 하나도 못 보여주는 상태입니다.
+**왜 중요했는지**: `correction_rules` **29건**이 이 문서를 `legal_basis_doc`으로 참조합니다. 잘못된 1차본을 보여주지 않기 위해 quote를 막아두던 상태에서, 2차본을 별도 document_id로 적재해 판본 불일치 위험을 해소했습니다.
 
-**요청사항**
+**배포 시 주의사항**
 
-1. 2차본(2022.9) 공식 PDF를 `data/rag/source_documents/`에 확보
-2. `correction_rules WHERE legal_basis_doc = 'kr-mohw-nonmedical-health-guide-202209'`의 실제 `legal_basis_article` 29건 목록 기준으로 section_id 청킹 범위 확정 (§2 section_id 표기 정규화 규칙 적용)
-3. 청킹 완료 후 `evidence_documents_draft.csv`의 `status`를 `pending_source → active`로 전환, `import_evidence_csv.py`로 DB 반영
-4. 완료되면 `judgement.py`팀(1번)에 알려주시면 `_RAG_TRUSTED_DOCUMENT_IDS` 화이트리스트에 추가 + `룰베이스_RAG_정합성_추적표.md` 표1 갱신하겠습니다
+1. RDS 반영 시 `scripts/import_evidence_csv.py --sync-delete-stale-chunks`로 기존 stale chunk를 정리한다.
+2. Chroma 반영 시 embedding 재생성 스크립트도 stale 삭제 옵션을 같이 사용한다.
+3. 원문 PDF는 Git에 올리지 않고, 필요 시 `data/rag/source_documents/nonmedical_health_guide_202209.pdf` 경로에 배치한 뒤 재생성한다.

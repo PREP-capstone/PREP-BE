@@ -107,10 +107,11 @@ async def _load_session(session_id: str) -> tuple[AnalysisSession, list[HealthDa
 
 
 # 룰베이스_RAG_정합성_추적표.md 표1에서 ✅(정상/해소)로 확인된 문서만. document_id가 우연히
-# 일치해도 판본이 다르거나(비의료 건강관리서비스 가이드라인) 미청킹인 문서는 quote를 채우면
+# 일치해도 판본이 다르거나 미청킹인 문서는 quote를 채우면
 # 틀린 원문이 나올 수 있어 제외한다 — 그 표가 갱신되면 이 목록도 같이 갱신해야 한다.
 _RAG_TRUSTED_DOCUMENT_IDS = {
     "kr-mfds-wellness-0091-03-20260212",
+    "kr-mohw-nonmedical-health-guide-202209",
     "kr-pharmaceutical-affairs-act-20260621",
     "kr-medical-device-act-20260701",
     "kr-medical-device-act-rule-annex7-20260701",
