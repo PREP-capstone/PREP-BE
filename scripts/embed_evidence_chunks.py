@@ -15,9 +15,14 @@ from app.db.session import AsyncSessionLocal
 from app.rag.embeddings import EmbeddingClient, content_hash
 from app.rag.vector_store import get_evidence_collection
 
+MAX_EMBEDDING_TEXT_CHARS = 6000
+EMBEDDING_PART_SEPARATOR = "::part"
+
 
 SELECT_ACTIVE_IDS_SQL = """
-SELECT ec.chunk_id
+SELECT
+    ec.chunk_id,
+    ec.chunk_text
 FROM evidence_chunks ec
 JOIN evidence_documents ed ON ed.document_id = ec.document_id
 WHERE ec.status = 'active'
@@ -67,6 +72,9 @@ def batched[T](items: list[T], size: int) -> list[list[T]]:
 def _metadata(row: dict, row_hash: str, embedding_model: str) -> dict:
     return {
         "document_id": row["document_id"],
+        "parent_chunk_id": row.get("parent_chunk_id", row["chunk_id"]),
+        "chunk_part_index": row.get("chunk_part_index", 1),
+        "chunk_part_count": row.get("chunk_part_count", 1),
         "title": row["title"],
         "doc_type": row["doc_type"],
         "section_id": row["section_id"] or "",
@@ -108,8 +116,65 @@ async def load_active_chunk_ids(document_id: str | None) -> set[str]:
         params["document_id"] = document_id
 
     async with AsyncSessionLocal() as session:
-        rows = (await session.execute(text(query), params)).scalars().all()
-    return set(rows)
+        rows = (await session.execute(text(query), params)).mappings().all()
+    return {
+        part["chunk_id"]
+        for row in rows
+        for part in split_embedding_parts(dict(row))
+    }
+
+
+def split_text_for_embedding(text: str, max_chars: int = MAX_EMBEDDING_TEXT_CHARS) -> list[str]:
+    if len(text) <= max_chars:
+        return [text]
+
+    parts: list[str] = []
+    current = ""
+    for paragraph in text.splitlines(keepends=True):
+        if len(paragraph) > max_chars:
+            if current.strip():
+                parts.append(current.strip())
+                current = ""
+            parts.extend(
+                paragraph[index:index + max_chars].strip()
+                for index in range(0, len(paragraph), max_chars)
+                if paragraph[index:index + max_chars].strip()
+            )
+            continue
+
+        if len(current) + len(paragraph) > max_chars and current.strip():
+            parts.append(current.strip())
+            current = paragraph
+        else:
+            current += paragraph
+
+    if current.strip():
+        parts.append(current.strip())
+    return parts
+
+
+def split_embedding_parts(row: dict) -> list[dict]:
+    text_parts = split_text_for_embedding(row["chunk_text"])
+    if len(text_parts) == 1:
+        return [{
+            "chunk_id": row["chunk_id"],
+            "chunk_text": text_parts[0],
+            "parent_chunk_id": row["chunk_id"],
+            "chunk_part_index": 1,
+            "chunk_part_count": 1,
+        }]
+
+    width = len(str(len(text_parts)))
+    return [
+        {
+            "chunk_id": f"{row['chunk_id']}{EMBEDDING_PART_SEPARATOR}{index:0{width}d}",
+            "chunk_text": text_part,
+            "parent_chunk_id": row["chunk_id"],
+            "chunk_part_index": index,
+            "chunk_part_count": len(text_parts),
+        }
+        for index, text_part in enumerate(text_parts, start=1)
+    ]
 
 
 def delete_stale_embeddings(active_chunk_ids: set[str], document_id: str | None, embedding_model: str) -> int:
@@ -141,10 +206,15 @@ async def load_candidate_chunks(document_id: str | None, embedding_model: str, f
         ).mappings().all()
 
     row_dicts = [dict(row) for row in rows]
-    existing_hashes = {} if force else _existing_hashes([row["chunk_id"] for row in row_dicts])
+    embedding_parts = [
+        {**row, **part}
+        for row in row_dicts
+        for part in split_embedding_parts(row)
+    ]
+    existing_hashes = {} if force else _existing_hashes([row["chunk_id"] for row in embedding_parts])
 
     candidates: list[dict] = []
-    for row in row_dicts:
+    for row in embedding_parts:
         row_hash = content_hash(row["chunk_text"])
         if force or existing_hashes.get(row["chunk_id"]) != row_hash:
             candidates.append({

@@ -64,7 +64,7 @@ class EvidenceRetriever:
         for chunk_id, document, metadata, distance in zip(ids, documents, metadatas, distances, strict=True):
             chunks.append(
                 RetrievedEvidenceChunk(
-                    chunk_id=chunk_id,
+                    chunk_id=metadata.get("parent_chunk_id") or chunk_id,
                     document_id=metadata["document_id"],
                     title=metadata["title"],
                     doc_type=metadata["doc_type"],
