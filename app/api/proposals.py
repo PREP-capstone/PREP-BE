@@ -288,8 +288,6 @@ async def generate_proposal(
 
 class CompleteSection(BaseModel):
     field_key: str
-    label: str
-    field_type: str
     value: SectionValue
 
 
@@ -307,18 +305,62 @@ class CompleteResponse(ApiResponse):
     result: CompleteResult
 
 
-@router.post("/{proposal_id}/complete", response_model=CompleteResponse)
-async def complete_proposal(proposal_id: str, request: CompleteRequest) -> CompleteResponse:
+@router.post(
+    "/{proposal_id}/complete",
+    response_model=CompleteResponse,
+    responses={400: {"model": ProposalErrorResponse}},
+)
+async def complete_proposal(proposal_id: str, request: CompleteRequest) -> CompleteResponse | JSONResponse:
     """"완료" 또는 "PDF 저장하기" 클릭 시 호출 -- 둘 다 동일 트리거로 취급한다(§0).
 
     이 시점부터 Redis TTL 10분이 시작된다. TTL 만료 후에는 GET .../pdf가
     PROPOSAL_NOT_FOUND(404)를 반환한다 -- Redis가 자동으로 지우므로 별도 삭제 API는 없다.
+
+    프론트는 field_key와 value만 보낸다. PDF 렌더링에 필요한 label/field_type은
+    proposal_field_definitions에서 서버가 직접 조회한다 -- 프론트가 다시 실어보낼 필요도
+    없고, 잘못된 field_type을 실어보내 PDF 렌더링이 깨지는 것도 막는다(리뷰 중 D-*).
     """
+    if request.template_type not in TEMPLATE_TYPES:
+        return await _error(
+            400,
+            "PROPOSAL_TEMPLATE_TYPE_INVALID",
+            f"template_type은 {sorted(TEMPLATE_TYPES)} 중 하나여야 합니다.",
+        )
+
+    field_keys = [section.field_key for section in request.sections]
+    async with AsyncSessionLocal() as session:
+        rows = (
+            await session.execute(
+                select(
+                    ProposalFieldDefinition.field_key,
+                    ProposalFieldDefinition.label,
+                    ProposalFieldDefinition.field_type,
+                ).where(ProposalFieldDefinition.field_key.in_(field_keys))
+            )
+        ).all()
+    meta = {row.field_key: (row.label, row.field_type) for row in rows}
+
+    unknown = [key for key in field_keys if key not in meta]
+    if unknown:
+        return await _error(
+            400,
+            "PROPOSAL_FIELD_KEY_INVALID",
+            f"알 수 없는 field_key입니다: {unknown}",
+        )
+
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=_PROPOSAL_TTL_SECONDS)
     payload = {
         "proposal_id": proposal_id,
         "template_type": request.template_type,
-        "sections": [section.model_dump() for section in request.sections],
+        "sections": [
+            {
+                "field_key": section.field_key,
+                "label": meta[section.field_key][0],
+                "field_type": meta[section.field_key][1],
+                "value": section.value,
+            }
+            for section in request.sections
+        ],
         "expires_at": expires_at.isoformat(),
     }
     await redis_client.set(
