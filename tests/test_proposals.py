@@ -339,13 +339,25 @@ def test_render_proposal_pdf_handles_empty_values_without_raising() -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_complete_proposal_rejects_unknown_template_type() -> None:
+    # template_type 검증은 DB 조회 전이라 마크 불필요.
+    response = await complete_proposal(
+        "prop-1",
+        CompleteRequest(template_type="NOPE", sections=[CompleteSection(field_key="company_overview", value="x")]),
+    )
+    assert response.status_code == 400
+    assert json.loads(response.body)["code"] == "PROPOSAL_TEMPLATE_TYPE_INVALID"
+
+
+@pytest.mark.db
 async def test_complete_proposal_stores_payload_with_ttl(monkeypatch) -> None:
+    """label/field_type을 서버가 proposal_field_definitions에서 조회하므로 DB 필요."""
     fake_set = AsyncMock()
     monkeypatch.setattr(proposals.redis_client, "set", fake_set)
 
     request = CompleteRequest(
         template_type="PSST",
-        sections=[CompleteSection(field_key="company_overview", label="기업개요·대표자", field_type="TEXT", value="최종본")],
+        sections=[CompleteSection(field_key="company_overview", value="최종본")],
     )
     response = await complete_proposal("prop-1", request)
 
@@ -353,10 +365,25 @@ async def test_complete_proposal_stores_payload_with_ttl(monkeypatch) -> None:
     fake_set.assert_awaited_once()
     call_args, kwargs = fake_set.call_args
     assert kwargs["ex"] == proposals._PROPOSAL_TTL_SECONDS
-    assert call_args[0] == "proposal:prop-1"
     stored = json.loads(call_args[1])
     assert stored["template_type"] == "PSST"
     assert stored["sections"][0]["value"] == "최종본"
+    # label/field_type이 요청에 없어도 서버가 채워야 한다.
+    assert stored["sections"][0]["label"] == "기업개요·대표자"
+    assert stored["sections"][0]["field_type"] == "TEXT"
+
+
+@pytest.mark.db
+async def test_complete_proposal_rejects_unknown_field_key(monkeypatch) -> None:
+    monkeypatch.setattr(proposals.redis_client, "set", AsyncMock())
+    response = await complete_proposal(
+        "prop-1",
+        CompleteRequest(
+            template_type="PSST", sections=[CompleteSection(field_key="does_not_exist", value="x")]
+        ),
+    )
+    assert response.status_code == 400
+    assert json.loads(response.body)["code"] == "PROPOSAL_FIELD_KEY_INVALID"
 
 
 async def test_get_proposal_pdf_returns_404_when_expired_or_missing(monkeypatch) -> None:

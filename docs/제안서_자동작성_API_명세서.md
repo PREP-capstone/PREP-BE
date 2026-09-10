@@ -226,16 +226,18 @@ Authorization: Bearer `<accessToken>`
 
 ```json
 // 요청 -- template_type은 GET .../pdf가 문서 제목을 고르는 데 필요해서 이 시점에 함께 저장한다.
-// sections의 label/field_type도 함께 보낸다 -- PDF 렌더러(app/domain/proposal_pdf.py)가
-// field_key만으로는 다시 DB를 조회하지 않고 그대로 렌더링하도록 하기 위함.
+// 섹션은 field_key와 value만 보낸다. label/field_type은 서버가 proposal_field_definitions에서
+// 조회해 채우므로 프론트가 실어보낼 필요 없다(잘못된 field_type을 보내 PDF 렌더링이 깨지는 것도 방지).
 // value 타입은 generate 응답과 동일하게 field_type을 따른다(TEXT=문자열/CHECKLIST=배열/TABLE=배열)
 {
   "template_type": "PSST",
   "sections": [
-    { "field_key": "company_overview", "label": "기업개요·대표자", "field_type": "TEXT", "value": "string" }
+    { "field_key": "company_overview", "value": "사용자가 수정한 최종본" }
   ]
 }
 ```
+
+에러: `template_type`이 PSST/RND/IR이 아니면 `PROPOSAL_TEMPLATE_TYPE_INVALID`(400), 존재하지 않는 `field_key`가 섞여 있으면 `PROPOSAL_FIELD_KEY_INVALID`(400).
 
 ```json
 // 응답
