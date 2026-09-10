@@ -22,9 +22,9 @@ from app.db.models import (
     GateKeyword,
     HealthDataItem,
     ServiceLawMap,
-    SignalConfig,
 )
 from app.db.rule_version_queries import resolve_active_rule_version_ids
+from app.db.signal_queries import signal_thresholds as _signal_thresholds
 from app.db.session import AsyncSessionLocal
 from app.domain.correction_llm import generate_correction_candidates
 from app.domain.health_data import SOURCE_TO_ACQUIRE_METHOD, is_biomarker_name, load_biomarker_keywords
@@ -340,24 +340,6 @@ class RegulatoryRiskResponse(BaseModel):
 
 def _grade(score: int, threshold_low: int, threshold_mid: int) -> str:
     return grade_by_threshold(score, threshold_low, threshold_mid, ("낮음", "중간", "높음"))
-
-
-async def _signal_thresholds(rule_version_ids: list[uuid.UUID]) -> dict[str, tuple[int, int]]:
-    async with AsyncSessionLocal() as session:
-        rows = (
-            await session.execute(
-                select(SignalConfig).where(SignalConfig.rule_version_id.in_(rule_version_ids))
-            )
-        ).scalars().all()
-    thresholds: dict[str, tuple[int, int]] = {}
-    for row in rows:
-        if row.axis in thresholds:
-            raise HTTPException(
-                status_code=500,
-                detail=f"signal_config에 축 '{row.axis}'의 활성 임계값이 중복됩니다",
-            )
-        thresholds[row.axis] = (row.threshold_low, row.threshold_mid)
-    return thresholds
 
 
 class CorrectionMatch(BaseModel):

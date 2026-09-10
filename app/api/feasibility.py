@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -32,6 +32,8 @@ from app.db.models import (
     StandardScale,
 )
 from app.db.session import AsyncSessionLocal
+from app.db.rule_version_queries import resolve_active_rule_version_ids
+from app.db.signal_queries import signal_thresholds
 from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/feasibility", tags=["feasibility"])
@@ -120,13 +122,12 @@ def _risk_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
     return grade_by_threshold(score, 3, 10, ("LOW", "MEDIUM", "HIGH"))
 
 
-def _privacy_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
-    # 판정_기준값_확정표.md §5 — 0~1 낮음 / 2 중간 / 3 높음.
-    return grade_by_threshold(score, 1, 2, ("LOW", "MEDIUM", "HIGH"))
+def _privacy_level_for_score(score: int, low: int, mid: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
+    return grade_by_threshold(score, low, mid, ("LOW", "MEDIUM", "HIGH"))
 
 
-def _privacy_grade_for_score(score: int) -> Literal["낮음", "중간", "높음"]:
-    return grade_by_threshold(score, 1, 2, ("낮음", "중간", "높음"))
+def _privacy_grade_for_score(score: int, low: int, mid: int) -> Literal["낮음", "중간", "높음"]:
+    return grade_by_threshold(score, low, mid, ("낮음", "중간", "높음"))
 
 
 def _difficulty_level_for_risk(risk_level: Literal["LOW", "MEDIUM", "HIGH"]) -> str:
@@ -374,6 +375,10 @@ async def assess_data_feasibility(
                 ).scalars()
             }
 
+        thresholds = await signal_thresholds(await resolve_active_rule_version_ids())
+        if "개인정보민감도" not in thresholds:
+            raise HTTPException(status_code=500, detail="signal_config에 활성 임계값이 없는 축: 개인정보민감도")
+        privacy_low, privacy_mid = thresholds["개인정보민감도"]
         privacy_risks: list[PrivacyRisk] = []
         privacy_score = 0
         for item in items:
@@ -409,8 +414,8 @@ async def assess_data_feasibility(
             data_feasibility_score=max_score,
             risk_level=risk_level,
             privacy_score=privacy_score,
-            privacy_level=_privacy_level_for_score(privacy_score),
-            privacy_grade=_privacy_grade_for_score(privacy_score),
+            privacy_level=_privacy_level_for_score(privacy_score, privacy_low, privacy_mid),
+            privacy_grade=_privacy_grade_for_score(privacy_score, privacy_low, privacy_mid),
             available_sources=available_sources,
             privacy_risks=privacy_risks,
             standard_scale_candidates=standard_scale_candidates,

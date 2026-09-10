@@ -49,11 +49,12 @@
 | data_feasibility_score | 항목별 D×S의 최댓값, 현재 최대 30 | 확보 난이도 점수 |
 | risk_level | 3 이하 LOW / 10 이하 MEDIUM / 초과 HIGH | 확보 난이도 쉬움 / 보통 / 어려움 |
 | privacy_score | 등록 item_code의 sensitivity_level 최댓값, 0~3 | 개인정보 민감도 점수 |
-| privacy_level | 0~1 LOW / 2 MEDIUM / 3 HIGH | 개인정보 민감도 등급 |
+| privacy_level | 활성 signal_config의 개인정보민감도 임계값 적용 (기본값: 0~1 LOW / 2 MEDIUM / 3 HIGH) | 개인정보 민감도 등급 |
 | privacy_grade | 낮음 / 중간 / 높음 | 개인정보 민감도 한글 표시 |
 | privacy_risks[].sensitivity_level | 카탈로그 민감도, 미매칭 시 null | 항목별 검토 근거 |
 
 두 점수를 합산하지 않는다. `risk_level=LOW`는 개인정보 위험까지 낮다는 뜻이 아니다.
+개인정보 등급은 judgement API와 같은 활성 signal_config에서 조회한다. 임계값이 누락되거나 중복되면 500 오류로 처리하며 기본값으로 대체하지 않는다.
 화면에는 “확보 난이도: 쉬움 / 개인정보 민감도: 높음”을 함께 표시한다.
 기존에 확보 가능성으로 표시한다면 LOW → 가능성 높음, HIGH → 가능성 낮음으로 대응한다.
 
