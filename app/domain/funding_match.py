@@ -248,6 +248,39 @@ def extract_funding_profile(
     )
 
 
+def funding_profile_from_session(
+    *,
+    service_name: str,
+    service_description: str,
+    target_users: list[str],
+    service_type: str | None,
+    category_1: str | None,
+    category_2: str | None,
+    target: str | None,
+    health_data_names: list[str],
+    region: str | None = None,
+    startup_stage: str | None = None,
+    keywords: list[str] | None = None,
+) -> FundingProfile:
+    """저장된 아이디어 검진 세션을 지원사업 매칭 프로필로 변환한다."""
+    inferred = extract_funding_profile(
+        f"{service_name}\n{service_description}\n{' '.join(health_data_names)}",
+        region=region,
+        startup_stage=startup_stage,
+        keywords=", ".join(keywords or []),
+    )
+    return FundingProfile(
+        service_name=service_name,
+        category_1=category_1 or inferred.category_1,
+        category_2=category_2 or inferred.category_2,
+        targets=_unique(target_users + ([target] if target else []) or inferred.targets),
+        service_type=service_type or inferred.service_type,
+        region=region or inferred.region,
+        startup_stage=startup_stage or inferred.startup_stage,
+        keywords=_unique(inferred.keywords + health_data_names),
+    )
+
+
 def score_funding_program(program: FundingProgram, profile: FundingProfile, today: date) -> FundingMatch:
     score = 0
     reasons: list[str] = []

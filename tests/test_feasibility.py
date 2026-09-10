@@ -5,7 +5,7 @@ data_difficulty/collection_difficulty/data_sensitivity/api_catalog/public_data_c
 """
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select, update
 
 from app.api.analysis_sessions import (
     AnalysisSession,
@@ -17,11 +17,15 @@ from app.api.analysis_sessions import (
 from app.api.feasibility import (
     FeasibilityRequest,
     _difficulty_level_for_risk,
+    _privacy_grade_for_score,
+    _privacy_level_for_score,
     _risk_level_for_score,
     _tokens_overlap_with_name,
     assess_data_feasibility,
 )
-from app.db.models import MvpStrategyTemplate, StandardScale
+from app.db.models import MvpStrategyTemplate, StandardScale, SignalConfig
+from app.db.rule_version_queries import resolve_active_rule_version_ids
+from app.api.judgement import GateRequest, judge_regulatory_risk
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import HealthDataItemInput
 
@@ -34,6 +38,15 @@ def test_risk_level_thresholds_match_design_doc() -> None:
     assert _risk_level_for_score(10) == "MEDIUM"
     assert _risk_level_for_score(12) == "HIGH"
     assert _risk_level_for_score(30) == "HIGH"
+
+
+def test_privacy_level_thresholds_match_design_doc() -> None:
+    # 판정_기준값_확정표.md §5 — 0~1 낮음, 2 중간, 3 높음.
+    assert _privacy_level_for_score(0, 1, 2) == "LOW"
+    assert _privacy_level_for_score(1, 1, 2) == "LOW"
+    assert _privacy_level_for_score(2, 1, 2) == "MEDIUM"
+    assert _privacy_level_for_score(3, 1, 2) == "HIGH"
+    assert _privacy_grade_for_score(3, 1, 2) == "높음"
 
 
 def test_difficulty_level_maps_from_api_risk_level_to_template_label() -> None:
@@ -240,7 +253,98 @@ async def test_privacy_risks_matched_by_item_code_only() -> None:
 
         risk_names = [r.data_name for r in result.result.privacy_risks]
         assert risk_names == ["복용약물"]
+        assert result.result.privacy_score == 3
+        assert result.result.privacy_level == "HIGH"
+        assert result.result.privacy_grade == "높음"
     finally:
+        await _delete_session(session_id)
+
+
+@pytest.mark.db
+async def test_data_feasibility_keeps_difficulty_and_privacy_as_separate_axes() -> None:
+    """라이프스타일+민감정보 조합에서 확보 난이도와 개인정보 리스크를 섞지 않는다."""
+    session_id = await _create_session()
+    try:
+        request = HealthDataUpsertRequest(
+            health_data_items=[
+                HealthDataItemInput(name="걸음수", data_type="numeric", source="user_input"),
+                HealthDataItemInput(
+                    name="복용약물",
+                    data_type="text",
+                    source="user_input",
+                    is_sensitive=True,
+                    item_code="sensitive_004",
+                ),
+            ]
+        )
+        await create_health_data(session_id, request)
+
+        result = await assess_data_feasibility(FeasibilityRequest(session_id=session_id))
+
+        assert result.result.data_feasibility_score == 1
+        assert result.result.risk_level == "LOW"
+        assert result.result.privacy_score == 3
+        assert result.result.privacy_level == "HIGH"
+        assert result.result.privacy_grade == "높음"
+    finally:
+        await _delete_session(session_id)
+
+
+@pytest.mark.db
+async def test_sensitive_item_without_catalog_code_keeps_warning_without_inventing_score() -> None:
+    session_id = await _create_session()
+    try:
+        request = HealthDataUpsertRequest(
+            health_data_items=[
+                HealthDataItemInput(
+                    name="직접 입력 민감정보",
+                    data_type="text",
+                    source="user_input",
+                    is_sensitive=True,
+                ),
+            ]
+        )
+        await create_health_data(session_id, request)
+
+        result = await assess_data_feasibility(FeasibilityRequest(session_id=session_id))
+
+        assert result.result.privacy_score == 0
+        assert result.result.privacy_risks[0].sensitivity_level is None
+    finally:
+        await _delete_session(session_id)
+
+
+@pytest.mark.db
+async def test_privacy_grade_matches_judgement_after_threshold_change() -> None:
+    session_id = await _create_session()
+    original = []
+    try:
+        await create_health_data(session_id, HealthDataUpsertRequest(health_data_items=[
+            HealthDataItemInput(name="복용약물", data_type="text", source="user_input", item_code="sensitive_004")
+        ]))
+        version_ids = await resolve_active_rule_version_ids()
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(select(SignalConfig).where(
+                SignalConfig.rule_version_id.in_(version_ids),
+                SignalConfig.axis == "개인정보민감도",
+            ))).scalars().all()
+            assert len(rows) == 1
+            original = [(row.config_id, row.threshold_low, row.threshold_mid) for row in rows]
+            rows[0].threshold_low = 1
+            rows[0].threshold_mid = 3
+            await session.commit()
+        feasibility = await assess_data_feasibility(FeasibilityRequest(session_id=session_id))
+        judgement = await judge_regulatory_risk(GateRequest(session_id=session_id))
+        assert feasibility.result.privacy_score == judgement.privacy_score == 3
+        assert feasibility.result.privacy_grade == judgement.privacy_grade == "중간"
+        assert feasibility.result.privacy_level == "MEDIUM"
+    finally:
+        async with AsyncSessionLocal() as session:
+            for config_id, low, mid in original:
+                await session.execute(update(SignalConfig).where(SignalConfig.config_id == config_id).values(
+                    threshold_low=low, threshold_mid=mid,
+                ))
+            await session.commit()
         await _delete_session(session_id)
 
 
