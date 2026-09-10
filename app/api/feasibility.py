@@ -51,6 +51,7 @@ class AvailableSource(BaseModel):
 
 class PrivacyRisk(BaseModel):
     data_name: str
+    sensitivity_level: int | None
     reason: str
 
 
@@ -75,6 +76,9 @@ class MvpRoadmapStep(BaseModel):
 class DataFeasibilityResult(BaseModel):
     data_feasibility_score: int
     risk_level: Literal["LOW", "MEDIUM", "HIGH"]
+    privacy_score: int
+    privacy_level: Literal["LOW", "MEDIUM", "HIGH"]
+    privacy_grade: Literal["낮음", "중간", "높음"]
     available_sources: list[AvailableSource]
     privacy_risks: list[PrivacyRisk]
     standard_scale_candidates: list[StandardScaleCandidate]
@@ -114,6 +118,15 @@ def _no_health_data_response() -> JSONResponse:
 def _risk_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
     # db_구축_설계서.md §3.4 등급: 1~3 쉬움 / 4~10 보통 / 12~30 어려움.
     return grade_by_threshold(score, 3, 10, ("LOW", "MEDIUM", "HIGH"))
+
+
+def _privacy_level_for_score(score: int) -> Literal["LOW", "MEDIUM", "HIGH"]:
+    # 판정_기준값_확정표.md §5 — 0~1 낮음 / 2 중간 / 3 높음.
+    return grade_by_threshold(score, 1, 2, ("LOW", "MEDIUM", "HIGH"))
+
+
+def _privacy_grade_for_score(score: int) -> Literal["낮음", "중간", "높음"]:
+    return grade_by_threshold(score, 1, 2, ("낮음", "중간", "높음"))
 
 
 def _difficulty_level_for_risk(risk_level: Literal["LOW", "MEDIUM", "HIGH"]) -> str:
@@ -362,11 +375,15 @@ async def assess_data_feasibility(
             }
 
         privacy_risks: list[PrivacyRisk] = []
+        privacy_score = 0
         for item in items:
             if item.item_code in sensitivity_by_code:
+                sensitivity_level = sensitivity_by_code[item.item_code].sensitivity_level
+                privacy_score = max(privacy_score, sensitivity_level)
                 privacy_risks.append(
                     PrivacyRisk(
                         data_name=item.name,
+                        sensitivity_level=sensitivity_level,
                         reason=_privacy_reason(sensitivity_by_code[item.item_code]),
                     )
                 )
@@ -374,6 +391,7 @@ async def assess_data_feasibility(
                 privacy_risks.append(
                     PrivacyRisk(
                         data_name=item.name,
+                        sensitivity_level=None,
                         reason="건강정보에 해당할 수 있어 민감정보 처리 기준 검토 필요",
                     )
                 )
@@ -390,6 +408,9 @@ async def assess_data_feasibility(
         result=DataFeasibilityResult(
             data_feasibility_score=max_score,
             risk_level=risk_level,
+            privacy_score=privacy_score,
+            privacy_level=_privacy_level_for_score(privacy_score),
+            privacy_grade=_privacy_grade_for_score(privacy_score),
             available_sources=available_sources,
             privacy_risks=privacy_risks,
             standard_scale_candidates=standard_scale_candidates,
