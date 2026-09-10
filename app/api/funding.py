@@ -7,18 +7,23 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
+from sqlalchemy import select
 
 from app.domain.funding_match import (
     FundingProgram,
+    FundingProfile,
     extract_funding_profile,
+    funding_profile_from_session,
     is_money_support_program,
     profile_to_dict,
     score_funding_program,
     sort_funding_matches,
 )
 from app.domain.funding_sources import fetch_external_funding_programs
+from app.db.models import AnalysisSession, HealthDataItem
+from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/funding", tags=["funding"])
@@ -63,6 +68,14 @@ class FundingErrorResponse(ApiResponse):
     result: None = None
 
 
+class SessionFundingRecommendationRequest(BaseModel):
+    session_id: str
+    region: str | None = None
+    startup_stage: str | None = None
+    keywords: list[str] = Field(default_factory=list, max_length=30)
+    top_k: int = Field(default=12, ge=1, le=50)
+
+
 async def _error(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -103,6 +116,46 @@ async def recommend_funding_programs(
         startup_stage=startup_stage,
         keywords=keywords,
     )
+    return await _recommend_from_profile(profile, top_k)
+
+
+@router.post(
+    "/recommendations/from-session",
+    response_model=FundingRecommendationsResponse,
+    responses={404: {"model": FundingErrorResponse}},
+)
+async def recommend_funding_programs_from_session(
+    request: SessionFundingRecommendationRequest,
+):
+    async with AsyncSessionLocal() as session:
+        analysis_session = await session.get(AnalysisSession, request.session_id)
+        if analysis_session is None:
+            return await _error(404, "ANALYSIS_SESSION_NOT_FOUND", "분석 세션을 찾을 수 없습니다.")
+        health_data_names = list(
+            (
+                await session.execute(
+                    select(HealthDataItem.name).where(HealthDataItem.session_id == request.session_id)
+                )
+            ).scalars()
+        )
+        profile = funding_profile_from_session(
+            service_name=analysis_session.service_name,
+            service_description=analysis_session.service_description,
+            target_users=analysis_session.target_users,
+            service_type=analysis_session.service_type,
+            category_1=analysis_session.category_1,
+            category_2=analysis_session.category_2,
+            target=analysis_session.target,
+            health_data_names=health_data_names,
+            region=request.region,
+            startup_stage=request.startup_stage,
+            keywords=request.keywords,
+        )
+
+    return await _recommend_from_profile(profile, request.top_k)
+
+
+async def _recommend_from_profile(profile: FundingProfile, top_k: int) -> FundingRecommendationsResponse:
     recommended_at = datetime.now(_SERVICE_TIMEZONE)
     today = recommended_at.date()
 

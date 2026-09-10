@@ -3,6 +3,7 @@ from datetime import date
 from app.domain.funding_match import (
     FundingProgram,
     extract_funding_profile,
+    funding_profile_from_session,
     is_money_support_program,
     score_funding_program,
     sort_funding_matches,
@@ -26,6 +27,30 @@ def test_extract_funding_profile_handles_spaced_korean_pdf_text() -> None:
     assert profile.startup_stage == "예비창업"
     assert "수면 관심층" in profile.targets
     assert "AI" in profile.keywords
+
+
+def test_funding_profile_from_session_uses_structured_values_without_pdf() -> None:
+    profile = funding_profile_from_session(
+        service_name="혈당 관리 앱",
+        service_description="혈당 변화를 기록하고 추이를 보여주는 모바일 건강관리 서비스",
+        target_users=["만성질환자"],
+        service_type="모바일 앱",
+        category_1="만성질환",
+        category_2="비교추이분석",
+        target="직장인",
+        health_data_names=["공복혈당"],
+        region="전국",
+        startup_stage="예비창업",
+    )
+
+    assert profile.category_1 == "만성질환"
+    assert profile.category_2 == "비교추이분석"
+    assert profile.service_type == "모바일 앱"
+    assert profile.targets == ["만성질환자", "직장인"]
+    assert profile.region == "전국"
+    assert profile.startup_stage == "예비창업"
+    assert "혈당" in profile.keywords
+    assert "공복혈당" in profile.keywords
 
 
 def test_extract_funding_profile_ignores_later_legal_examples() -> None:
