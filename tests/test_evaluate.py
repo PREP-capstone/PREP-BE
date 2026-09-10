@@ -136,6 +136,9 @@ def _data_feasibility(risk_level: str) -> DataFeasibilityResult:
     return DataFeasibilityResult(
         data_feasibility_score=1,
         risk_level=risk_level,
+        privacy_score=0,
+        privacy_level="LOW",
+        privacy_grade="낮음",
         available_sources=[],
         privacy_risks=[],
         standard_scale_candidates=[],
