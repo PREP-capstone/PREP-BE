@@ -31,6 +31,7 @@ from app.domain.proposal_llm import (
     ATTACHMENT_CHECKLISTS,
     TABLE_ITEM_SCHEMAS,
     ProposalLLMUnavailable,
+    _SYSTEM_PROMPT_TEMPLATE,
     build_response_schema,
     generate_missing_sections,
 )
@@ -204,6 +205,13 @@ def test_build_response_schema_maps_text_and_table_fields() -> None:
 def test_build_response_schema_raises_for_unregistered_table_field() -> None:
     with pytest.raises(ValueError):
         build_response_schema([{"field_key": "does_not_exist", "label": "x", "field_type": "TABLE"}])
+
+
+def test_proposal_prompt_requires_formal_document_tone() -> None:
+    assert "~이다" in _SYSTEM_PROMPT_TEMPLATE
+    assert "~한다" in _SYSTEM_PROMPT_TEMPLATE
+    assert "~입니다" in _SYSTEM_PROMPT_TEMPLATE
+    assert "존댓말·대화체" in _SYSTEM_PROMPT_TEMPLATE
 
 
 async def test_generate_missing_sections_returns_empty_dict_when_no_target_fields() -> None:
