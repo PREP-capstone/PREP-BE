@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import re
 from datetime import date, datetime, timedelta
@@ -71,21 +72,21 @@ async def fetch_external_funding_programs(profile: FundingProfile) -> tuple[list
 
     programs: list[FundingProgram] = []
     warnings: list[str] = []
-
-    kstartup_rows, kstartup_warning = await fetch_kstartup_programs(profile)
-    programs.extend(kstartup_rows)
-    if kstartup_warning:
-        warnings.append(kstartup_warning)
-
-    bizinfo_rows, bizinfo_warning = await fetch_bizinfo_programs(profile)
-    programs.extend(bizinfo_rows)
-    if bizinfo_warning:
-        warnings.append(bizinfo_warning)
-
-    startup_plus_rows, startup_plus_warning = await fetch_startup_plus_programs(profile)
-    programs.extend(startup_plus_rows)
-    if startup_plus_warning:
-        warnings.append(startup_plus_warning)
+    source_names = ("K-Startup", "기업마당", "Startup Plus")
+    source_results = await asyncio.gather(
+        fetch_kstartup_programs(profile),
+        fetch_bizinfo_programs(profile),
+        fetch_startup_plus_programs(profile),
+        return_exceptions=True,
+    )
+    for source_name, result in zip(source_names, source_results):
+        if isinstance(result, Exception):
+            warnings.append(f"{source_name} 조회에 실패했습니다: {result.__class__.__name__}")
+            continue
+        rows, warning = result
+        programs.extend(rows)
+        if warning:
+            warnings.append(warning)
 
     return _dedupe_programs(programs), warnings
 
@@ -241,7 +242,9 @@ def _normalize_program(row: dict[str, Any], *, source: str) -> FundingProgram | 
         source_url=source_url,
         description=description,
         keywords=_unique(keywords),
-        support_types=classify_support_types(" ".join(value for value in [support_text, description, title] if value)),
+        support_types=classify_support_types(
+            " ".join(value for value in [support_amount_text, support_category_text, description, title] if value)
+        ),
     )
 
 

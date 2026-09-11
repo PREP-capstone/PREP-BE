@@ -1,6 +1,9 @@
 from datetime import date
 
+import pytest
+
 from app.domain.funding_sources import (
+    fetch_external_funding_programs,
     _find_items,
     _kstartup_request_params,
     _normalize_bizinfo_program,
@@ -76,6 +79,41 @@ def test_normalize_program_parses_amount_from_description_when_support_class_exi
     assert program is not None
     assert program.support_amount_text == "시설ㆍ공간ㆍ보육"
     assert program.max_amount == 50000000
+
+
+def test_normalize_program_keeps_amount_and_support_category_types() -> None:
+    program = _normalize_program(
+        {
+            "biz_pbanc_nm": "창업기업 지원사업",
+            "support_amount": "최대 5천만원",
+            "supt_biz_clsfc": "시설ㆍ공간ㆍ보육",
+            "biz_pbanc_ctnt": "사업비를 지원합니다.",
+        },
+        source="K-Startup",
+    )
+
+    assert program is not None
+    assert "금전지원" in program.support_types
+    assert "시설·공간" in program.support_types
+    assert "보육" in program.support_types
+
+
+@pytest.mark.asyncio
+async def test_fetch_external_funding_programs_isolates_source_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def successful_source(profile):
+        return [], None
+
+    async def failing_source(profile):
+        raise RuntimeError("source unavailable")
+
+    monkeypatch.setattr("app.domain.funding_sources.fetch_kstartup_programs", successful_source)
+    monkeypatch.setattr("app.domain.funding_sources.fetch_bizinfo_programs", failing_source)
+    monkeypatch.setattr("app.domain.funding_sources.fetch_startup_plus_programs", successful_source)
+
+    rows, warnings = await fetch_external_funding_programs(profile=None)
+
+    assert rows == []
+    assert warnings == ["기업마당 조회에 실패했습니다: RuntimeError"]
 
 
 def test_parse_date_handles_deadline_label() -> None:
