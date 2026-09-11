@@ -184,6 +184,7 @@ class FundingProgram:
     source_url: str | None = None
     description: str | None = None
     keywords: list[str] | None = None
+    support_types: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -360,6 +361,28 @@ def is_money_support_program(program: FundingProgram) -> bool:
             or program.max_amount is not None
         )
     return any(compact_text(term) in searchable_compact for term in _FUNDING_INCLUDE_TERMS)
+
+
+def classify_support_types(value: str | None) -> list[str]:
+    """공고의 지원 내용을 UI에서 구분할 수 있도록 유형을 정규화한다."""
+
+    searchable = compact_text(value)
+    types: list[str] = []
+    if _FUNDING_AMOUNT_PATTERN.search(value or "") or any(
+        compact_text(term) in searchable for term in _FUNDING_STRICT_INCLUDE_TERMS
+    ):
+        types.append("금전지원")
+    if "사업화" in searchable:
+        types.append("사업화")
+    if any(term in searchable for term in ("시설·공간", "시설ㆍ공간", "시설공간")):
+        types.append("시설·공간")
+    if "보육" in searchable:
+        types.append("보육")
+    if any(term in searchable for term in ("멘토링", "컨설팅", "교육")):
+        types.append("멘토링·교육")
+    if any(term in searchable for term in ("행사", "네트워크")):
+        types.append("행사·네트워크")
+    return types
 
 
 def profile_to_dict(profile: FundingProfile) -> dict[str, Any]:

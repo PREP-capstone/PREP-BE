@@ -5,6 +5,7 @@ from app.domain.funding_match import (
     extract_funding_profile,
     funding_profile_from_session,
     is_money_support_program,
+    classify_support_types,
     score_funding_program,
     sort_funding_matches,
 )
@@ -203,3 +204,9 @@ def test_money_support_filter_keeps_cash_program_even_if_category_is_broad() -> 
     )
 
     assert is_money_support_program(program)
+
+
+def test_classify_support_types_separates_cash_and_non_cash_support() -> None:
+    types = classify_support_types("시설ㆍ공간ㆍ보육, 사업화 사업비 최대 5천만원, 멘토링")
+
+    assert types == ["금전지원", "사업화", "시설·공간", "보육", "멘토링·교육"]

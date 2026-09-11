@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from app.core.config import settings
-from app.domain.funding_match import FundingProfile, FundingProgram
+from app.domain.funding_match import FundingProfile, FundingProgram, classify_support_types
 
 
 _TITLE_KEYS = [
@@ -56,6 +56,10 @@ _DESCRIPTION_KEYS = [
 _AMOUNT_KEYS = ["support_amount", "max_amount", "지원금액", "지원내용"]
 _SUPPORT_CATEGORY_KEYS = ["supt_biz_clsfc", "지원사업분류", "지원분야"]
 _KEYWORD_KEYS = ["biz_category", "category", "field", "keywords", "분야", "키워드"]
+_BIZINFO_REGION_NAMES = (
+    "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기",
+    "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
+)
 
 
 async def fetch_external_funding_programs(profile: FundingProfile) -> tuple[list[FundingProgram], list[str]]:
@@ -72,6 +76,11 @@ async def fetch_external_funding_programs(profile: FundingProfile) -> tuple[list
     programs.extend(kstartup_rows)
     if kstartup_warning:
         warnings.append(kstartup_warning)
+
+    bizinfo_rows, bizinfo_warning = await fetch_bizinfo_programs(profile)
+    programs.extend(bizinfo_rows)
+    if bizinfo_warning:
+        warnings.append(bizinfo_warning)
 
     startup_plus_rows, startup_plus_warning = await fetch_startup_plus_programs(profile)
     programs.extend(startup_plus_rows)
@@ -116,6 +125,35 @@ async def fetch_startup_plus_programs(profile: FundingProfile) -> tuple[list[Fun
         return [], f"Startup Plus 페이지 조회에 실패했습니다: {error.__class__.__name__}"
 
     return _parse_startup_plus_html(response.text), None
+
+
+async def fetch_bizinfo_programs(profile: FundingProfile) -> tuple[list[FundingProgram], str | None]:
+    """기업마당 공식 지원사업정보 API에서 공고를 가져온다."""
+
+    del profile  # 최신 공고를 넓게 가져온 뒤 내부 매칭 점수로 정렬한다.
+    if not settings.bizinfo_api_key:
+        return [], "BIZINFO_API_KEY가 없어 기업마당 API 조회를 건너뛰었습니다."
+
+    params = {
+        "crtfcKey": settings.bizinfo_api_key,
+        "dataType": "json",
+        "searchCnt": max(1, settings.funding_fetch_limit),
+        "pageUnit": max(1, settings.funding_fetch_limit),
+        "pageIndex": 1,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=settings.funding_request_timeout_seconds) as client:
+            response = await client.get(settings.bizinfo_api_url, params=params)
+            response.raise_for_status()
+    except httpx.HTTPError as error:
+        return [], f"기업마당 API 조회에 실패했습니다: {error.__class__.__name__}"
+
+    programs: list[FundingProgram] = []
+    for row in _extract_rows_from_response(response):
+        program = _normalize_bizinfo_program(row)
+        if program:
+            programs.append(program)
+    return programs, None
 
 
 def _extract_rows_from_response(response: httpx.Response) -> list[dict[str, Any]]:
@@ -203,6 +241,39 @@ def _normalize_program(row: dict[str, Any], *, source: str) -> FundingProgram | 
         source_url=source_url,
         description=description,
         keywords=_unique(keywords),
+        support_types=classify_support_types(" ".join(value for value in [support_text, description, title] if value)),
+    )
+
+
+def _normalize_bizinfo_program(row: dict[str, Any]) -> FundingProgram | None:
+    title = _pick(row, ["title", "pblancNm", "공고명"])
+    if not title:
+        return None
+    description = _strip_html(_pick(row, ["description", "bsnsSumryCn", "사업개요내용"]))
+    hashtags = _pick(row, ["hashTags", "hashtags", "해시태그"])
+    support_category = _pick(row, ["lcategory", "pldirSportRealmLclasCodeNm", "지원분야대분류"])
+    request_period = _pick(row, ["reqstDt", "reqstBeginEndDe", "신청기간"])
+    keywords = _split_keywords(hashtags)
+    keywords.extend(_keyword_hits(" ".join(value for value in [title, description, support_category, hashtags] if value)))
+    open_date, deadline = _parse_date_range(request_period)
+    region = _find_bizinfo_region(hashtags)
+    support_text = " / ".join(value for value in [support_category, description] if value)
+
+    return FundingProgram(
+        program_id=_pick(row, ["seq", "pblancId", "program_id"]) or f"BizInfo:{title}",
+        title=title,
+        region=region,
+        stage=_pick(row, ["trgetNm", "지원대상"]),
+        eligibility={key: row[key] for key in ("author", "excInsttNm", "trgetNm") if key in row},
+        open_date=open_date,
+        deadline=deadline,
+        max_amount=_parse_amount(" ".join(value for value in [description, title] if value)),
+        support_amount_text=support_text or None,
+        source="기업마당",
+        source_url=_pick(row, ["link", "pblancUrl", "공고URL"]),
+        description=description,
+        keywords=_unique(keywords),
+        support_types=classify_support_types(" ".join(value for value in [support_text, description, title] if value)),
     )
 
 
@@ -239,6 +310,7 @@ def _parse_startup_plus_html(text: str) -> list[FundingProgram]:
                 source_url=urljoin(settings.startup_plus_project_url, href),
                 description=clean_title,
                 keywords=_keyword_hits(clean_title),
+                support_types=classify_support_types(clean_title),
             )
         )
     return programs[: settings.funding_fetch_limit]
@@ -257,6 +329,33 @@ def _pick(row: dict[str, Any], keys: list[str]) -> str | None:
         text = html.unescape(str(value or "")).strip()
         if text:
             return text
+    return None
+
+
+def _strip_html(value: str | None) -> str | None:
+    if not value:
+        return None
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", value))).strip() or None
+
+
+def _parse_date_range(value: str | None) -> tuple[date | None, date | None]:
+    if not value:
+        return None, None
+    dates = re.findall(r"\d{4}[.\-/]?\d{2}[.\-/]?\d{2}", value)
+    parsed = [_parse_date(item) for item in dates]
+    parsed = [item for item in parsed if item is not None]
+    if len(parsed) >= 2:
+        return parsed[0], parsed[1]
+    if parsed:
+        return parsed[0], parsed[0]
+    return None, None
+
+
+def _find_bizinfo_region(value: str | None) -> str | None:
+    compact = value or ""
+    for region in _BIZINFO_REGION_NAMES:
+        if region in compact:
+            return region
     return None
 
 
