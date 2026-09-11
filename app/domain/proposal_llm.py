@@ -28,8 +28,14 @@ from app.core.redis_client import redis_client
 
 _REQUEST_TIMEOUT_SECONDS = 30.0  # 여러 필드를 한 번에 생성하므로 correction_llm.py(15초)보다 여유를 둠
 _CACHE_TTL_SECONDS = 600  # 완료(§0) 전 재생성 재시도 비용 절감용 -- 제안서 자체의 10분 TTL과는 별개 목적
-# 프롬프트 문체가 바뀌면 기존 대화체 캐시를 그대로 반환하지 않도록 버전을 올린다.
-_CACHE_KEY_PREFIX = "proposal_generation:v3:"
+# 프롬프트가 바뀌면 이전 프롬프트로 만든 캐시를 그대로 반환하지 않도록 버전을 올린다.
+# v4(2026-09-11): 대표자 경력 등 리포트에 없는 사실을 그럴듯하게 지어내는 할루시네이션이
+# 실사용 중 발견되어(사용자 리포트) 사실 근거 원칙을 강화하며 버전 갱신.
+_CACHE_KEY_PREFIX = "proposal_generation:v4:"
+
+# 리포트/사용자 입력 둘 다에 근거가 없을 때 TEXT 필드가 반환해야 하는 고정 문구.
+# 정확히 이 문자열인지 코드에서도 확인할 수 있게 상수로 뽑아둔다.
+NO_GROUNDING_PLACEHOLDER = "[검진 리포트에 근거 정보가 없습니다. 직접 작성해주세요.]"
 
 # TABLE 필드별 항목 스키마 -- docs/제안서_자동작성_API_명세서.md §2의 표 구조를 그대로 반영.
 # 새 TABLE 필드가 추가되면 여기에도 항목 스키마를 등록해야 한다(build_response_schema가 조회).
@@ -96,7 +102,37 @@ _TEMPLATE_LABELS = {
 _SYSTEM_PROMPT_TEMPLATE = """당신은 대한민국 정부 창업지원사업 사업계획서 작성을 돕는
 전문 컨설턴트입니다. 지금 작성하는 문서는 "{template_label}" 유형입니다.
 
-## 규칙
+## 사실 근거 원칙 (다른 모든 규칙보다 우선합니다 -- 위반하면 사용자가 지원사업 심사에서
+허위 기재로 불이익을 받을 수 있는, 실제로 발생한 사고입니다)
+
+각 필드를 쓰기 전에 스스로 먼저 확인하세요: "[검진 리포트]나 [사용자가 이미 입력한
+내용]에 이 필드와 관련된 내용이 실제로 적혀 있는가?"
+
+**없다면**, 절대 채우지 마세요. 두루뭉술하고 그럴듯하게 들리는 문장("전문성을 보유하고
+있다", "관련 경험이 있다", "역량을 갖추고 있다" 같은 것)도 근거 없는 사실 창작이며
+엄격히 금지됩니다. 이 경우 TEXT 필드는 정확히 아래 문자열만 반환하세요(한 글자도
+바꾸지 마세요), TABLE 필드는 빈 배열 []을 반환하세요:
+"{no_grounding_placeholder}"
+
+**예시** -- 리포트에 서비스 설명·시장성·카테고리만 있고 대표자에 대한 언급이 전혀 없는
+경우: founder_capability는 위 placeholder 문자열 그대로 반환해야 합니다. "IT 분야
+경험이 있다", "전문성을 갖췄다" 같은 문장을 쓰면 안 됩니다 -- 리포트가 대표자에 대해
+아무것도 말해주지 않기 때문입니다.
+
+특히 아래는 리포트에 없으면 반드시 placeholder로 남기세요:
+- 대표자·팀원의 구체적 경력, 학력, 근무 연차, 이전 소속 회사, 자격증, 수상 이력
+- 존재하지 않는 기관명·회사명·인물명·통계 수치·설문 결과
+- 회사의 구체적 연혁, 매출 실적, 계약·수주 실적
+- founder_capability, team_hiring_plan, rd_track_record, bonus_criteria는 리포트에
+  근거가 없는 경우가 대부분이니 기본값을 "채운다"가 아니라 "placeholder"로 두세요.
+
+**예외** -- growth_targets, annual_budget_exec, financial_projection은 성격상
+향후 계획·추정치를 요구하는 필드입니다. 리포트의 시장 규모·카테고리 등 간접 정보를
+근거로 사용자가 검토할 초안 추정치를 제시하세요(이 필드에는 placeholder를 쓰지
+마세요). 존재하지 않는 구체 기관명·통계는 인용하지 말고, 추정 근거를 basis에 명시해
+추정치임을 분명히 하세요.
+
+## 그 외 규칙
 - 사업계획서 심사위원이 읽는 공식 문서체로, 과장 없이 정량적 근거를 포함해 작성합니다.
 - 문장 종결은 제안서·사업계획서 문체로 통일합니다. 기본적으로 "~이다", "~한다", "~된다"와
   같은 완전한 서술문을 사용합니다.
@@ -106,8 +142,6 @@ _SYSTEM_PROMPT_TEMPLATE = """당신은 대한민국 정부 창업지원사업 �
   유지합니다.
 - "치료", "진단", "처방" 등 의료행위로 오인될 수 있는 표현은 쓰지 않습니다 -- PREP
   GATE 판정 기준과 상충하면 이 서비스의 지원 자격 자체가 위험해집니다.
-- [검진 리포트]와 [사용자가 이미 입력한 내용]에 없는 사실(구체 수치·고유명사)을
-  지어내지 않습니다. 근거가 부족하면 일반적인 서술로 대체하세요.
 - 요청받은 필드만 채우세요. 요청하지 않은 필드는 만들지 마세요.
 """
 
@@ -217,7 +251,8 @@ async def generate_missing_sections(
     client = _build_client()
     schema = build_response_schema(target_fields)
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
-        template_label=_TEMPLATE_LABELS.get(template_type, template_type)
+        template_label=_TEMPLATE_LABELS.get(template_type, template_type),
+        no_grounding_placeholder=NO_GROUNDING_PLACEHOLDER,
     )
     user_prompt = _build_user_prompt(report_text, field_values, target_fields)
 
