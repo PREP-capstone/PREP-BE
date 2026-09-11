@@ -72,6 +72,14 @@ Content-Type: application/json
 
 정렬 순서는 매칭률 높은 순, 마감일 가까운 순, 지원금액 큰 순이다. 추천 기준일은 버튼을 누른 시점의 서버 날짜를 사용한다.
 
+추천 항목에는 `support_types`와 `is_financial_support`가 포함된다. `support_types`는 `금전지원`, `사업화`, `시설·공간`, `보육`, `멘토링·교육`, `행사·네트워크` 중 공고에서 확인된 유형이고, `is_financial_support`는 실제 금전성 지원으로 필터링 가능한지 나타낸다. `support_amount_text`는 원문 지원 내용이므로 숫자 금액이 없을 수 있다.
+
+지원사업 출처:
+
+- K-Startup OpenAPI
+- 기업마당 지원사업정보 API
+- Startup-Plus 공개 페이지 보조 수집
+
 ## 오류 응답
 
 | 상태 | code | 의미 |
@@ -80,4 +88,3 @@ Content-Type: application/json
 | 400 | `FUNDING_REPORT_PDF_REQUIRED` | PDF 방식에서 PDF가 아님 |
 | 413 | `FUNDING_REPORT_TOO_LARGE` | PDF가 10MB 초과 |
 | 422 | `FUNDING_REPORT_TEXT_EMPTY` | PDF 텍스트 추출 실패 |
-

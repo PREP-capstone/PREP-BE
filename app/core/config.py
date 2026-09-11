@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     naver_client_secret: str = ""
     public_data_service_key: str = ""
     kstartup_api_url: str = "https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01"
+    bizinfo_api_key: str = ""
+    bizinfo_api_url: str = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
     funding_fetch_limit: int = 100
     funding_request_timeout_seconds: float = 8.0
     startup_plus_project_url: str = "https://www.startup-plus.kr/project"

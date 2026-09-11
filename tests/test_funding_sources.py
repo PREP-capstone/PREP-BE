@@ -1,6 +1,16 @@
 from datetime import date
 
-from app.domain.funding_sources import _find_items, _kstartup_request_params, _normalize_program, _parse_date
+import pytest
+
+from app.domain.funding_sources import (
+    fetch_external_funding_programs,
+    _find_items,
+    _kstartup_request_params,
+    _normalize_bizinfo_program,
+    _normalize_program,
+    _parse_date,
+    _parse_date_range,
+)
 
 
 def test_find_items_handles_public_data_nested_payload() -> None:
@@ -43,6 +53,7 @@ def test_normalize_program_maps_kstartup_like_fields() -> None:
     assert program.region == "충남"
     assert program.max_amount == 50000000
     assert "AI" in program.keywords
+    assert "금전지원" in program.support_types
 
 
 def test_kstartup_request_params_include_public_data_pagination_aliases() -> None:
@@ -70,5 +81,73 @@ def test_normalize_program_parses_amount_from_description_when_support_class_exi
     assert program.max_amount == 50000000
 
 
+def test_normalize_program_keeps_amount_and_support_category_types() -> None:
+    program = _normalize_program(
+        {
+            "biz_pbanc_nm": "창업기업 지원사업",
+            "support_amount": "최대 5천만원",
+            "supt_biz_clsfc": "시설ㆍ공간ㆍ보육",
+            "biz_pbanc_ctnt": "사업비를 지원합니다.",
+        },
+        source="K-Startup",
+    )
+
+    assert program is not None
+    assert "금전지원" in program.support_types
+    assert "시설·공간" in program.support_types
+    assert "보육" in program.support_types
+
+
+@pytest.mark.asyncio
+async def test_fetch_external_funding_programs_isolates_source_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def successful_source(profile):
+        return [], None
+
+    async def failing_source(profile):
+        raise RuntimeError("source unavailable")
+
+    monkeypatch.setattr("app.domain.funding_sources.fetch_kstartup_programs", successful_source)
+    monkeypatch.setattr("app.domain.funding_sources.fetch_bizinfo_programs", failing_source)
+    monkeypatch.setattr("app.domain.funding_sources.fetch_startup_plus_programs", successful_source)
+
+    rows, warnings = await fetch_external_funding_programs(profile=None)
+
+    assert rows == []
+    assert warnings == ["기업마당 조회에 실패했습니다: RuntimeError"]
+
+
 def test_parse_date_handles_deadline_label() -> None:
     assert _parse_date("2026.09.16") == date(2026, 9, 16)
+
+
+def test_normalize_bizinfo_program_maps_json_item_fields() -> None:
+    program = _normalize_bizinfo_program(
+        {
+            "seq": "PBLN_001",
+            "title": "충남 AI 헬스케어 사업화 지원사업",
+            "link": "https://www.bizinfo.go.kr/example",
+            "author": "중소벤처기업부",
+            "excInsttNm": "충남지방중소벤처기업청",
+            "description": "<div>사업비 최대 5천만원을 지원합니다.</div>",
+            "lcategory": "창업",
+            "reqstDt": "20260901 ~ 20260930",
+            "trgetNm": "예비창업자",
+            "hashTags": "2026,충남,AI,창업",
+        }
+    )
+
+    assert program is not None
+    assert program.program_id == "PBLN_001"
+    assert program.source == "기업마당"
+    assert program.open_date == date(2026, 9, 1)
+    assert program.deadline == date(2026, 9, 30)
+    assert program.region == "충남"
+    assert program.max_amount == 50000000
+    assert "AI" in program.keywords
+
+
+def test_parse_date_range_handles_bizinfo_period() -> None:
+    assert _parse_date_range("2026.09.01 ~ 2026.09.30") == (
+        date(2026, 9, 1),
+        date(2026, 9, 30),
+    )

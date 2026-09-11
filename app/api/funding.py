@@ -47,6 +47,8 @@ class FundingProgramRecommendation(BaseModel):
     source_url: str | None
     description: str | None
     keywords: list[str]
+    support_types: list[str]
+    is_financial_support: bool
 
 
 class FundingRecommendationsResult(BaseModel):
@@ -230,4 +232,6 @@ def _to_recommendation(
         source_url=program.source_url,
         description=program.description,
         keywords=program.keywords or [],
+        support_types=program.support_types or [],
+        is_financial_support=is_money_support_program(program),
     )
