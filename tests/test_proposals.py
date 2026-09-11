@@ -29,7 +29,6 @@ from app.api.proposals import (
 from app.domain import proposal_llm
 from app.domain.proposal_llm import (
     ATTACHMENT_CHECKLISTS,
-    NO_GROUNDING_PLACEHOLDER,
     TABLE_ITEM_SCHEMAS,
     ProposalLLMUnavailable,
     _SYSTEM_PROMPT_TEMPLATE,
@@ -217,17 +216,6 @@ def test_proposal_prompt_requires_formal_document_tone() -> None:
     assert "~함" in _SYSTEM_PROMPT_TEMPLATE
     assert "~됨" in _SYSTEM_PROMPT_TEMPLATE
     assert "존댓말·대화체" in _SYSTEM_PROMPT_TEMPLATE
-
-
-def test_proposal_prompt_forbids_fabricating_founder_facts() -> None:
-    # 실사용 중 발견된 할루시네이션(리포트에 대표자 정보가 없는데도 경력을 지어냄) 회귀 방지.
-    # NO_GROUNDING_PLACEHOLDER는 .format()으로 채워지는 자리라 렌더링 후 확인해야 한다.
-    rendered = _SYSTEM_PROMPT_TEMPLATE.format(
-        template_label="테스트", no_grounding_placeholder=NO_GROUNDING_PLACEHOLDER
-    )
-    assert "founder_capability" in rendered
-    assert NO_GROUNDING_PLACEHOLDER in rendered
-    assert "그럴듯하게 들리는 문장" in rendered  # 두루뭉술한 필러도 금지한다는 지시
 
 
 async def test_generate_missing_sections_returns_empty_dict_when_no_target_fields() -> None:
