@@ -210,7 +210,11 @@ def test_build_response_schema_raises_for_unregistered_table_field() -> None:
 def test_proposal_prompt_requires_formal_document_tone() -> None:
     assert "~이다" in _SYSTEM_PROMPT_TEMPLATE
     assert "~한다" in _SYSTEM_PROMPT_TEMPLATE
+    assert "~된다" in _SYSTEM_PROMPT_TEMPLATE
     assert "~입니다" in _SYSTEM_PROMPT_TEMPLATE
+    assert "~임" in _SYSTEM_PROMPT_TEMPLATE
+    assert "~함" in _SYSTEM_PROMPT_TEMPLATE
+    assert "~됨" in _SYSTEM_PROMPT_TEMPLATE
     assert "존댓말·대화체" in _SYSTEM_PROMPT_TEMPLATE
 
 
