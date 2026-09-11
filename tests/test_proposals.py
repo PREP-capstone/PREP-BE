@@ -29,9 +29,12 @@ from app.api.proposals import (
 from app.domain import proposal_llm
 from app.domain.proposal_llm import (
     ATTACHMENT_CHECKLISTS,
+    HALLUCINATION_PRONE_FIELDS,
+    NO_GROUNDING_PLACEHOLDER,
     TABLE_ITEM_SCHEMAS,
     ProposalLLMUnavailable,
     _SYSTEM_PROMPT_TEMPLATE,
+    _normalize_sections,
     build_response_schema,
     generate_missing_sections,
 )
@@ -196,7 +199,10 @@ def test_build_response_schema_maps_text_and_table_fields() -> None:
         ]
     )
     props = schema["schema"]["properties"]
-    assert props["background_motivation"] == {"type": "string"}
+    # TEXT는 has_report_basis/content 객체 -- 모델이 근거 유무를 먼저 명시적으로 답하게
+    # 강제하는 스키마다. 원시 응답은 _normalize_sections()가 최종 문자열로 가공한다.
+    assert props["background_motivation"]["type"] == "object"
+    assert set(props["background_motivation"]["properties"]) == {"has_report_basis", "content"}
     assert props["growth_targets"]["type"] == "array"
     assert props["growth_targets"]["items"] == TABLE_ITEM_SCHEMAS["growth_targets"]
     assert schema["schema"]["required"] == ["background_motivation", "growth_targets"]
@@ -218,6 +224,32 @@ def test_proposal_prompt_requires_formal_document_tone() -> None:
     assert "존댓말·대화체" in _SYSTEM_PROMPT_TEMPLATE
 
 
+def test_proposal_prompt_requires_self_check_for_every_text_field() -> None:
+    # 특정 필드 이름을 예시로 박아두면 그 필드에만 규칙이 적용되는 걸 실측으로 확인했다
+    # (founder_capability만 지켜지고 team_hiring_plan/company_overview는 안 지켜짐).
+    # 그래서 규칙 자체는 "모든 TEXT 필드에 예외 없이" 적용된다고 명시해야 한다.
+    assert "모든 TEXT 필드" in _SYSTEM_PROMPT_TEMPLATE
+    assert "has_report_basis" in _SYSTEM_PROMPT_TEMPLATE
+
+
+def test_normalize_sections_forces_placeholder_when_no_basis() -> None:
+    raw = {
+        "founder_capability": {"has_report_basis": False, "content": "그럴듯하지만 근거 없는 문장"},
+        "background_motivation": {"has_report_basis": True, "content": "실제 근거 있는 문장"},
+        "growth_targets": [{"year": 1, "revenue_krw": 0, "headcount": 0, "basis": "추정"}],
+    }
+    target_fields = [
+        {"field_key": "founder_capability", "field_type": "TEXT"},
+        {"field_key": "background_motivation", "field_type": "TEXT"},
+        {"field_key": "growth_targets", "field_type": "TABLE"},
+    ]
+    normalized = _normalize_sections(raw, target_fields)
+    # has_report_basis=False면 모델이 뭘 썼든 무시하고 코드가 placeholder로 강제 교체한다.
+    assert normalized["founder_capability"] == NO_GROUNDING_PLACEHOLDER
+    assert normalized["background_motivation"] == "실제 근거 있는 문장"
+    assert normalized["growth_targets"] == raw["growth_targets"]  # TABLE은 그대로 통과
+
+
 async def test_generate_missing_sections_returns_empty_dict_when_no_target_fields() -> None:
     assert await generate_missing_sections("PSST", "report", {}, []) == {}
 
@@ -235,7 +267,7 @@ async def test_generate_missing_sections_parses_llm_response(monkeypatch) -> Non
     monkeypatch.setattr(proposal_llm.redis_client, "get", AsyncMock(return_value=None))
     monkeypatch.setattr(proposal_llm.redis_client, "set", AsyncMock())
 
-    payload = json.dumps({"background_motivation": "수면 문제는..."})
+    payload = json.dumps({"background_motivation": {"has_report_basis": True, "content": "수면 문제는..."}})
     with _patched_client(payload) as mock_openai_cls:
         result = await generate_missing_sections(
             "PSST",
@@ -272,7 +304,7 @@ async def test_generate_missing_sections_uses_cache_on_second_call(monkeypatch) 
     monkeypatch.setattr(proposal_llm.redis_client, "set", fake_set)
 
     target_fields = [{"field_key": "background_motivation", "label": "x", "field_type": "TEXT"}]
-    payload = json.dumps({"background_motivation": "동일 결과"})
+    payload = json.dumps({"background_motivation": {"has_report_basis": True, "content": "동일 결과"}})
 
     with _patched_client(payload) as first_call:
         first = await generate_missing_sections("PSST", "report", {}, target_fields)
@@ -282,7 +314,46 @@ async def test_generate_missing_sections_uses_cache_on_second_call(monkeypatch) 
         second = await generate_missing_sections("PSST", "report", {}, target_fields)
     second_call.assert_not_called()  # 캐시 히트라 OpenAI를 다시 안 부른다.
 
-    assert first == second
+
+async def test_generate_missing_sections_splits_hallucination_prone_fields_into_own_call(monkeypatch) -> None:
+    # 실측(2026-09-11): founder_capability/team_hiring_plan을 다른 16~17개 필드와 한
+    # 호출에 몰아넣으면 has_report_basis 자기점검이 종종 무너졌다. 위험 필드군을 별도
+    # 배치로 쪼개 호출하는지 -- 즉 OpenAI가 정확히 2번(그룹별 1번씩) 불리는지 확인한다.
+    monkeypatch.setattr(proposal_llm.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(proposal_llm.redis_client, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(proposal_llm.redis_client, "set", AsyncMock())
+
+    normal_payload = json.dumps({"background_motivation": {"has_report_basis": True, "content": "x"}})
+    prone_payload = json.dumps({"founder_capability": {"has_report_basis": False, "content": ""}})
+
+    # 두 배치가 asyncio.gather로 동시에 도니 호출 순서가 보장되지 않는다 -- 이 배치가
+    # 요청한 스키마의 필드 키를 보고 어느 쪽 응답을 돌려줄지 결정해야 순서에 안전하다.
+    def _side_effect(*, response_format, **_kwargs):
+        properties = response_format["json_schema"]["schema"]["properties"]
+        payload = prone_payload if "founder_capability" in properties else normal_payload
+        return _fake_openai_response(payload)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=_side_effect)
+    with patch("app.domain.proposal_llm.AsyncOpenAI", return_value=mock_client) as mock_openai_cls:
+        result = await generate_missing_sections(
+            "PSST",
+            "report",
+            {},
+            [
+                {"field_key": "background_motivation", "label": "x", "field_type": "TEXT"},
+                {"field_key": "founder_capability", "label": "대표자 역량", "field_type": "TEXT"},
+            ],
+        )
+
+    assert mock_openai_cls.call_count == 2  # 위험군과 일반군이 각각 별도 호출
+    assert result["background_motivation"] == "x"
+    assert result["founder_capability"] == NO_GROUNDING_PLACEHOLDER
+
+
+def test_hallucination_prone_fields_are_all_known_field_keys() -> None:
+    known_keys = {row["field_key"] for row in FIELD_DEFINITION_ROWS}
+    assert HALLUCINATION_PRONE_FIELDS <= known_keys
 
 
 # ---------------------------------------------------------------------------
