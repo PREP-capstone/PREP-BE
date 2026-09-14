@@ -37,18 +37,46 @@ _CACHE_TTL_SECONDS = 600  # 완료(§0) 전 재생성 재시도 비용 절감용
 # v5(2026-09-11): TEXT 필드 응답 스키마 자체를 {has_report_basis, content}로 바꿔
 # 근거 없음 판단을 모델의 산문 성향이 아니라 코드(_normalize_sections)가 강제하도록
 # 구조 변경.
-_CACHE_KEY_PREFIX = "proposal_generation:v5:"
+# v6(2026-09-14, 팀 회의 결정): ① ALWAYS_BLANK_FIELDS 신설 -- 대표자/팀/RND 실적처럼
+# 원천적으로 리포트에 근거가 있을 수 없는 필드는 LLM에 아예 묻지 않고 무조건 빈칸으로
+# 반환(사용자가 직접 채우는 게 원칙). has_report_basis 자기점검에 기대는 것보다
+# 근본적인 차단이다. ② 생성 문장 분량을 대폭 늘림 -- 사용자가 처음부터 작문하지 않고
+# 단어·수치만 다듬으면 되는 수준을 목표로 함.
+_CACHE_KEY_PREFIX = "proposal_generation:v6:"
 
 # 리포트/사용자 입력 둘 다에 근거가 없을 때 TEXT 필드가 반환해야 하는 고정 문구.
 # 정확히 이 문자열인지 코드에서도 확인할 수 있게 상수로 뽑아둔다.
 NO_GROUNDING_PLACEHOLDER = "[검진 리포트에 근거 정보가 없습니다. 직접 작성해주세요.]"
 
-# 대표자/팀/실적처럼 검진 리포트에 원래 근거가 거의 없는 필드들 -- generate_missing_sections()가
-# 이 필드들을 나머지 필드와 분리해 별도 호출로 묻는다(실측, 2026-09-11: 20개 필드를 한
-# 호출에 몰아넣으면 이 필드들의 has_report_basis 자기점검이 종종 무너짐).
-HALLUCINATION_PRONE_FIELDS: frozenset[str] = frozenset(
-    {"founder_capability", "team_hiring_plan", "rd_track_record", "bonus_criteria"}
+# 팀 회의 결정(2026-09-14): 아래 필드는 검진 리포트에 원천적으로 근거가 있을 수 없는
+# "사람/실적" 성격이라, LLM에게 묻지도 않고 app/api/proposals.py가 처음부터 빈 값으로
+# 반환한다 -- 프론트가 빈칸(옅은 주황색)으로 표시해 사용자가 직접 채우게 유도한다.
+# has_report_basis 자기점검(아래 _TEXT_FIELD_SCHEMA)에 기대는 것보다 근본적인 차단이라
+# 이 필드들에는 더 이상 LLM 호출 자체가 일어나지 않는다.
+#   - 일반현황: company_overview (founder_capability와 역할이 겹쳐 새던 구멍)
+#   - 성장전략: funding_plan
+#   - 팀구성 전체: founder_capability, team_hiring_plan, new_hire_plan, partnership
+#   - RND특화 전체: rd_plan_budget, annual_budget_exec, rd_track_record, trl_level
+ALWAYS_BLANK_FIELDS: frozenset[str] = frozenset(
+    {
+        "company_overview",
+        "funding_plan",
+        "founder_capability",
+        "team_hiring_plan",
+        "new_hire_plan",
+        "partnership",
+        "rd_plan_budget",
+        "annual_budget_exec",
+        "rd_track_record",
+        "trl_level",
+    }
 )
+
+# ALWAYS_BLANK_FIELDS로 이관되지 않고 남은, 그래도 "사람/실적"류라 위험한 필드 -- 나머지
+# 필드와 분리해 별도 호출로 묻는다(실측, 2026-09-11: 20개 필드를 한 호출에 몰아넣으면
+# has_report_basis 자기점검이 종종 무너짐). bonus_criteria만 남았다 -- 우대 가점 사항은
+# IR추가 카테고리라 이번 "항상 빈칸" 결정 대상에는 포함되지 않았지만 여전히 위험군이다.
+HALLUCINATION_PRONE_FIELDS: frozenset[str] = frozenset({"bonus_criteria"})
 
 # TABLE 필드별 항목 스키마 -- docs/제안서_자동작성_API_명세서.md §2의 표 구조를 그대로 반영.
 # 새 TABLE 필드가 추가되면 여기에도 항목 스키마를 등록해야 한다(build_response_schema가 조회).
@@ -143,6 +171,14 @@ TABLE 필드(growth_targets, annual_budget_exec, financial_projection 등)는
 리포트의 시장 규모·카테고리 등 간접 정보를 근거로 사용자가 검토할 초안 추정치를
 항상 제시하세요. 다만 존재하지 않는 구체 기관명·통계를 인용하지 말고, 추정 근거를
 basis에 명시해 추정치임을 분명히 하세요.
+
+## 분량 (팀 결정: 사용자가 처음부터 작문하지 않고 단어·수치만 다듬으면 되는 수준)
+각 TEXT 필드(has_report_basis: true인 경우)는 **최소 500자 이상**, 6~8문장의
+충분히 상세한 문단으로 작성하세요. 400자 근처에서 서둘러 마무리하지 말고, 아래
+요소를 전부 순서대로 풀어서 500자를 확실히 넘기세요:
+① 현황·배경 서술 ② 구체적 근거·수치·방법 ③ 차별점이나 세부 실행 방식
+④ 기대 효과·의의. 한두 문장으로 요약하고 끝내는 것은 금지입니다. 짧고 개조식인
+문장은 지양하고, 완결된 서술로 채우세요.
 
 ## 그 외 규칙
 - 사업계획서 심사위원이 읽는 공식 문서체로, 과장 없이 정량적 근거를 포함해 작성합니다.

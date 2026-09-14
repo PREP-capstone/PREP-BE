@@ -28,6 +28,7 @@ from app.api.proposals import (
 )
 from app.domain import proposal_llm
 from app.domain.proposal_llm import (
+    ALWAYS_BLANK_FIELDS,
     ATTACHMENT_CHECKLISTS,
     HALLUCINATION_PRONE_FIELDS,
     NO_GROUNDING_PLACEHOLDER,
@@ -186,6 +187,32 @@ async def test_get_field_definitions_returns_seeded_psst_fields() -> None:
     assert "rd_plan_budget" not in keys  # PSST에서는 제외된 필드
 
 
+@pytest.mark.db
+async def test_generate_proposal_never_sends_always_blank_fields_to_llm(monkeypatch) -> None:
+    """2026-09-14 팀 결정 회귀 테스트: company_overview/founder_capability 등은 사용자가
+    직접 채우지 않는 한 LLM에 아예 전달되지 않고 빈 값 그대로 응답에 나가야 한다."""
+    from app.api import proposals as proposals_module
+
+    fake_generate = AsyncMock(return_value={"background_motivation": "정상 생성됨"})
+    monkeypatch.setattr(proposals_module, "generate_missing_sections", fake_generate)
+
+    # 실제 UploadFile을 만족시키려고 render_proposal_pdf()로 유효한 PDF 바이트를 하나 만든다.
+    pdf_bytes = render_proposal_pdf("PSST", [{"field_key": "x", "label": "x", "field_type": "TEXT", "value": "x"}])
+    report = UploadFile(filename="report.pdf", file=BytesIO(pdf_bytes), headers=Headers({"content-type": "application/pdf"}))
+
+    response = await proposals_module.generate_proposal(report=report, template_type="PSST", field_values="{}")
+
+    sections_by_key = {section.field_key: section.value for section in response.result.sections}
+    for key in ALWAYS_BLANK_FIELDS:
+        if key in sections_by_key:  # PSST에 없는 필드(예: rd_plan_budget)는 애초에 안 나옴
+            assert sections_by_key[key] in ("", [])
+
+    # generate_missing_sections에 실제로 넘어간 target_fields에 ALWAYS_BLANK_FIELDS가 하나도 없어야 한다.
+    called_target_fields = fake_generate.call_args.args[3]
+    called_keys = {f["field_key"] for f in called_target_fields}
+    assert called_keys.isdisjoint(ALWAYS_BLANK_FIELDS)
+
+
 # ---------------------------------------------------------------------------
 # app/domain/proposal_llm.py -- 전부 mock, DB/네트워크 불필요
 # ---------------------------------------------------------------------------
@@ -316,21 +343,22 @@ async def test_generate_missing_sections_uses_cache_on_second_call(monkeypatch) 
 
 
 async def test_generate_missing_sections_splits_hallucination_prone_fields_into_own_call(monkeypatch) -> None:
-    # 실측(2026-09-11): founder_capability/team_hiring_plan을 다른 16~17개 필드와 한
-    # 호출에 몰아넣으면 has_report_basis 자기점검이 종종 무너졌다. 위험 필드군을 별도
-    # 배치로 쪼개 호출하는지 -- 즉 OpenAI가 정확히 2번(그룹별 1번씩) 불리는지 확인한다.
+    # 실측(2026-09-11): 위험 필드를 다른 필드들과 한 호출에 몰아넣으면 has_report_basis
+    # 자기점검이 종종 무너졌다. 위험 필드군(현재는 bonus_criteria만 남음 -- 나머지는
+    # 2026-09-14 팀 결정으로 ALWAYS_BLANK_FIELDS로 이관돼 LLM 호출 자체를 안 탄다)을
+    # 별도 배치로 쪼개 호출하는지 -- 즉 OpenAI가 정확히 2번(그룹별 1번씩) 불리는지 확인한다.
     monkeypatch.setattr(proposal_llm.settings, "openai_api_key", "sk-test")
     monkeypatch.setattr(proposal_llm.redis_client, "get", AsyncMock(return_value=None))
     monkeypatch.setattr(proposal_llm.redis_client, "set", AsyncMock())
 
     normal_payload = json.dumps({"background_motivation": {"has_report_basis": True, "content": "x"}})
-    prone_payload = json.dumps({"founder_capability": {"has_report_basis": False, "content": ""}})
+    prone_payload = json.dumps({"bonus_criteria": {"has_report_basis": False, "content": ""}})
 
     # 두 배치가 asyncio.gather로 동시에 도니 호출 순서가 보장되지 않는다 -- 이 배치가
     # 요청한 스키마의 필드 키를 보고 어느 쪽 응답을 돌려줄지 결정해야 순서에 안전하다.
     def _side_effect(*, response_format, **_kwargs):
         properties = response_format["json_schema"]["schema"]["properties"]
-        payload = prone_payload if "founder_capability" in properties else normal_payload
+        payload = prone_payload if "bonus_criteria" in properties else normal_payload
         return _fake_openai_response(payload)
 
     mock_client = MagicMock()
@@ -342,18 +370,43 @@ async def test_generate_missing_sections_splits_hallucination_prone_fields_into_
             {},
             [
                 {"field_key": "background_motivation", "label": "x", "field_type": "TEXT"},
-                {"field_key": "founder_capability", "label": "대표자 역량", "field_type": "TEXT"},
+                {"field_key": "bonus_criteria", "label": "우대 가점 사항", "field_type": "TEXT"},
             ],
         )
 
     assert mock_openai_cls.call_count == 2  # 위험군과 일반군이 각각 별도 호출
     assert result["background_motivation"] == "x"
-    assert result["founder_capability"] == NO_GROUNDING_PLACEHOLDER
+    assert result["bonus_criteria"] == NO_GROUNDING_PLACEHOLDER
 
 
 def test_hallucination_prone_fields_are_all_known_field_keys() -> None:
     known_keys = {row["field_key"] for row in FIELD_DEFINITION_ROWS}
     assert HALLUCINATION_PRONE_FIELDS <= known_keys
+
+
+def test_always_blank_fields_are_all_known_field_keys_and_not_checklist() -> None:
+    field_types = {row["field_key"]: row["field_type"] for row in FIELD_DEFINITION_ROWS}
+    assert ALWAYS_BLANK_FIELDS <= set(field_types)
+    assert all(field_types[key] != "CHECKLIST" for key in ALWAYS_BLANK_FIELDS)
+
+
+def test_always_blank_fields_match_team_decision_categories() -> None:
+    # 2026-09-14 팀 회의 결정: 일반현황(기업개요/대표자), 성장전략(자금조달계획),
+    # 팀구성 전체, RND특화 전체가 "빈칸 필수" 대상 -- 이 정확한 집합인지 고정한다.
+    assert ALWAYS_BLANK_FIELDS == frozenset(
+        {
+            "company_overview",
+            "funding_plan",
+            "founder_capability",
+            "team_hiring_plan",
+            "new_hire_plan",
+            "partnership",
+            "rd_plan_budget",
+            "annual_budget_exec",
+            "rd_track_record",
+            "trl_level",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
