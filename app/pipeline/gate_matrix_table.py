@@ -2,6 +2,8 @@
 
 import re
 
+from app.pipeline.genetic_test_actions import GENETIC_TEST_KEYWORDS
+
 DATA_TYPE_ENUM = {"라이프스타일", "생체지표"}
 FUNCTION_TYPE_ENUM = {"단순기록", "비교·추이분석", "수치예측·진단"}
 MATRIX_VERDICT_ENUM = {"PASS", "CONDITIONAL", "FAIL"}
@@ -108,6 +110,57 @@ def detect_invasive(text: str) -> bool:
     compact = _WHITESPACE.sub("", text)
     compact = _NON_INVASIVE.sub("", compact)  # 부정 표현 제거가 먼저다
     return any(keyword in compact for keyword in INVASIVE_KEYWORDS)
+
+
+# ---- DTC 유전자검사 보조 안내 (6칸 표 조회 결과는 그대로 두고, 인증 안내 문구만 교체) ----
+#
+# 침습적 하드체크와 달리 verdict를 오버라이드하지 않는다 — (생체지표, 수치예측·진단) 셀은
+# 이미 FAIL이라 유전자 여부와 무관하게 같은 결론에 도달한다. 다만 "의료기기 인증을 받으면
+# 된다"는 기본 안내(_CERTIFICATION_GUIDANCE)는 DTC 유전자검사에는 틀린 법률이다 — 이건
+# 의료기기법이 아니라 생명윤리법(DTC 유전자검사기관 신고·허용 항목) 문제다.
+#
+# 2026-09-14 원문 확보(사용자가 PDF 직접 제공, 법률 제21065호, 2025.10.1. 시행) — 아래
+# 조문 인용은 이 원문 기준이다. RAG(app/rag/)에는 아직 미적재라 evidence_chunks 조회로
+# quote를 채울 순 없지만(§8.2 참조), 이 문구 자체는 하드코딩 상수라 RAG 적재와 무관하게
+# 정확한 조문을 인용할 수 있다.
+#
+# 핵심 조문 3개:
+# - 제49조: 유전자검사기관은 **신고제**(허가·인증 아님)
+# - 제49조의2②: "소비자 대상 직접 시행 유전자검사"(DTC, 제50조제3항제2호 유형을 가리키는
+#   법률상 정식 용어)를 하려면 신고와 별개로 검사역량 **인증**(유효기간 3년)이 추가로 필요
+# - 제50조③: 의료기관이 아닌 유전자검사기관은 질병의 예방·진단·치료와 관련한 유전자검사를
+#   **원칙적으로 할 수 없다** — 예외는 ①의료기관 의뢰 ②질병예방 관련 복지부장관 인정 항목뿐.
+#   즉 인증(제49조의2)을 받아도 "질병 진단" 목적 검사를 의료기관 경유 없이 직접 제공하는 건
+#   별개로 막혀 있다 — "인증받으면 해결"이 아닌 이유가 이 조문이다. 위반 시 제67조⑦(2년
+#   이하 징역/3천만원 이하 벌금)로 단순 미신고(제68조⑪, 1년/2천만원)보다 무겁다.
+#
+# 예방 목적 중 정확히 어떤 항목이 "복지부장관이 인정"한 허용 목록인지는 대통령령(시행령)
+# 위임 사항이라 이 법률 원문만으로는 확정 불가 — 그 경계는 여전히 hedge로 남긴다.
+#
+# 키워드 목록 자체는 app/pipeline/genetic_test_actions.py가 단일 출처다 —
+# scripts/seed_genetic_test_keywords.py(gate_keywords 시딩)와 공유한다.
+
+GENETIC_AVOIDANCE_CERTIFICATION = (
+    "유전자검사 관련 서비스는 의료기기 인증과 별개로 생명윤리 및 안전에 관한 법률상 "
+    "유전자검사기관 신고(제49조)가 필요하고, 검사 결과를 소비자에게 직접 제공(DTC)하려면 "
+    "검사역량 인증(제49조의2, 유효기간 3년)까지 받아야 합니다. 다만 의료기관이 아닌 "
+    "유전자검사기관은 질병의 예방·진단·치료와 관련한 유전자검사를 원칙적으로 할 수 없습니다"
+    "(제50조제3항 — 의료기관의 의뢰를 받았거나 질병예방 관련 검사로 보건복지부장관이 "
+    "인정한 경우만 예외). 즉 신고·인증을 받아도 '질병 진단' 목적 검사 결과를 의료기관 경유 "
+    "없이 직접 제공하는 것은 별도로 금지될 수 있으므로, 서비스가 예방/웰니스 목적인지 "
+    "진단/치료 목적인지부터 확인해야 합니다. 예방 목적 중 구체적으로 허용되는 항목 범위는 "
+    "시행령 위임 사항이라 별도 확인이 필요합니다."
+)
+
+
+def detect_genetic_test_signal(text: str) -> bool:
+    """서비스 설명·데이터 항목명에서 유전자검사(DTC) 신호를 교차 확인한다.
+
+    detect_invasive와 마찬가지로 재현율 보강용이며 verdict를 바꾸지 않는다 — 매칭되면
+    avoidance_certification 문구만 GENETIC_AVOIDANCE_CERTIFICATION으로 교체된다.
+    """
+    compact = _WHITESPACE.sub("", text)
+    return any(keyword in compact for keyword in GENETIC_TEST_KEYWORDS)
 
 
 def is_invasive_hardcheck(data_type: str, acquire_method: str | None, invasive_signal: bool) -> bool:

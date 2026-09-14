@@ -33,9 +33,11 @@ from app.domain.scoring import grade_by_threshold, max_grade
 from app.pipeline.correction_terms import keyword_score
 from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_TABLE,
+    GENETIC_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_REDESIGN,
     HARDCHECK_VERDICT,
+    detect_genetic_test_signal,
     detect_invasive,
     is_invasive_hardcheck,
 )
@@ -257,6 +259,11 @@ def _detect_invasive_signal(service_description: str, items: list[HealthDataItem
     return any(detect_invasive(text) for text in texts)
 
 
+def _detect_genetic_test_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
+    texts = [service_description] + [item.name for item in items]
+    return any(detect_genetic_test_signal(text) for text in texts)
+
+
 @router.post(
     "/gate",
     response_model=GateResponse,
@@ -293,6 +300,14 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         )
 
     cell = GATE_MATRIX_TABLE[(data_type, function_type)]
+    avoidance_certification = cell.get("avoidance_certification")
+    if cell["verdict"] == "FAIL" and _detect_genetic_test_signal(
+        analysis_session.service_description, health_data_items
+    ):
+        # 매트릭스 verdict는 그대로 두고(§3.2 data_type/function_type 조합만으로 이미 FAIL) 인증
+        # 안내 문구만 생명윤리법 기준으로 교체 — gate_matrix_table.py의 GENETIC_AVOIDANCE_CERTIFICATION 참조.
+        avoidance_certification = GENETIC_AVOIDANCE_CERTIFICATION
+
     return GateResponse(
         data_type=data_type,
         function_type=function_type,
@@ -301,7 +316,7 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         verdict=cell["verdict"],
         hardcheck_fired=False,
         avoidance_redesign=cell.get("avoidance_redesign"),
-        avoidance_certification=cell.get("avoidance_certification"),
+        avoidance_certification=avoidance_certification,
         reasoning=_build_gate_reasoning(
             data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
         ),

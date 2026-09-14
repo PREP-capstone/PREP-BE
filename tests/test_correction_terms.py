@@ -18,7 +18,13 @@ def test_hypertension_split_between_disease_and_biomarker() -> None:
     assert NOUN_CLASSIFICATION["혈압"] == "생체지표"
 
 
-def test_biomarker_extra_has_five_items_not_in_gate_keywords() -> None:
-    """심박수·체중·체성분·심전도·산소포화도는 gate_keywords에 없어 별도 상수로 둔다."""
-    assert len(BIOMARKER_EXTRA) == 5
+def test_biomarker_extra_has_seven_items_not_in_gate_keywords() -> None:
+    """심박수·체중·체성분·심전도·산소포화도·유전자·유전체는 gate_keywords에 없어 별도 상수로 둔다.
+
+    유전자·유전체는 2026-09-14 추가 — 이 사전에 없어 유전자 데이터 항목이 기본값
+    라이프스타일로 떨어지던 분류 누락 버그를 해소한다.
+    """
+    assert len(BIOMARKER_EXTRA) == 7
+    assert "유전자" in BIOMARKER_EXTRA
+    assert "유전체" in BIOMARKER_EXTRA
     assert set(BIOMARKER_EXTRA).isdisjoint(NOUN_CLASSIFICATION)
