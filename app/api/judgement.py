@@ -283,6 +283,11 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
     function_type = _classify_function_type(analysis_session.service_actions)
     acquire_method = _classify_acquire_method(health_data_items)
     invasive_signal = _detect_invasive_signal(analysis_session.service_description, health_data_items)
+    # 하드체크·매트릭스 두 FAIL 경로 모두에서 참조한다 — 침습적 수집(예: 타액 채취)과 유전자검사가
+    # 동시에 해당하는 서비스가 하드체크 경로로 빠지면서 이 신호를 놓치면, "의료기기 인증만 받으면
+    # 된다"는 문구만 보여주게 돼 생명윤리법 인증 요건을 놓치는 잘못된 안심을 줄 수 있다
+    # (2026-09-14 코드리뷰로 발견 — 원래는 매트릭스 FAIL 경로에서만 검사했었음).
+    genetic_signal = _detect_genetic_test_signal(analysis_session.service_description, health_data_items)
 
     if is_invasive_hardcheck(data_type, acquire_method, invasive_signal):
         return GateResponse(
@@ -293,7 +298,9 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
             verdict="FAIL",
             hardcheck_fired=True,
             avoidance_redesign=HARDCHECK_AVOIDANCE_REDESIGN,
-            avoidance_certification=HARDCHECK_AVOIDANCE_CERTIFICATION,
+            avoidance_certification=(
+                GENETIC_AVOIDANCE_CERTIFICATION if genetic_signal else HARDCHECK_AVOIDANCE_CERTIFICATION
+            ),
             reasoning=_build_gate_reasoning(
                 data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True
             ),
@@ -301,9 +308,7 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
 
     cell = GATE_MATRIX_TABLE[(data_type, function_type)]
     avoidance_certification = cell.get("avoidance_certification")
-    if cell["verdict"] == "FAIL" and _detect_genetic_test_signal(
-        analysis_session.service_description, health_data_items
-    ):
+    if cell["verdict"] == "FAIL" and genetic_signal:
         # 매트릭스 verdict는 그대로 두고(§3.2 data_type/function_type 조합만으로 이미 FAIL) 인증
         # 안내 문구만 생명윤리법 기준으로 교체 — gate_matrix_table.py의 GENETIC_AVOIDANCE_CERTIFICATION 참조.
         avoidance_certification = GENETIC_AVOIDANCE_CERTIFICATION

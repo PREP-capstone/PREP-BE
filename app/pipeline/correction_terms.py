@@ -44,20 +44,14 @@ NOUN_CLASSIFICATION: dict[str, str] = {
 # 둔다 — 문법적으로 성립하지 않는 조합("혈압 진단"류)은 매칭 자체가 안 되므로
 # 사용자 입력과 부딪히지 않는다(2026-08-13 결정).
 #
-# "유전자"/"유전체"는 판정_기준값_확정표.md §8 sensitivity_level=3(유전자정보) 목록에는
-# 있었으나 생체지표 판별 사전에는 빠져 있어, 유전자 관련 항목이 기본값 라이프스타일로
-# 떨어져 GATE_MATRIX_TABLE의 (생체지표, 수치예측·진단) FAIL 셀에 도달하지 못하는 분류
-# 누락이 있었다(2026-09-14 발견). category_1 taxonomy에 "유전자"가 재포함된 것과는
-# 무관한 별개 버그 — 이 목록은 애초에 taxonomy와 관계없이 항상 채워져 있어야 했다.
-BIOMARKER_EXTRA: tuple[str, ...] = (
-    "심박수",
-    "체중",
-    "체성분",
-    "심전도",
-    "산소포화도",
-    "유전자",
-    "유전체",
-)
+# ⚠️ 이 목록에 새 명사를 추가할 때는 scripts/generate_correction_rules.py가 이 목록을
+# 그대로 noun pool(pools["생체지표"])에 넣어 **모든** verb_substitution 동사와 조합한다는
+# 점을 반드시 고려할 것 — 그 동사들의 legal_basis(대부분 의료기기법)가 안 맞는 명사를
+# 넣으면 잘못된 법률을 인용하는 correction_rules가 생성된다(2026-09-14 코드리뷰로 발견,
+# "유전자"/"유전체"를 여기 넣었다가 생명윤리법 문구와 어긋나서 뺐다 — 생체지표 판별
+# 전용으로 쓸 명사는 app/domain/health_data.py의 load_biomarker_keywords()에서
+# genetic_test_actions.GENETIC_TEST_KEYWORDS처럼 이 목록과 분리된 별도 소스로 union할 것).
+BIOMARKER_EXTRA: tuple[str, ...] = ("심박수", "체중", "체성분", "심전도", "산소포화도")
 
 
 def keyword_score(keyword_row: GateKeyword) -> int:
