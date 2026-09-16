@@ -12,10 +12,12 @@ from app.pipeline.gate_matrix_table import (
     DATA_TYPE_ENUM,
     FUNCTION_TYPE_ENUM,
     GATE_MATRIX_TABLE,
+    GENETIC_AVOIDANCE_CERTIFICATION,
     HARDCHECK_VERDICT,
     INVASIVE_KEYWORDS,
     MATRIX_VERDICT_ENUM,
     VERDICT_PRIORITY,
+    detect_genetic_test_signal,
     detect_invasive,
     is_invasive_hardcheck,
     needs_invasive_review,
@@ -222,3 +224,43 @@ def test_acquire_method_blank_for_ordinary_combos(data_type: str, acquire_method
     무조건 저장하면 생체지표×단순기록 같은 평범한 칸이 획득방법만 다른 중복 행으로 쌓인다.
     """
     assert _stored_acquire_method(data_type, acquire_method, False, False) is None
+
+
+# ---- DTC 유전자검사 보조 안내 (2026-09-14 추가, verdict는 바꾸지 않음) ----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "유전자검사 결과를 분석해 보여줍니다",
+        "유전자분석 서비스입니다",
+        "유전체분석을 통해 건강 정보를 제공합니다",
+        "DTC유전자 검사 키트를 배송합니다",
+    ],
+)
+def test_detect_genetic_test_signal_matches(text: str) -> None:
+    assert detect_genetic_test_signal(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "심박수를 측정해 기록합니다",
+        "체지방 변화 추이를 보여줍니다",
+        "유전자와 무관한 건강관리 서비스입니다",  # "유전자"만으로는 검사/분석 문맥이 아니면 매칭 안 됨
+    ],
+)
+def test_detect_genetic_test_signal_ignores_unrelated_text(text: str) -> None:
+    assert detect_genetic_test_signal(text) is False
+
+
+def test_genetic_avoidance_certification_does_not_promise_certification_is_enough() -> None:
+    """"인증(제49조의2)받으면 해결"이라고 단정하면 안 된다 — 제50조제3항이 질병 진단·치료
+
+    목적 검사는 의료기관 의뢰 없이는 인증 여부와 무관하게 원칙적으로 막는다(2026-09-14,
+    법률 제21065호 원문 확인). 이 조문 인용이 빠지면 잘못된 안심을 주는 회귀다.
+    """
+    assert "생명윤리" in GENETIC_AVOIDANCE_CERTIFICATION
+    assert "제49조" in GENETIC_AVOIDANCE_CERTIFICATION
+    assert "제50조" in GENETIC_AVOIDANCE_CERTIFICATION
+    assert "의료기관" in GENETIC_AVOIDANCE_CERTIFICATION

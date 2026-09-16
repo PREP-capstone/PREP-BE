@@ -43,6 +43,14 @@ NOUN_CLASSIFICATION: dict[str, str] = {
 # "혈압"이 질병명(고혈압/저혈압)과 생체지표 양쪽에 걸치지만 의도적으로 그대로
 # 둔다 — 문법적으로 성립하지 않는 조합("혈압 진단"류)은 매칭 자체가 안 되므로
 # 사용자 입력과 부딪히지 않는다(2026-08-13 결정).
+#
+# ⚠️ 이 목록에 새 명사를 추가할 때는 scripts/generate_correction_rules.py가 이 목록을
+# 그대로 noun pool(pools["생체지표"])에 넣어 **모든** verb_substitution 동사와 조합한다는
+# 점을 반드시 고려할 것 — 그 동사들의 legal_basis(대부분 의료기기법)가 안 맞는 명사를
+# 넣으면 잘못된 법률을 인용하는 correction_rules가 생성된다(2026-09-14 코드리뷰로 발견,
+# "유전자"/"유전체"를 여기 넣었다가 생명윤리법 문구와 어긋나서 뺐다 — 생체지표 판별
+# 전용으로 쓸 명사는 app/domain/health_data.py의 load_biomarker_keywords()에서
+# genetic_test_actions.GENETIC_TEST_KEYWORDS처럼 이 목록과 분리된 별도 소스로 union할 것).
 BIOMARKER_EXTRA: tuple[str, ...] = ("심박수", "체중", "체성분", "심전도", "산소포화도")
 
 
