@@ -8,6 +8,8 @@ app/pipeline/nodes/extract_b.py가 "LLM은 표에서 조회만" 원칙으로 호
 같은 이유로, 33개 필드를 각각 부르면 비용/지연이 33배가 된다. 사용자가 이미 값을 채운
 필드와 CHECKLIST 타입 필드(attachment_checklist -- 유형별 고정 목록, LLM 미사용)는
 애초에 target_fields로 넘어오지 않는다(app/api/proposals.py가 걸러서 넘김).
+단, HALLUCINATION_PRONE_FIELDS(현재 bonus_criteria 하나)는 예외적으로 별도 배치로
+쪼개 최대 2번까지 호출한다 -- generate_missing_sections() docstring 참고.
 
 §10.1 원칙("LLM 장애로 핵심 응답이 깨지면 안 된다")에 따라, 이 모듈이 실패해도
 app/api/proposals.py는 요청 전체를 502로 죽이지 않고 자리표시자로 대체한다. 다만
@@ -159,12 +161,15 @@ _SYSTEM_PROMPT_TEMPLATE = """당신은 대한민국 정부 창업지원사업 �
   보유하고 있다", "역량을 갖추고 있다", "경험이 있다" 같은 것)으로 content를 채우는
   것은 근거 없는 사실 창작이며 엄격히 금지됩니다 -- 근거가 없으면 반드시 false입니다.
 
-**예시** (리포트에 서비스 설명·시장성·카테고리만 있고 대표자·팀에 대한 언급이 전혀
-없는 경우):
-- founder_capability -> has_report_basis: false (대표자 개인 경력은 리포트에 없음)
-- team_hiring_plan -> has_report_basis: false (팀 구성 정보가 리포트에 없음)
-- company_overview -> has_report_basis: true로 서비스 설명 부분은 쓰되, 그 안에
-  대표자 경력처럼 리포트에 없는 내용을 끼워넣지 않습니다.
+**예시** (리포트에 서비스 설명·시장성·규제 판정 결과는 있지만 데이터 확보 전략에
+대한 언급이 전혀 없는 경우 -- 대표자·팀·RND 실적 관련 필드는 이 판단 자체를
+LLM에게 묻지 않고 별도로 처리하므로 예시에서 제외합니다):
+- data_strategy -> has_report_basis: false (데이터 확보 전략은 리포트에 없음)
+- background_motivation -> has_report_basis: true (리포트의 서비스 설명·문제의식을
+  근거로 작성 가능)
+- target_market_analysis -> has_report_basis: true로 리포트의 시장성 판단 부분은
+  쓰되, 그 안에 존재하지 않는 구체 통계·기관명처럼 리포트에 없는 내용을 끼워넣지
+  않습니다.
 
 TABLE 필드(growth_targets, annual_budget_exec, financial_projection 등)는
 `has_report_basis`가 없습니다 -- 이런 필드는 성격상 향후 계획·추정치를 요구하므로
@@ -405,16 +410,40 @@ async def generate_missing_sections(
     normal_fields = [f for f in target_fields if f["field_key"] not in HALLUCINATION_PRONE_FIELDS]
     batches = [batch for batch in (normal_fields, prone_fields) if batch]
 
+    # return_exceptions=True 필수 -- 코드 리뷰로 확인된 버그(2026-09-17): 이게 없으면
+    # 배치 중 하나(예: bonus_criteria만 담긴 작은 배치)가 레이트리밋 등으로 실패할 때
+    # gather()가 그 예외를 즉시 전파해, 이미 성공한 다른 배치(정상 필드 15개 이상)의
+    # 결과까지 통째로 버려진다. app/api/proposals.py의 generate_proposal()은 이
+    # ProposalLLMUnavailable을 잡아 llm_target_fields 전체를 자리표시자로 바꿔버리므로,
+    # 호출을 둘로 쪼갠 것 자체가(§docstring 상단) 전체 실패 확률을 오히려 두 배로
+    # 키우는 역설이 생긴다. 배치별로 결과/예외를 따로 받아 성공한 배치만 합치면,
+    # generate_proposal()의 기존 "field_key가 generated에 없으면 자리표시자" 로직이
+    # 실패한 배치의 필드만 자연스럽게 자리표시자로 채운다 -- 이쪽은 코드 변경이 필요 없다.
     results = await asyncio.gather(
-        *(_call_llm_batch(template_type, report_text, field_values, batch) for batch in batches)
+        *(_call_llm_batch(template_type, report_text, field_values, batch) for batch in batches),
+        return_exceptions=True,
     )
+
     sections: dict[str, object] = {}
+    any_batch_failed = False
     for result in results:
+        if isinstance(result, BaseException):
+            any_batch_failed = True
+            continue
         sections.update(result)
 
-    try:
-        await redis_client.set(cache_key, json.dumps(sections, ensure_ascii=False), ex=_CACHE_TTL_SECONDS)
-    except Exception:
-        pass  # 캐시 저장 실패도 치명적이지 않다.
+    if not sections and any_batch_failed:
+        # 전부 실패(배치가 하나뿐인 보통의 경우 포함)했으면 예전과 동일하게 예외를
+        # 그대로 올려 llm_status="unavailable"로 총실패 처리한다.
+        raise next(result for result in results if isinstance(result, BaseException))
+
+    if not any_batch_failed:
+        # 일부 배치만 실패했을 때는 caching하지 않는다 -- 부분 결과를 10분간 그대로
+        # 캐싱하면, 재시도했을 때 OpenAI가 복구돼도 같은 요청이 캐시 히트로 계속
+        # 불완전한 결과를 돌려받는다.
+        try:
+            await redis_client.set(cache_key, json.dumps(sections, ensure_ascii=False), ex=_CACHE_TTL_SECONDS)
+        except Exception:
+            pass  # 캐시 저장 실패도 치명적이지 않다.
 
     return sections

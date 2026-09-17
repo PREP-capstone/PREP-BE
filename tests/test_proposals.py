@@ -187,11 +187,33 @@ async def test_get_field_definitions_returns_seeded_psst_fields() -> None:
     assert "rd_plan_budget" not in keys  # PSST에서는 제외된 필드
 
 
-@pytest.mark.db
 async def test_generate_proposal_never_sends_always_blank_fields_to_llm(monkeypatch) -> None:
     """2026-09-14 팀 결정 회귀 테스트: company_overview/founder_capability 등은 사용자가
-    직접 채우지 않는 한 LLM에 아예 전달되지 않고 빈 값 그대로 응답에 나가야 한다."""
+    직접 채우지 않는 한 LLM에 아예 전달되지 않고 빈 값 그대로 응답에 나가야 한다.
+
+    코드 리뷰로 확인(2026-09-17): 원래 @pytest.mark.db였는데, generate_proposal()이
+    내부에서 부르는 _fetch_field_definitions()만 실제 DB 조회다 -- CI 기본 실행
+    (`pytest -m "not db and ..."`, .github/workflows/ci.yml)에서 이 마커 때문에
+    이 PR이 고치려는 바로 그 회귀(ALWAYS_BLANK_FIELDS가 LLM에 새는 것)를 잡는
+    유일한 테스트가 한 번도 실행되지 않고 있었다. _fetch_field_definitions까지
+    mock하면 DB 없이 같은 검증을 할 수 있다."""
     from app.api import proposals as proposals_module
+
+    fake_fields = [
+        proposals_module.FieldDefinitionItem(
+            field_key="founder_capability", category="팀구성", label="대표자 및 팀원 역량",
+            description="d", field_type="TEXT", requirement="REQUIRED", display_order=1,
+        ),
+        proposals_module.FieldDefinitionItem(
+            field_key="background_motivation", category="문제인식", label="개발 배경·동기",
+            description="d", field_type="TEXT", requirement="REQUIRED", display_order=2,
+        ),
+        proposals_module.FieldDefinitionItem(
+            field_key="attachment_checklist", category="첨부서류", label="첨부서류",
+            description="d", field_type="CHECKLIST", requirement="REQUIRED", display_order=3,
+        ),
+    ]
+    monkeypatch.setattr(proposals_module, "_fetch_field_definitions", AsyncMock(return_value=fake_fields))
 
     fake_generate = AsyncMock(return_value={"background_motivation": "정상 생성됨"})
     monkeypatch.setattr(proposals_module, "generate_missing_sections", fake_generate)
@@ -211,6 +233,7 @@ async def test_generate_proposal_never_sends_always_blank_fields_to_llm(monkeypa
     called_target_fields = fake_generate.call_args.args[3]
     called_keys = {f["field_key"] for f in called_target_fields}
     assert called_keys.isdisjoint(ALWAYS_BLANK_FIELDS)
+    assert called_keys == {"background_motivation"}  # founder_capability/checklist는 걸러짐
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +364,12 @@ async def test_generate_missing_sections_uses_cache_on_second_call(monkeypatch) 
         second = await generate_missing_sections("PSST", "report", {}, target_fields)
     second_call.assert_not_called()  # 캐시 히트라 OpenAI를 다시 안 부른다.
 
+    # 코드 리뷰로 확인(2026-09-17): 이 비교가 이전 커밋에서 빠져 있었다 -- 캐시가
+    # "다시 안 불렀다"만 확인하고 "같은 값을 돌려줬다"는 확인하지 않으면, Redis
+    # JSON 왕복 과정에서 값이 깨져도(예: has_report_basis 가공 결과가 손상돼도)
+    # 이 테스트는 계속 통과한다.
+    assert first == second
+
 
 async def test_generate_missing_sections_splits_hallucination_prone_fields_into_own_call(monkeypatch) -> None:
     # 실측(2026-09-11): 위험 필드를 다른 필드들과 한 호출에 몰아넣으면 has_report_basis
@@ -377,6 +406,55 @@ async def test_generate_missing_sections_splits_hallucination_prone_fields_into_
     assert mock_openai_cls.call_count == 2  # 위험군과 일반군이 각각 별도 호출
     assert result["background_motivation"] == "x"
     assert result["bonus_criteria"] == NO_GROUNDING_PLACEHOLDER
+
+
+async def test_generate_missing_sections_keeps_successful_batch_when_other_batch_fails(monkeypatch) -> None:
+    """코드 리뷰로 확인한 회귀(2026-09-17): asyncio.gather()에 return_exceptions=True가
+    없으면 두 배치 중 하나만 실패(예: bonus_criteria 배치가 레이트리밋)해도 이미 성공한
+    다른 배치(정상 필드 다수)의 결과까지 통째로 버려지고 예외가 전파됐다 -- 호출을 둘로
+    쪼갠 것(HALLUCINATION_PRONE_FIELDS) 자체가 전체 실패 확률을 오히려 키우는 역설이었다.
+    이제는 실패한 배치의 필드만 결과에서 빠지고(app/api/proposals.py가 그 필드만
+    자리표시자로 채움), 성공한 배치는 그대로 반환돼야 한다."""
+    monkeypatch.setattr(proposal_llm.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(proposal_llm.redis_client, "get", AsyncMock(return_value=None))
+    fake_set = AsyncMock()
+    monkeypatch.setattr(proposal_llm.redis_client, "set", fake_set)
+
+    async def fake_call_llm_batch(template_type, report_text, field_values, batch):
+        keys = [f["field_key"] for f in batch]
+        if "bonus_criteria" in keys:
+            raise ProposalLLMUnavailable("시뮬레이션된 레이트리밋 실패")
+        return {k: f"생성됨:{k}" for k in keys}
+
+    with patch("app.domain.proposal_llm._call_llm_batch", side_effect=fake_call_llm_batch):
+        result = await generate_missing_sections(
+            "PSST",
+            "report",
+            {},
+            [
+                {"field_key": "background_motivation", "label": "x", "field_type": "TEXT"},
+                {"field_key": "bonus_criteria", "label": "우대 가점 사항", "field_type": "TEXT"},
+            ],
+        )
+
+    assert result == {"background_motivation": "생성됨:background_motivation"}
+    fake_set.assert_not_called()  # 부분 실패 결과는 캐싱하지 않는다 -- 재시도 시 복구 여지를 남긴다.
+
+
+async def test_generate_missing_sections_raises_when_every_batch_fails(monkeypatch) -> None:
+    """배치가 하나뿐인 보통의 경우를 포함해, 전부 실패하면 예전과 동일하게 예외가
+    그대로 올라와야 한다(app/api/proposals.py가 llm_status="unavailable"로 처리)."""
+    monkeypatch.setattr(proposal_llm.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(proposal_llm.redis_client, "get", AsyncMock(return_value=None))
+
+    async def always_fail(*args, **kwargs):
+        raise ProposalLLMUnavailable("전부 실패")
+
+    with patch("app.domain.proposal_llm._call_llm_batch", side_effect=always_fail):
+        with pytest.raises(ProposalLLMUnavailable):
+            await generate_missing_sections(
+                "PSST", "report", {}, [{"field_key": "background_motivation", "label": "x", "field_type": "TEXT"}]
+            )
 
 
 def test_hallucination_prone_fields_are_all_known_field_keys() -> None:
