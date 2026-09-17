@@ -1,6 +1,61 @@
 # 룰베이스 DB 구축 설계서
 
-> 버전: V4.5 | 2026-08-15
+> 버전: V4.11 | 2026-09-14
+> V4.11 변경: **생명윤리법을 파이프라인 공식 문서 목록에 정식 등록 — 추적 가능하게 정리.**
+> PDF를 `llm_documents/kr-bioethics-safety-act-20251001.pdf`로 배치하고
+> `data/rule/manifest.csv`에 `document_id=kr-bioethics-safety-act-20251001,
+> usage=RULE_BASE, stages=A`로 등재(약사법 항목 바로 다음 행). `scripts/run_pipeline.py
+> kr-bioethics-safety-act-20251001`처럼 document_id만으로 재현 가능함을 확인(수동 경로
+> 지정 불필요). manifest note에 V4.10에서 채택한 1순위 결정(DATA_TYPE 4건만 시딩, "유전자검사"·
+> "질병의 진단"은 폐기)과 두 시딩 스크립트(`seed_genetic_test_keywords.py`,
+> `seed_bioethics_disease_keywords.py`) 역할 분담을 요약해뒀다. RAG 미적재는 여전히
+> 별개 후속 과제(§8.2) — manifest 등록은 "내 파이프라인이 이 문서를 안다"는 뜻이지
+> "RAG가 이 문서를 안다"는 뜻이 아니다.
+> V4.10 변경: **생명윤리법을 Stage A 파이프라인에 실제 투입해 수기 시딩과 비교, 1순위안 채택.**
+> `scripts/run_pipeline.py`로 이 문서에 실제 LLM 추출(90개 청크, dry-run 아님, DB 미적재
+> 상태로 결과만 확인)을 돌려본 결과, "유전자검사"는 LLM도 동일하게 추출했지만 verdict가
+> `FAIL_CANDIDATE`(제 수기 `FAIL_CONFIRMED`보다 한 단계 낮음)였고, "DTC"·"신고"·"인증" 같은
+> 핵심 개념은 전혀 추출되지 않았다 — `extract_a.py` 프롬프트/스키마가 "위험 표현→FAIL 여부"
+> 판정(의료기기 축) 전용이라 생명윤리법의 자격·인증 요건 자체를 표현할 방법이 없기 때문.
+> 반면 LLM은 제가 안 넣었던 DATA_TYPE 질병명 4건(근이영양증·유전자·유전질환·
+> 후천성면역결핍증)을 추가로 찾아냈고, 제가 넣은 4개 키워드 중 일부("유전체분석" 등)는
+> 이 법이 실제로 안 쓰는 용어였음도 확인됨. 팀 논의 결과 **1순위 채택**: 기존 수기 시딩
+> (V4.8, "유전자검사" 등 5건, FAIL_CONFIRMED 유지)은 그대로 두고, LLM이 찾은 DATA_TYPE
+> 4건만 `scripts/seed_bioethics_disease_keywords.py`로 추가 시딩(LLM의 weight/verdict
+> 그대로 신뢰, FAIL_CANDIDATE) — LLM draft의 "유전자검사"(legal_basis가 제68조 벌칙조항으로
+> 잘못 잡힘)·"질병의 진단"(타 문서와 중복 우려)은 폐기. 로컬 DB 시딩·종단 검증 완료(v0.40),
+> RDS 미반영.
+> V4.9 변경: **LAW-BIOETHICS-01(생명윤리법) 서지정보 확보 — 사용자가 원문 PDF 직접 제공**
+> (법률 제21065호, 2025.10.1. 시행, 타법개정). §1.5 서지정보 갱신. 핵심 조문 확인:
+> 제49조(유전자검사기관 신고제) · 제49조의2(DTC="소비자 대상 직접 시행 유전자검사" 인증,
+> 유효기간 3년) · **제50조③**(의료기관이 아닌 유전자검사기관은 질병의 예방·진단·치료
+> 관련 유전자검사를 원칙적으로 할 수 없음 — 의료기관 의뢰 또는 복지부장관 인정 예방 항목만
+> 예외, 위반 시 제67조⑦로 단순 미신고보다 무거운 처벌). 이전 hedge("정확한 허용 범위는
+> 법무 검토 필요")를 이 조문 인용으로 대체 — `gate_matrix_table.GENETIC_AVOIDANCE_CERTIFICATION`
+> 갱신. 다만 예방 목적 중 구체적 허용 항목 범위는 대통령령(시행령) 위임 사항이라 원문만으론
+> 확정 불가 — 그 부분만 hedge 유지. RAG(app/rag/) 적재는 별도(§8.2, 여전히 미완료).
+> V4.8 변경: **DTC 유전자검사 키워드를 gate_keywords에 시딩 — §01 규제위험도(regulatory_score) 축
+> 반영 완료.** 약사법(LAW-PHARM-01, v1.9)과 동일 패턴 — `app/pipeline/genetic_test_actions.py`에
+> `GENETIC_TEST_KEYWORDS` 단일 출처를 신설(V4.7의 `detect_genetic_test_signal()`과 공유하도록
+> `gate_matrix_table.py`를 리팩터링)하고, `scripts/seed_genetic_test_keywords.py`로
+> `type=PROHIBITED_ACTION`/`keyword_category=OTHER`/`weight=4`/`verdict=FAIL_CONFIRMED`
+> 5건을 시딩(로컬 DB v0.39 발행, 종단 검증 완료 — service_description에 "유전자검사" 포함 시
+> regulatory_score=3/높음 확인). category_1 트리거(§3.5 분리 원칙 위반 우려) 대신 서비스설명
+> 텍스트 직접 매칭을 택해, gate_keywords에 legal_basis 저장 컬럼이 없는 덕에 RAG 미수집
+> 상태에서도(§8.2 LAW-BIOETHICS-01) 점수 반영이 가능함을 확인 — 다만 matched_rules에
+> 근거 조문은 아직 안 뜬다(correction_rules 경로만 legal_basis 노출, 알려진 제약).
+> RDS(운영 DB)에는 아직 미반영 — 배포 시 스크립트 재실행 필요.
+> V4.7 변경: **유전자 관련 GATE 분류 버그 수정 + DTC 인증 보조 안내 추가 (judgement.py 구현, 1번 담당).**
+> ① `app/pipeline/correction_terms.py` `BIOMARKER_EXTRA`에 "유전자"/"유전체" 추가 — 이 사전에
+> 없어 유전자 데이터 항목이 기본값 `라이프스타일`로 떨어지고 `GATE_MATRIX_TABLE`의 (생체지표,
+> 수치예측·진단) FAIL 셀에 도달하지 못하던 분류 누락 버그를 해소(V4.6의 category_1 taxonomy
+> 결정과는 별개 버그). ② `app/pipeline/gate_matrix_table.py`에 `detect_genetic_test_signal()`
+> 신설(`detect_invasive`와 동일 패턴, verdict는 바꾸지 않음) — 서비스설명·데이터 항목명에서
+> 유전자검사 신호가 잡히면 해당 FAIL 셀의 `avoidance_certification` 문구만 생명윤리법 기준으로
+> 교체. ③ §1.5에 **LAW-BIOETHICS-01(생명윤리 및 안전에 관한 법률)** 신규 등재 — 법률번호·시행일·
+> DTC 허용 항목 경계 모두 미확보 상태라 문구는 "인증받으면 된다"고 단정하지 않고 법무 검토
+> 필요로 보수적으로 작성. §8.2에 서지정보 확보 항목 신규 등재.
+> V4.6 변경: **category_1 "유전자" 재포함 확정 — 7종→8종 원복(V3.3 번복).** 팀 재검토 결과 유전자 카테고리를 taxonomy에 다시 포함하기로 결정(수면/정신건강/운동/식단/만성질환/여성건강/유전자/미용 8종). 실제로 구현된 카테고리 분류 모델(`category_classifier.py`, 2026-08-22~23 작업)과 트렌드 매핑(`trend_client.py`, 2026-08-24 작업)은 애초에 8종(유전자 포함) 그대로 만들어졌고 V3.3의 제외 결정이 구현에 반영된 적이 없었음 — 본 갱신은 문서를 실제 구현/최종 결정에 맞춰 정정하는 것. **규제 판정(GATE) 로직과는 무관** — gate_keywords/gate_matrix는 category_1이 아닌 data_type/function_type 축만 참조하므로 이 변경으로 인한 판정 엔진 영향 없음(§3.5 data_type과의 관계 항목 참조). §3.5·§3.6·§6.3 관련 문구를 8종 기준으로 갱신. 경쟁사 수기 수집 역할분담(5인, 총 90개 목표)의 유전자 축 구체적 배분(인원/목표 개수)은 미정 — 팀 확정 필요(§8.2에 신규 미결정 항목으로 등재).
 > V4.5 변경: **원문 재대조(2026-08-14) + 운영 DB 백필 반영, 문서 드리프트 2건 정정.** ① §8.2 침습 하드체크 키워드 목록을 **12개 → 13개**로 갱신 — 웰니스판단기준 0091-03 고위해도 예시 원문("피부를 침투하여 혈액을 채취하는 제품")에 있는 "채취"가 누락돼 있던 것을 발견해 추가. 같은 대조 과정에서 부정표현 제거 정규식이 "비침습/무침습"만 걸러내 "비이식형"·"비삽입형"(원문에 실제 등장)을 걸러내지 못하는 버그도 발견해 침습·이식·삽입 공통으로 확장 ② §8.2의 "correction_rules 두 생성 경로 간 동사 목록 불일치"(V4.4에서 신규 미결정 항목으로 등재) 항목을 **해소 처리** — `extract_c.py` 프롬프트에서 예방·보정을 위험 동사 힌트에서 제거해 경로①(verb_substitution)과 동기화 완료 ③ §8.2에 **D-12 후속 발견 기록 추가** — D-12 재연결 로직은 그 이후에 발생하는 Stage A 재발행부터만 적용되므로, 로직 도입 이전에 쌓인 이력 데이터(active correction_rules 104건 중 70건이 이미 deprecated된 gate_keywords 행을 참조 중이었음)는 소급 반영되지 않았음을 배포용 데이터 추출 중 발견. keyword 텍스트 기준 1:1 매칭으로 운영 DB에서 현재 active 키워드에 재연결하는 일회성 백필을 실행해 해소.
 > V4.4 변경: **실제 구현(담당 E, 2026-08-13~14 실전 문서 투입) 대조 후 문서-코드 불일치 8건 정정.** ① §3.3에 **§3.3.3 verb_substitution 신설** — correction_rules 동사 사전 테이블, 원 계획("gate_keywords PROHIBITED_ACTION 재사용")이 실제 데이터 품질 문제로 폐기되고 별도 확정 목록(12행)으로 교체됨 ② §3.3에 **명사 재분류 규칙 추가** — gate_matrix.data_type(2종 enum)은 명사 원천이 될 수 없어, gate_keywords DISEASE 14건을 질병명/생체지표로 수기 재분류하는 방식으로 대체 ③ §1.2·§2.2·§4.1·§4.2 Stage C 서술을 **"LLM 추출" 단일 경로 → 코드 조합 생성/LLM 추출 두 경로 병행**으로 정정 — extract_c.py가 여전히 그래프에 연결돼 있어 기존 경로가 폐기된 게 아니라 신규 경로가 추가된 것임을 명확히 함. 두 경로 간 미해결 불일치(LLM 프롬프트가 "예방"·"보정"을 여전히 위험 동사로 나열)를 §8.2에 신규 미결정 항목으로 등재 ④ §3.4 서두 "본 두 테이블" → "본 세 테이블"(verb_substitution 포함) ⑤ §1.5.1에 **장(章) 접두어 제거 규칙 + 부칙 예외** 추가 — 청킹 내부 계층("제1장.제2조")을 LLM이 그대로 인용해 RAG join이 깨지는 사례 발견(약사법, 2026-08-14) ⑥ §1.5 문서 표에서 별표7(MFDS-R-2026-02) 행을 시행규칙 본문과 분리, **활용 Stage를 "RAG 전용"으로 정정**(2026-08-13 룰추출 대상에서 제외 — 별표7 항목 서술이 Stage C의 risky_text 패턴에 맞지 않아 3청크 시범 추출 0건) ⑦ §3.1·§4.5·§4.6의 "기존 버전은 deprecated" 서술을 **누적 발행(B안)** 방식으로 정정 — 실제로는 해당 Stage의 기존 active를 승계한 뒤 그 승계 대상만 deprecated 처리하며, 이 차이가 실제로 "문서 1건 투입마다 다른 Stage 룰까지 통째로 비활성화되는 버그"의 원인이었음 ⑧ §3.2에 gate_keywords **type 분류 판별 기준** 표 추가, §4.4에 **검증 완화 규칙 2건**(advertising_score=0 시 인용 면제, 공백 정규화 비교) 추가, §8.2 침습 하드체크 항목에 **키워드 12개 목록·CONDITIONAL 안전장치·부정표현 처리** 상세 추가. 이번 정정은 별도 세션(재확인 에이전트)의 코드-문서 대조 보고를 이 세션이 코드로 재검증한 뒤 반영함 — 재검증 과정에서 위 ③의 두 경로 병행 사실이 추가로 드러남(원 보고는 "LLM 추출이 코드 생성으로 완전히 대체됐다"고 서술했으나 부정확했음).
 > V4.3 변경: MFDS-G-2026-05 **국가법령정보센터 조문본(34쪽, 고시 제2026-6호) 확보 및 처리 방침 확정** — ① **LLM 파이프라인 미투입** 유지(39개 조문 중 GATE 판정에 쓸 조항이 제8조 하나뿐이고, 나머지는 의료기기 판정 **이후**의 허가 절차) ② **RAG에는 적재**(`usage_scope=RAG`) — `avoidance_certification` 문구가 제8조를 인용하므로 조문 원문 표시에 필요 ③ 사용 파일을 **국가법령정보센터본으로 확정**, 기존 행정예고본(91쪽) 폐기 — 조문 단위 청킹이 가능하고 `section_id`가 §1.5.1 규칙에 바로 부합 ④ **제33조(정보제공의 범위)** 신규 확인 — AI 적용 디지털의료기기SW의 정보제공 의무 4항목, §1.5.2에 기록 ⑤ §8.2에 RAG 적재 요청 항목 추가.
@@ -143,6 +198,7 @@ PREP(웰니스 창업 진단 플랫폼) 개발설계서의 판정 엔진·DB 설
 | MFDS-R-2026-02-별표7 | 의료기기법 시행규칙 별표7 | 총리령 제2127호 | 2026.7.1. 시행 | **RAG 전용** (`usage_scope=RAG`, 2026-08-13 정정) | 별표7(금지되는 광고의 범위, 18개 항목) — advertising_score 0~3 척도의 **근거 조문**이지만, 척도 자체는 이미 `extract_c.py` 프롬프트에 하드코딩돼 있다. Stage C 룰추출(risky_text 생성) 대상에서는 **제외** — 별표7 각 항목은 "이런 광고는 금지"라는 유형 서술이라 correction_rules가 찾는 risky_text(동사×명사 결합) 패턴에 맞지 않아 3청크 시범 추출 시 0건이었다. 항목 원문 표시는 RAG evidence_chunks 조회로 처리(§1.5.1 항목 단위 chunk 분할). RAG 문서 `kr-medical-device-act-rule-annex7-20260701` |
 | LAW-MED-01 | 의료법 | 법률 제21524호 | 2026.4.7. | Stage A, C | 제27조(무면허 의료행위 금지) — "진단·치료" 표현의 regulatory_score 근거(2026-07-26 추가); 제56·57조(의료광고 금지·심의) — advertising_score 보조근거(의료기관·의료인 직접 광고 시 한정) |
 | LAW-PHARM-01 | 약사법 | **법률 제21109호** (2026-08-14 확보·확인) | **2026.6.21. 시행** | Stage A, C | 무면허 약무행위(처방·조제·복약지도) 근거 — 2026-07-26 추가, 2026-08-14 파일 확보(발췌본, 제2·23·24·44조만 포함— 전문 아님). 약무행위를 correction_rules의 4번째 축으로 신설하지 않고 `regulatory_score`에 흡수하기로 확정했으므로(§3.3), gate_keywords에 약무 키워드를 `type=PROHIBITED_ACTION`으로 시딩해 자동 반영한다. 제23조=조제, 제24조④=복약지도, 제44조=투약(판매·수여 포섭, 잠정 — "투약"은 법률 용어가 아니라 원문에 문언 자체가 없음, 전문 확보 시 재확인 필요) |
+| LAW-BIOETHICS-01 | 생명윤리 및 안전에 관한 법률 | **법률 제21065호** (2026-09-14 사용자 PDF 직접 제공·확보) | **2025.10.1. 시행** (타법개정) | GATE(judgement.py) 보조 안내 + §01 규제위험도(gate_keywords 시딩) — `document_id=kr-bioethics-safety-act-20251001`로 `data/rule/manifest.csv`(`usage=RULE_BASE, stages=A`) 정식 등록 완료(2026-09-14), PDF는 `llm_documents/`에 배치 | DTC(소비자 직접 의뢰) 유전자검사기관 신고·인증 및 허용 항목 범위의 근거법. 두 가지로 쓰인다 — ① `gate_matrix_table.detect_genetic_test_signal()`: (생체지표, 수치예측·진단) FAIL 셀의 `avoidance_certification` 문구를 이 법 기준으로 교체(verdict은 안 바꿈) ② `scripts/seed_genetic_test_keywords.py`: gate_keywords에 `GENETIC_TEST_KEYWORDS`(약사법과 같은 방식, `type=PROHIBITED_ACTION`)를 시딩해 §01 regulatory_score에 직접 반영(2026-09-14 로컬 DB 시딩·종단 검증 완료, RDS 미반영). **제49조**(신고제) · **제49조의2**(DTC="소비자 대상 직접 시행 유전자검사" 인증, 유효기간 3년) · **제50조③**(의료기관 아닌 기관은 질병 예방·진단·치료 관련 검사 원칙적 불가 — 의료기관 의뢰/복지부장관 인정 예방 항목만 예외, 제67조⑦ 2년/3천만원) 확인 완료, `GENETIC_AVOIDANCE_CERTIFICATION` 문구에 인용 반영. 예방 목적 중 구체적 허용 항목은 시행령(대통령령) 위임이라 원문만으론 미확정. RAG에는 여전히 원문 미수집(evidence_chunks_draft.csv 확인) — matched_rules에 근거 조문 노출은 correction_rules 경로(Stage C) 확장 필요, RAG 적재와 별개 후속 작업. **③ `scripts/seed_bioethics_disease_keywords.py`**: 2026-09-14 이 문서로 Stage A 파이프라인을 실제로 돌려(90개 청크, LLM 90회 호출) 수기 시딩과 비교한 뒤 채택한 후속 시딩 — `근이영양증`·`유전자`·`유전질환`·`후천성면역결핍증` 4건(`type=DISEASE`/`keyword_category=DATA_TYPE`/weight=4/verdict=FAIL_CANDIDATE, LLM 판단 그대로)을 추가로 시딩(로컬 DB v0.40, 종단 검증 완료 — 생체지표 분류·regulatory_score 양쪽에 자동 반영 확인, RDS 미반영). 같은 파이프라인 실행에서 나온 "유전자검사"(legal_basis가 제68조 벌칙조항으로 잘못 귀속)·"질병의 진단"(타 문서 중복 우려)은 폐기 |
 
 **핵심 조항 요약**
 
@@ -680,7 +736,7 @@ data_type(생체지표) 항목 재사용"이었다. 후자가 실행 불가능�
 |---|---|---|
 | competitor_id | UUID, PK | |
 | name | VARCHAR | 삼성헬스, 눔, Calm 등 |
-| category_1 | VARCHAR | 질병축(7종) — 수면/정신건강/운동/식단/만성질환/여성건강/미용 (2026-07-20: 유전자는 시장 사례 부족으로 제외) |
+| category_1 | VARCHAR | 질병축(8종) — 수면/정신건강/운동/식단/만성질환/여성건강/유전자/미용 (2026-09-14: V3.3의 유전자 제외 결정을 번복, 8종 재포함 확정 — V4.6 변경 이력 참조) |
 | category_2 | VARCHAR | 기능축(4종) — 정보제공/데이터기록관리/매칭연결/개입치료 |
 | country | VARCHAR | |
 | tier | VARCHAR | 플랫폼 / 카테고리리더 / 일반경쟁자 |
@@ -698,7 +754,7 @@ data_type(생체지표) 항목 재사용"이었다. 후자가 실행 불가능�
 >
 > **(2026-07-20 갱신) category → category_1 + category_2**: 기존 category(5종, AI 분류모델과 동일하다는 가정)를 팀에서 확정한 마켓 분류 체계로 교체. category_1(질병축)이 "만성질환"을 포함하는 것은 §3.2의 data_type 2분류(임상·진료 1차 구축 제외) 결정과 상충하지 않는다 — category_1/2는 **시장에서 어떤 경쟁사인지 분류**하는 축이고, data_type은 **GATE 규제 판단에 쓰는 데이터 유형** 축으로 서로 다른 목적의 별개 필드다. 즉 "만성질환 관리 앱"이라는 시장 카테고리에 속한 경쟁사라도, 그 앱이 실제 수집하는 데이터가 라이프스타일/생체지표(1차 구축 범위) 안에 있으면 data_type은 정상적으로 채워진다.
 >
-> **(2026-07-20 추가 조정) 유전자 삭제, 8종→7종**: category_1 초안에는 유전자가 있었으나, 팀 확인 결과 실제 시장에 유전자 관련 웰니스 경쟁사 사례가 거의 없어 수집 효율이 떨어진다는 판단으로 taxonomy에서 완전히 제외. 수면/정신건강/운동/식단/만성질환/여성건강/미용 7종으로 확정.
+> **(2026-07-20 조정 → 2026-09-14 번복) 유전자 재포함, 7종→8종**: 2026-07-20에 시장 사례 부족을 이유로 category_1에서 유전자를 제외했었으나(8종→7종), 이후 팀 재검토를 거쳐 유전자를 다시 포함하기로 확정(7종→8종). 수면/정신건강/운동/식단/만성질환/여성건강/유전자/미용 8종. 실제 구현(카테고리 분류 모델, 트렌드 키워드 매핑)은 애초에 이 제외 결정을 반영한 적 없이 계속 8종이었음.
 
 **`competitor_tier_score`** (signal_config 또는 별도 설정 테이블)
 
@@ -798,7 +854,7 @@ GROUP BY category_1, category_2, target, service_type, bm_pattern;
 
 | 출력 컬럼 | 설명 |
 |---|---|
-| category_1 | 질병축(7종) — §3.5 competitors.category_1과 동일 (2026-07-20 갱신: 기존 5종 category → category_1/category_2 2축으로 교체, 이후 유전자 제외로 8종→7종 조정) |
+| category_1 | 질병축(8종) — §3.5 competitors.category_1과 동일 (2026-07-20 갱신: 기존 5종 category → category_1/category_2 2축으로 교체; 2026-09-14: 유전자 재포함 확정, 7종→8종 원복) |
 | category_2 | 기능축(4종) — §3.5 competitors.category_2와 동일 |
 | target | 타겟 사용자군 (Step2 타겟 옵션과 동일 값) |
 | service_type | 서비스 형태 (Step1·Step3 서비스형태 옵션과 동일 값) |
@@ -1180,7 +1236,7 @@ verdict = FAIL_CONFIRMED로 직접 지정하는 조건 (관리자 최종 확정)
 | competitors | 수동조사(1단계, 시드 90건, 5인 역할분담) + 정기크롤링(2단계), tier/core_tags/sub_tags/bm_pattern 태깅 | 월 1회 |
 | funding_programs | K-Startup API (범위 확인 필요, PREP §20) + 수동 | 수시 |
 
-> competitors 1단계 시드: category_1(질병축 7종: 수면/정신건강/운동/식단/만성질환/여성건강/미용, 유전자는 시장 사례 부족으로 제외)별 9~18개씩 총 90개. 5인 역할분담(수면/운동/식단 각 1인 18개, 정신건강+만성질환 1인 9+9개, 여성건강+미용 1인 9+9개) 기준. 국내는 원스토어·앱스토어·플레이스토어 + 플랫텀·더브이씨 등 스타트업 미디어, 해외는 앱스토어 랭킹 기준으로 수동 리서치하여 core_tags/sub_tags/bm_pattern과 함께 category_2(기능축)도 태깅. tier는 다운로드수·MAU·투자단계(시리즈 여부)로 판정. 2단계는 app-store-scraper/google-play-scraper 등으로 월 1회 자동 크롤링해 신규 경쟁사 탐지·순위 변동을 추적(스토어 이용약관상 허용범위 사전 확인 필요).
+> competitors 1단계 시드: category_1(질병축 8종: 수면/정신건강/운동/식단/만성질환/여성건강/유전자/미용, 2026-09-14 유전자 재포함 확정)별 총 90개 목표. ⚠️ 기존 5인 역할분담(수면/운동/식단 각 1인 18개, 정신건강+만성질환 1인 9+9개, 여성건강+미용 1인 9+9개)은 7종 기준으로 짜인 것 — 유전자 축 인원·목표 개수 배분은 **팀 재확정 필요**(§8.2 미결정 항목). 국내는 원스토어·앱스토어·플레이스토어 + 플랫텀·더브이씨 등 스타트업 미디어, 해외는 앱스토어 랭킹 기준으로 수동 리서치하여 core_tags/sub_tags/bm_pattern과 함께 category_2(기능축)도 태깅. tier는 다운로드수·MAU·투자단계(시리즈 여부)로 판정. 2단계는 app-store-scraper/google-play-scraper 등으로 월 1회 자동 크롤링해 신규 경쟁사 탐지·순위 변동을 추적(스토어 이용약관상 허용범위 사전 확인 필요).
 
 > bm_mapping은 별도 수집·적재 파이프라인이 없다 — competitors에 bm_pattern까지 채워지는 즉시 §3.6의 VIEW로 조회 가능 (구 §6.4 자동 집계 파이프라인은 2026-07-20 VIEW 전환으로 폐지).
 
@@ -1254,7 +1310,7 @@ async def get_bm_recommendation_with_fallback(db, c1: str, c2: str, target: str,
 ```
 [입력] 서비스설명 + 수집데이터(복수) + 서비스형태
    │
-   ├─→ 카테고리 분류 모델 → category_1(질병축 7종) + category_2(기능축 4종)
+   ├─→ 카테고리 분류 모델 → category_1(질병축 8종) + category_2(기능축 4종)
    ▼
 [GATE]  Stage A(gate_keywords) → Stage B(gate_matrix)      ← 순차 게이트
    │
@@ -1409,6 +1465,8 @@ PREP §10.4에 따라 사용자 입력·분석 결과는 본 DB에 저장되지 
 - **(2026-07-05 추가) MFDS-G-2025-02(안내서-1425-01) 원문 미검증** — 소프트웨어 안전성 등급 A/B/C, 사용목적 분류 A~H 근거를 실물로 대조한 적 없음 (§1.5 참조)
 - **(2026-07-05 추가) 개인정보 보호법 시행령(대통령령 제35343호) 원문 미확보** — 제18조(민감정보의 범위) 내용은 웹 검색으로만 확인, 논문 정식 인용 전 원문 PDF 확보 필요
 - ~~**(2026-08-14 추가) correction_rules 두 생성 경로 간 동사 목록 불일치**~~ **(2026-08-14 해소)** 경로 ①(코드 조합 생성, §3.3.3 `verb_substitution`)은 "예방"·"보정"을 위험 동사에서 제외했으나(웰니스판단기준 0091-03 원문이 PASS 예시로 직접 씀), 경로 ②(LLM 추출, `extract_c.py` 프롬프트)는 여전히 "치료하다, 처방하다, 예방하다, 개선하다, 완화하다, 처치하다, 보정하다"를 위험 동사 힌트로 나열하고 있었다. `extract_c.py` 프롬프트에서 예방하다·보정하다를 제거하고, 대신 웰니스판단기준 0091-03의 PASS 예시 원문을 인용하는 경고 문구를 추가해 동기화 완료
+- **(2026-09-14 추가 → 같은 날 대부분 해소) LAW-BIOETHICS-01(생명윤리법) 서지정보·조문·문서 등록 확보** — gate_keywords 시딩(§01 regulatory_score 반영, DATA_TYPE 4건 포함) 완료. 법률번호·시행일(법률 제21065호, 2025.10.1.)과 핵심 조문(제49조·제49조의2·제50조③)도 사용자가 원문 PDF를 직접 제공해 확보, `GENETIC_AVOIDANCE_CERTIFICATION` 문구에 반영 완료. `data/rule/manifest.csv`·`llm_documents/`에 `kr-bioethics-safety-act-20251001`로 정식 등록해 파이프라인 재현 가능(V4.11). **남은 것**: ① RAG(app/rag/)에는 여전히 원문 미적재 — RAG 담당과 사전 협의해 수집 요청 필요(evidence_chunks_draft.csv에 없음, §01의 RAG 요청 메시지 이미 전달함), 적재되면 correction_rules 경로(Stage C)로 확장해 matched_rules에 근거 조문 노출 가능 ② 제50조③ "질병예방 관련 검사로 보건복지부장관이 인정하는 경우"의 구체적 허용 항목 목록은 시행령(대통령령) 위임 사항이라 이 법률 원문만으론 미확정 — 시행령 확보 시 문구 추가 구체화
+- **(2026-09-14 추가) category_1 유전자 재포함에 따른 경쟁사 수기 수집 역할분담 미확정** — V3.3에서 제외했던 유전자를 8종으로 재포함(V4.6)했으나, 기존 5인 역할분담(§3.5, 7종 기준 90개)은 유전자 축 목표 개수·담당자가 빠져 있음. 총 목표 개수(90개 유지 vs 확대)·인원 재배분 팀 확정 필요
 - **(2026-08-15 추가) correction_rules.derived_from_keyword_id 이력 데이터 소급 미반영** — D-12(§3.1 참조) 재연결 로직은 그 로직이 배포된 **이후에 일어나는** Stage A 재발행부터만 작동한다. 로직 도입 이전에 Stage A가 여러 차례 재발행되며(v0.10~v0.39) FK가 갱신되지 않은 채 쌓인 이력 데이터는 소급 반영되지 않는다. 배포용 데이터 추출(active 행만 SQL로 뽑아 별도 DB에 임포트 검증) 중 FK 위반으로 발견 — active `correction_rules` 104건 중 70건이 이미 deprecated된 `gate_keywords` 행을 가리키고 있었다. `gate_keywords.keyword` 텍스트가 active 계보 내에서 유일함을 확인한 뒤, keyword 텍스트 매칭으로 현재 active 키워드에 재연결하는 일회성 UPDATE를 운영 DB에 실행해 해소(2026-08-15)
 
 ---

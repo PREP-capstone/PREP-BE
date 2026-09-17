@@ -22,6 +22,7 @@ from app.api.judgement import GateRequest, judge_correction_candidates, judge_ga
 from app.db.session import AsyncSessionLocal
 from app.domain.correction_llm import LLMUnavailable
 from app.pipeline.gate_matrix_table import (
+    GENETIC_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_REDESIGN,
 )
@@ -125,6 +126,34 @@ async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
         await _delete_session(session_id)
 
 
+async def test_gate_hardcheck_uses_genetic_avoidance_certification_when_both_signals_fire() -> None:
+    """침습적 하드체크와 유전자검사 신호가 동시에 걸리면 생명윤리법 문구가 우선해야 한다.
+
+    2026-09-14 코드리뷰로 발견한 버그의 회귀 테스트 — 원래는 하드체크 분기가 먼저
+    return돼버려서 유전자검사 신호 검사 자체를 안 거쳤다. 그러면 "의료기기 인증만
+    받으면 된다"는 문구만 보여주게 돼, 생명윤리법 인증 요건을 놓치는 잘못된 안심을 준다.
+    """
+    session_id = await _create_session(
+        "타액을 채취하여 유전자검사를 수행하는 키트를 기기와 연동해 결과를 자동으로 전송합니다.",
+        [
+            HealthDataItemInput(
+                name="유전자검사결과", data_type="text", unit=None, source="device_sync",
+            )
+        ],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.verdict == "FAIL"
+        assert response.hardcheck_fired is True
+        assert response.avoidance_certification == GENETIC_AVOIDANCE_CERTIFICATION
+        # 회피 방향(재설계)은 침습성에 관한 것이라 하드체크 전용 문구를 그대로 유지한다 —
+        # 이건 verdict/redesign이 아니라 avoidance_certification만 바꾸는 오버라이드다.
+        assert response.avoidance_redesign == HARDCHECK_AVOIDANCE_REDESIGN
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck() -> None:
     """생체지표+수치예측·진단(수동입력, 기기연동 아님)은 하드체크 없이 매트릭스 조회만으로 FAIL.
 
@@ -147,6 +176,30 @@ async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck(
         assert response.avoidance_certification is not None
         assert "가장 높은 조합" in response.reasoning[1]
         assert "매트릭스 기준" in response.reasoning[-1]
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_fails_via_matrix_for_genetic_prediction_with_dtc_guidance() -> None:
+    """유전자 데이터 항목(BIOMARKER_EXTRA)+수치예측·진단 → 생체지표로 분류돼 매트릭스 FAIL 도달.
+
+    2026-09-14 이전에는 "유전자"가 생체지표 판별 사전에 없어 기본값 라이프스타일로 떨어져
+    이 FAIL 셀에 도달하지 못했다(분류 누락 버그, 회귀 테스트). 여기에 도달하면 서비스설명의
+    "유전자검사" 신호가 avoidance_certification을 생명윤리법 기준 문구로 교체해야 한다 —
+    verdict·avoidance_redesign은 일반 매트릭스 FAIL 경로와 동일하게 유지된다.
+    """
+    session_id = await _create_session(
+        "유전자검사 결과를 분석해 암 발병확률을 예측해서 알려준다.",
+        [HealthDataItemInput(name="유전자검사결과", data_type="text", unit=None, source="user_input")],
+        service_actions=["predict"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "생체지표"
+        assert response.function_type == "수치예측·진단"
+        assert response.verdict == "FAIL"
+        assert response.hardcheck_fired is False
+        assert response.avoidance_certification == GENETIC_AVOIDANCE_CERTIFICATION
     finally:
         await _delete_session(session_id)
 

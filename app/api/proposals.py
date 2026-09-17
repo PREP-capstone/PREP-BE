@@ -23,6 +23,7 @@ from sqlalchemy import select
 from app.core.redis_client import redis_client
 from app.db.models import ProposalFieldDefinition, ProposalTemplateFieldMap
 from app.db.session import AsyncSessionLocal
+from app.domain.proposal_docx import render_proposal_docx
 from app.domain.proposal_llm import (
     ALWAYS_BLANK_FIELDS,
     ATTACHMENT_CHECKLISTS,
@@ -30,6 +31,7 @@ from app.domain.proposal_llm import (
     generate_missing_sections,
 )
 from app.domain.proposal_pdf import render_proposal_pdf
+from app.domain.proposal_sections import merge_custom_fields
 from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/proposals", tags=["proposals"])
@@ -307,9 +309,21 @@ class CompleteSection(BaseModel):
     value: SectionValue
 
 
+class CustomField(BaseModel):
+    """proposal_field_definitions에 등록된 고정 field_key가 없는 자유 서술형 추가
+    항목 (프론트 요청 v6, 2026-09-11 -- 요청 1). category는 자유 문자열로 받는다 --
+    프론트는 5개 카테고리(일반현황/문제인식/성장전략/팀구성/RND특화)에서만 버튼을
+    노출하지만, 스키마 자체에 값 제한을 걸지 않는다(요청 원문 그대로)."""
+
+    category: str
+    label: str
+    value: str
+
+
 class CompleteRequest(BaseModel):
     template_type: str  # render_proposal_pdf()가 문서 제목을 고르는 데 필요
     sections: list[CompleteSection]
+    custom_fields: list[CustomField] = []
 
 
 class CompleteResult(BaseModel):
@@ -351,10 +365,11 @@ async def complete_proposal(proposal_id: str, request: CompleteRequest) -> Compl
                     ProposalFieldDefinition.field_key,
                     ProposalFieldDefinition.label,
                     ProposalFieldDefinition.field_type,
+                    ProposalFieldDefinition.category,
                 ).where(ProposalFieldDefinition.field_key.in_(field_keys))
             )
         ).all()
-    meta = {row.field_key: (row.label, row.field_type) for row in rows}
+    meta = {row.field_key: (row.label, row.field_type, row.category) for row in rows}
 
     unknown = [key for key in field_keys if key not in meta]
     if unknown:
@@ -373,10 +388,15 @@ async def complete_proposal(proposal_id: str, request: CompleteRequest) -> Compl
                 "field_key": section.field_key,
                 "label": meta[section.field_key][0],
                 "field_type": meta[section.field_key][1],
+                # PDF/Word 렌더링 시 custom_fields를 해당 category 섹션 끝에 끼워
+                # 넣으려면(app/domain/proposal_sections.py) 어느 category인지 알아야
+                # 한다 -- 프론트 요청 v6(2026-09-11, 요청 1)로 추가.
+                "category": meta[section.field_key][2],
                 "value": section.value,
             }
             for section in request.sections
         ],
+        "custom_fields": [custom_field.model_dump() for custom_field in request.custom_fields],
         "expires_at": expires_at.isoformat(),
     }
     await redis_client.set(
@@ -409,9 +429,40 @@ async def get_proposal_pdf(proposal_id: str) -> Response | JSONResponse:
         return await _error(404, "PROPOSAL_NOT_FOUND", "제안서를 찾을 수 없거나 만료되었습니다.")
 
     payload = json.loads(cached)
-    pdf_bytes = render_proposal_pdf(payload["template_type"], payload["sections"])
+    sections = merge_custom_fields(payload["sections"], payload.get("custom_fields", []))
+    pdf_bytes = render_proposal_pdf(payload["template_type"], sections)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="proposal_{proposal_id}.pdf"'},
+    )
+
+
+@router.get(
+    "/{proposal_id}/docx",
+    response_model=None,  # get_proposal_pdf와 동일한 이유로 응답모델 추론을 끈다
+    responses={
+        404: {"model": ProposalErrorResponse},
+        200: {
+            "content": {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}
+            }
+        },
+    },
+)
+async def get_proposal_docx(proposal_id: str) -> Response | JSONResponse:
+    """GET /{id}/pdf와 완전히 동일한 인증/캐시/10분 만료 규칙 (프론트 요청 v6,
+    2026-09-11 -- 요청 2). 실제 .docx 바이너리(app/domain/proposal_docx.py)를 반환한다.
+    """
+    cached = await redis_client.get(_CACHE_KEY_PREFIX + proposal_id)
+    if cached is None:
+        return await _error(404, "PROPOSAL_NOT_FOUND", "제안서를 찾을 수 없거나 만료되었습니다.")
+
+    payload = json.loads(cached)
+    sections = merge_custom_fields(payload["sections"], payload.get("custom_fields", []))
+    docx_bytes = render_proposal_docx(payload["template_type"], sections)
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="proposal_{proposal_id}.docx"'},
     )

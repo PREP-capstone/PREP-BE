@@ -19,6 +19,14 @@ def test_hypertension_split_between_disease_and_biomarker() -> None:
 
 
 def test_biomarker_extra_has_five_items_not_in_gate_keywords() -> None:
-    """심박수·체중·체성분·심전도·산소포화도는 gate_keywords에 없어 별도 상수로 둔다."""
+    """심박수·체중·체성분·심전도·산소포화도는 gate_keywords에 없어 별도 상수로 둔다.
+
+    유전자 관련 키워드는 여기 넣지 않는다(2026-09-14 코드리뷰로 발견) —
+    generate_correction_rules.py가 이 목록을 통째로 noun pool에 넣어 모든
+    verb_substitution 동사와 조합하므로, "유전자"를 넣으면 의료기기법 동사와 조합돼
+    legal_basis가 어긋나는 correction_rules가 생성된다. 생체지표 판별 전용 확장은
+    app/domain/health_data.py의 load_biomarker_keywords()가 genetic_test_actions.
+    GENETIC_TEST_KEYWORDS를 별도로 union하는 방식으로 처리한다(test_health_data.py 참조).
+    """
     assert len(BIOMARKER_EXTRA) == 5
     assert set(BIOMARKER_EXTRA).isdisjoint(NOUN_CLASSIFICATION)
