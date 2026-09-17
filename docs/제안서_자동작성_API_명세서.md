@@ -84,7 +84,7 @@ GET /proposals/{id}/pdf  ── 10분 이내에만 다운로드 가능, 이후 �
 ### 2.4 팀 구성
 | field_key | 항목 | PSST | RND | IR |
 |---|---|---|---|---|
-| `founder_capability` | 대표자 역량 | ● | ● | ● |
+| `founder_capability` | 대표자 및 팀원 역량 | ● | ● | ● |
 | `team_hiring_plan` | 팀 구성·고용계획 [^1] | ● | ● | ● |
 | `new_hire_plan` | 신규 인력 채용계획(고용창출 목표, 정량) | − | ● | ○ |
 | `partnership` | 파트너십·외부협력 | − | ○ | ○ |

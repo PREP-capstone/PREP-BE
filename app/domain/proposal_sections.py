@@ -35,20 +35,29 @@ def merge_custom_fields(sections: list[dict], custom_fields: list[dict]) -> list
             }
         )
 
+    # category별 "진짜 마지막 등장 인덱스"를 먼저 계산한다 -- 코드 리뷰로 확인된
+    # 회귀(2026-09-17): 같은 category를 가진 section이 sections 안에서 서로 떨어진
+    # 여러 블록으로 나뉘어 있으면(complete_proposal은 프론트가 보낸 순서를 그대로
+    # 신뢰하므로 실제로 도달 가능하다) "인접 블록 경계마다 삽입" 방식은 매번
+    # 끼워 넣어 같은 custom_field가 문서에 중복 출력됐다. "마지막 등장 위치 하나"만
+    # 미리 확정해두면 중복이 구조적으로 불가능해지고, "해당 category 필드들 중
+    # 마지막 것 바로 다음"이라는 문서(§5.3.1) 그대로의 위치에도 항상 맞는다 --
+    # 예전 방식은 첫 블록 끝에서 멈추면 이 계약과도 어긋났다.
+    last_index_by_category: dict[str | None, int] = {}
+    for index, section in enumerate(sections):
+        last_index_by_category[section.get("category")] = index
+
     merged: list[dict] = []
-    emitted_categories: set[str] = set()
     for index, section in enumerate(sections):
         merged.append(section)
-        current_category = section.get("category")
-        next_category = sections[index + 1].get("category") if index + 1 < len(sections) else None
-        if current_category != next_category and current_category in grouped:
-            merged.extend(grouped[current_category])
-            emitted_categories.add(current_category)
+        category = section.get("category")
+        if index == last_index_by_category[category] and category in grouped:
+            merged.extend(grouped[category])
 
     # sections에 아예 없던 category(예: 오타, 혹은 그 카테고리 필드를 하나도 안 보낸
     # 요청)로 지정된 custom_fields는 자리를 못 찾으므로 문서 맨 끝에 붙인다.
     for category, items in grouped.items():
-        if category not in emitted_categories:
+        if category not in last_index_by_category:
             merged.extend(items)
 
     return merged

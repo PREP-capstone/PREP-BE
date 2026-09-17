@@ -8,9 +8,10 @@ field_key/label/field_type/value)을 받아 같은 구조의 문서를 만든다
 전용 CID 폰트가 뷰어에 그 폰트 자체가 없으면 완전히 빈 칸이 되는 것과는 다른 문제),
 그래서 여기서는 별도 폰트 처리를 하지 않는다.
 
-_TEMPLATE_TITLES/_render_value의 분기 로직은 proposal_pdf.py와 의도적으로 대칭이다 --
-두 렌더러가 같은 입력에 다른 포맷으로 동일한 내용을 내놔야 하므로, 한쪽 field_type
-분기가 바뀌면 다른 쪽도 맞춰 바꿔야 한다.
+TEMPLATE_TITLES는 proposal_render_common.py에서 공유하고, _render_value의 분기
+로직은 proposal_pdf.py와 의도적으로 대칭이다 -- 두 렌더러가 같은 입력에 다른
+포맷으로 동일한 내용을 내놔야 하므로, 한쪽 field_type 분기가 바뀌면 다른 쪽도
+맞춰 바꿔야 한다.
 """
 
 from __future__ import annotations
@@ -20,13 +21,7 @@ from io import BytesIO
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# proposal_pdf.py의 _TEMPLATE_TITLES와 동일한 값 -- 새 template_type이 추가되면
-# 양쪽 다 갱신해야 한다.
-_TEMPLATE_TITLES = {
-    "PSST": "창업사업화 지원사업 사업계획서",
-    "RND": "R&D 과제 사업계획서",
-    "IR": "투자유치용(IR) 사업계획서",
-}
+from app.domain.proposal_render_common import TEMPLATE_TITLES
 
 
 def render_proposal_docx(template_type: str, sections: list[dict]) -> bytes:
@@ -36,7 +31,7 @@ def render_proposal_docx(template_type: str, sections: list[dict]) -> bytes:
     """
     document = Document()
 
-    title = document.add_heading(_TEMPLATE_TITLES.get(template_type, "사업계획서"), level=0)
+    title = document.add_heading(TEMPLATE_TITLES.get(template_type, "사업계획서"), level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     for section in sections:

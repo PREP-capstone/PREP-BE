@@ -35,6 +35,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+from app.domain.proposal_render_common import TEMPLATE_TITLES
+
 _FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 FONT_REGULAR = "NanumGothic"
 FONT_BOLD = "NanumGothic-Bold"
@@ -47,12 +49,6 @@ pdfmetrics.registerFont(TTFont(FONT_BOLD, str(_FONT_DIR / "NanumGothic-Bold.ttf"
 _TITLE_STYLE = ParagraphStyle("ProposalTitle", fontName=FONT_BOLD, fontSize=16, leading=22, spaceAfter=4)
 _HEADING_STYLE = ParagraphStyle("ProposalHeading", fontName=FONT_BOLD, fontSize=12, leading=16, spaceBefore=14, spaceAfter=6)
 _BODY_STYLE = ParagraphStyle("ProposalBody", fontName=FONT_REGULAR, fontSize=10, leading=15)
-
-_TEMPLATE_TITLES = {
-    "PSST": "창업사업화 지원사업 사업계획서",
-    "RND": "R&D 과제 사업계획서",
-    "IR": "투자유치용(IR) 사업계획서",
-}
 
 
 def render_proposal_pdf(template_type: str, sections: list[dict]) -> bytes:
@@ -72,7 +68,7 @@ def render_proposal_pdf(template_type: str, sections: list[dict]) -> bytes:
     )
 
     story = [
-        Paragraph(_TEMPLATE_TITLES.get(template_type, "사업계획서"), _TITLE_STYLE),
+        Paragraph(TEMPLATE_TITLES.get(template_type, "사업계획서"), _TITLE_STYLE),
         Spacer(1, 6 * mm),
     ]
     for section in sections:

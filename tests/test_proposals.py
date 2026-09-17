@@ -502,6 +502,25 @@ def test_merge_custom_fields_handles_multiple_categories_independently() -> None
     ]
 
 
+def test_merge_custom_fields_does_not_duplicate_when_category_is_non_contiguous() -> None:
+    # 코드 리뷰로 확인된 회귀(2026-09-17): sections 안에서 같은 category가 서로
+    # 떨어진 블록으로 나뉘어 있으면(예: a-일반현황, b-문제인식, c-일반현황) 예전
+    # 구현은 각 블록 경계마다 삽입해 같은 custom_field가 두 번 나왔다. 이제는
+    # "진짜 마지막 등장 위치" 하나에만 정확히 한 번 삽입돼야 한다.
+    sections = [
+        {"field_key": "a", "label": "A", "field_type": "TEXT", "value": "a", "category": "일반현황"},
+        {"field_key": "b", "label": "B", "field_type": "TEXT", "value": "b", "category": "문제인식"},
+        {"field_key": "c", "label": "C", "field_type": "TEXT", "value": "c", "category": "일반현황"},
+    ]
+    custom_fields = [{"category": "일반현황", "label": "추가 항목", "value": "X"}]
+
+    merged = merge_custom_fields(sections, custom_fields)
+
+    values = [s.get("field_key") or s["value"] for s in merged]
+    assert values == ["a", "b", "c", "X"]  # "일반현황"의 진짜 마지막(c) 바로 다음, 한 번만
+    assert values.count("X") == 1
+
+
 # ---------------------------------------------------------------------------
 # complete_proposal -- category 저장 + custom_fields 전달 (프론트 요청 v6)
 # ---------------------------------------------------------------------------
