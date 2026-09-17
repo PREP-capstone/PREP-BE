@@ -251,6 +251,29 @@ Authorization: Bearer `<accessToken>`
 }
 ```
 
+### 5.3.1 `custom_fields` (프론트 요청 v6, 2026-09-11 -- 요청 1)
+
+`proposal_field_definitions`에 등록된 고정 `field_key`가 없는 자유 서술형 추가 항목. `complete` 요청 바디에 `sections`와 나란히 실어보낸다 -- optional, 0개 이상, 없으면 빈 배열로 처리한다.
+
+```json
+{
+  "template_type": "PSST",
+  "sections": [ { "field_key": "company_overview", "value": "..." } ],
+  "custom_fields": [
+    { "category": "일반현황", "label": "추가 항목", "value": "..." },
+    { "category": "팀구성", "label": "추가 항목", "value": "..." }
+  ]
+}
+```
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| category | string | `proposal_field_definitions.category`와 동일한 값(예: 일반현황/문제인식/성장전략/팀구성/RND특화). 자유 문자열 -- 스키마 자체는 값을 제한하지 않는다 |
+| label | string | 화면 표시용 라벨(현재는 프론트가 고정 문자열 "추가 항목"만 보냄) |
+| value | string | 사용자가 입력한 자유 서술형 텍스트 |
+
+PDF/Word 렌더링 시 해당 category에 속한 필드들 중 마지막 것 바로 다음에 별도 문단으로 추가된다(한 category에 여러 개면 보낸 순서대로 나열) — `app/domain/proposal_sections.py`의 `merge_custom_fields()`가 두 렌더러 공통으로 이 위치를 계산한다. `sections`에 없는 category가 지정되면(예: 오타) 문서 맨 끝에 붙는다.
+
 ### 5.4 `GET /api/v1/proposals/{proposal_id}/pdf`
 
 10분 이내에만 다운로드 가능. `complete` 호출 전이면 404. **응답이 JSON이 아니라 실제 PDF 바이너리다** (`Content-Type: application/pdf`, `Content-Disposition: attachment; filename="proposal_{id}.pdf"`).
@@ -266,6 +289,12 @@ Authorization: Bearer `<accessToken>`
   "result": null
 }
 ```
+
+### 5.5 `GET /api/v1/proposals/{proposal_id}/docx` (프론트 요청 v6, 2026-09-11 -- 요청 2)
+
+인증/캐시/10분 만료 규칙은 §5.4(`/pdf`)와 완전히 동일하다. **응답이 JSON이 아니라 실제 .docx 바이너리다** (`Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `Content-Disposition: attachment; filename="proposal_{id}.docx"`). 에러 응답(404 `PROPOSAL_NOT_FOUND`) 포맷도 `/pdf`와 동일하다.
+
+`app/domain/proposal_docx.py`(python-docx)가 렌더링한다. PDF와 달리 한글 폰트를 파일에 임베딩하지 않는다 — docx는 폰트 이름만 참조하는 포맷이라, 문서를 여는 워드프로세서(뷰어) 쪽 OS가 기본으로 갖고 있는 동아시아 폴백 폰트로 그려진다(PDF 전용 CID 폰트가 뷰어에 그 폰트가 아예 없으면 빈 칸이 되던 문제와는 다른 메커니즘).
 
 ## 6. 후속 논의 필요
 
