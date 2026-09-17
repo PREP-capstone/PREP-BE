@@ -25,6 +25,7 @@ from app.db.models import ProposalFieldDefinition, ProposalTemplateFieldMap
 from app.db.session import AsyncSessionLocal
 from app.domain.proposal_docx import render_proposal_docx
 from app.domain.proposal_llm import (
+    ALWAYS_BLANK_FIELDS,
     ATTACHMENT_CHECKLISTS,
     ProposalLLMUnavailable,
     generate_missing_sections,
@@ -235,6 +236,21 @@ async def generate_proposal(
                     label=field.label,
                     field_type=field.field_type,
                     value=ATTACHMENT_CHECKLISTS.get(template_type, []),
+                )
+            )
+            continue
+
+        if field.field_key in ALWAYS_BLANK_FIELDS:
+            # 팀 회의 결정(2026-09-14): 대표자/팀/RND 실적 등은 리포트에 근거가 있을 수
+            # 없는 성격이라 LLM에 아예 묻지 않는다 -- 사용자 값이 없으면 빈 값 그대로
+            # 반환해 프론트가 "빈칸(필수)"으로 표시하게 한다. 사용자가 직접 값을 채운
+            # 경우는 위 첫 분기에서 이미 처리돼 여기 도달하지 않는다.
+            sections.append(
+                ProposalSection(
+                    field_key=field.field_key,
+                    label=field.label,
+                    field_type=field.field_type,
+                    value=[] if field.field_type == "TABLE" else "",
                 )
             )
             continue

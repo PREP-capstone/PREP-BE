@@ -214,7 +214,7 @@ Authorization: Bearer `<accessToken>`
 }
 ```
 
-`sections`는 세 갈래로 채워진다: ① 사용자가 이미 입력한 필드는 그 값 그대로, ② `CHECKLIST` 타입(`attachment_checklist`)은 `app/domain/proposal_llm.py`의 `ATTACHMENT_CHECKLISTS`에서 유형별 고정 목록을 조회(LLM 미사용), ③ 나머지(TEXT/TABLE, 사용자 미입력분)만 **유형 하나당 LLM 호출 1번**으로 한꺼번에 생성한다 — 33개 필드를 각각 호출하지 않는다.
+`sections`는 네 갈래로 채워진다: ① 사용자가 이미 입력한 필드는 그 값 그대로, ② `CHECKLIST` 타입(`attachment_checklist`)은 `app/domain/proposal_llm.py`의 `ATTACHMENT_CHECKLISTS`에서 유형별 고정 목록을 조회(LLM 미사용), ③ `ALWAYS_BLANK_FIELDS`(대표자·팀·RND 실적 등 리포트에 근거가 있을 수 없는 필드, 2026-09-14 팀 결정)는 LLM에 아예 묻지 않고 빈 값 그대로 반환, ④ 나머지(TEXT/TABLE, 사용자 미입력분)만 **유형 하나당 LLM 호출 1번**으로 한꺼번에 생성한다 — 33개 필드를 각각 호출하지 않는다(단 `HALLUCINATION_PRONE_FIELDS`인 `bonus_criteria`가 섞이면 별도 배치로 나뉘어 최대 2번까지 호출됨).
 
 자동 생성 문장은 심사위원이 읽는 제안서 문서체로 작성한다. 기본 종결은 `~이다`, `~한다`, `~된다`와 같은 완전한 서술문을 사용한다. `~입니다`, `~합니다`, `~하세요`와 같은 존댓말·대화체와 `~임`, `~함`, `~됨`과 같은 축약형·메모식 종결은 사용하지 않는다. 표와 목록도 가능한 경우 같은 서술체를 유지한다.
 

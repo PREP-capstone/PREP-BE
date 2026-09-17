@@ -8,6 +8,8 @@ app/pipeline/nodes/extract_b.py가 "LLM은 표에서 조회만" 원칙으로 호
 같은 이유로, 33개 필드를 각각 부르면 비용/지연이 33배가 된다. 사용자가 이미 값을 채운
 필드와 CHECKLIST 타입 필드(attachment_checklist -- 유형별 고정 목록, LLM 미사용)는
 애초에 target_fields로 넘어오지 않는다(app/api/proposals.py가 걸러서 넘김).
+단, HALLUCINATION_PRONE_FIELDS(현재 bonus_criteria 하나)는 예외적으로 별도 배치로
+쪼개 최대 2번까지 호출한다 -- generate_missing_sections() docstring 참고.
 
 §10.1 원칙("LLM 장애로 핵심 응답이 깨지면 안 된다")에 따라, 이 모듈이 실패해도
 app/api/proposals.py는 요청 전체를 502로 죽이지 않고 자리표시자로 대체한다. 다만
@@ -17,6 +19,7 @@ report_llm.py의 보조 필드(LLM④⑤)와 달리 여기는 생성 결과 자�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 
@@ -28,8 +31,54 @@ from app.core.redis_client import redis_client
 
 _REQUEST_TIMEOUT_SECONDS = 30.0  # 여러 필드를 한 번에 생성하므로 correction_llm.py(15초)보다 여유를 둠
 _CACHE_TTL_SECONDS = 600  # 완료(§0) 전 재생성 재시도 비용 절감용 -- 제안서 자체의 10분 TTL과는 별개 목적
-# 프롬프트 문체가 바뀌면 기존 대화체 캐시를 그대로 반환하지 않도록 버전을 올린다.
-_CACHE_KEY_PREFIX = "proposal_generation:v3:"
+# 프롬프트/응답 스키마가 바뀌면 이전 버전으로 만든 캐시를 그대로 반환하지 않도록
+# 버전을 올린다.
+# v4(2026-09-11): 대표자 경력 등 할루시네이션 발견, 프롬프트 문구만 강화 -- 그러나
+# founder_capability(예시로 든 필드)만 지켜지고 team_hiring_plan/company_overview
+# 등 다른 필드는 여전히 지어내는 것을 20필드 배치 실측으로 확인, 프롬프트만으론 불충분.
+# v5(2026-09-11): TEXT 필드 응답 스키마 자체를 {has_report_basis, content}로 바꿔
+# 근거 없음 판단을 모델의 산문 성향이 아니라 코드(_normalize_sections)가 강제하도록
+# 구조 변경.
+# v6(2026-09-14, 팀 회의 결정): ① ALWAYS_BLANK_FIELDS 신설 -- 대표자/팀/RND 실적처럼
+# 원천적으로 리포트에 근거가 있을 수 없는 필드는 LLM에 아예 묻지 않고 무조건 빈칸으로
+# 반환(사용자가 직접 채우는 게 원칙). has_report_basis 자기점검에 기대는 것보다
+# 근본적인 차단이다. ② 생성 문장 분량을 대폭 늘림 -- 사용자가 처음부터 작문하지 않고
+# 단어·수치만 다듬으면 되는 수준을 목표로 함.
+_CACHE_KEY_PREFIX = "proposal_generation:v6:"
+
+# 리포트/사용자 입력 둘 다에 근거가 없을 때 TEXT 필드가 반환해야 하는 고정 문구.
+# 정확히 이 문자열인지 코드에서도 확인할 수 있게 상수로 뽑아둔다.
+NO_GROUNDING_PLACEHOLDER = "[검진 리포트에 근거 정보가 없습니다. 직접 작성해주세요.]"
+
+# 팀 회의 결정(2026-09-14): 아래 필드는 검진 리포트에 원천적으로 근거가 있을 수 없는
+# "사람/실적" 성격이라, LLM에게 묻지도 않고 app/api/proposals.py가 처음부터 빈 값으로
+# 반환한다 -- 프론트가 빈칸(옅은 주황색)으로 표시해 사용자가 직접 채우게 유도한다.
+# has_report_basis 자기점검(아래 _TEXT_FIELD_SCHEMA)에 기대는 것보다 근본적인 차단이라
+# 이 필드들에는 더 이상 LLM 호출 자체가 일어나지 않는다.
+#   - 일반현황: company_overview (founder_capability와 역할이 겹쳐 새던 구멍)
+#   - 성장전략: funding_plan
+#   - 팀구성 전체: founder_capability, team_hiring_plan, new_hire_plan, partnership
+#   - RND특화 전체: rd_plan_budget, annual_budget_exec, rd_track_record, trl_level
+ALWAYS_BLANK_FIELDS: frozenset[str] = frozenset(
+    {
+        "company_overview",
+        "funding_plan",
+        "founder_capability",
+        "team_hiring_plan",
+        "new_hire_plan",
+        "partnership",
+        "rd_plan_budget",
+        "annual_budget_exec",
+        "rd_track_record",
+        "trl_level",
+    }
+)
+
+# ALWAYS_BLANK_FIELDS로 이관되지 않고 남은, 그래도 "사람/실적"류라 위험한 필드 -- 나머지
+# 필드와 분리해 별도 호출로 묻는다(실측, 2026-09-11: 20개 필드를 한 호출에 몰아넣으면
+# has_report_basis 자기점검이 종종 무너짐). bonus_criteria만 남았다 -- 우대 가점 사항은
+# IR추가 카테고리라 이번 "항상 빈칸" 결정 대상에는 포함되지 않았지만 여전히 위험군이다.
+HALLUCINATION_PRONE_FIELDS: frozenset[str] = frozenset({"bonus_criteria"})
 
 # TABLE 필드별 항목 스키마 -- docs/제안서_자동작성_API_명세서.md §2의 표 구조를 그대로 반영.
 # 새 TABLE 필드가 추가되면 여기에도 항목 스키마를 등록해야 한다(build_response_schema가 조회).
@@ -96,7 +145,47 @@ _TEMPLATE_LABELS = {
 _SYSTEM_PROMPT_TEMPLATE = """당신은 대한민국 정부 창업지원사업 사업계획서 작성을 돕는
 전문 컨설턴트입니다. 지금 작성하는 문서는 "{template_label}" 유형입니다.
 
-## 규칙
+## 사실 근거 원칙 (다른 모든 규칙보다 우선합니다 -- 위반하면 사용자가 지원사업 심사에서
+허위 기재로 불이익을 받을 수 있는, 실제로 발생한 사고입니다)
+
+일반 문단(TEXT) 필드는 `has_report_basis`(불리언)와 `content`(문자열) 두 값을 함께
+요구받습니다. **모든 TEXT 필드 각각에 대해 예외 없이** 아래 질문에 먼저 스스로
+답하세요 -- 필드 이름이 무엇이든 똑같이 적용합니다:
+
+"[검진 리포트]나 [사용자가 이미 입력한 내용]에 이 필드와 직접 관련된 구체적인 내용이
+실제로 적혀 있는가?"
+
+- 있다면: `has_report_basis: true`, `content`에 그 근거를 활용해 작성합니다.
+- **없다면**: `has_report_basis: false`로 답하고 `content`는 빈 문자열로 둡니다.
+  `has_report_basis: true`로 답해놓고 두루뭉술하고 그럴듯하게 들리는 문장("전문성을
+  보유하고 있다", "역량을 갖추고 있다", "경험이 있다" 같은 것)으로 content를 채우는
+  것은 근거 없는 사실 창작이며 엄격히 금지됩니다 -- 근거가 없으면 반드시 false입니다.
+
+**예시** (리포트에 서비스 설명·시장성·규제 판정 결과는 있지만 데이터 확보 전략에
+대한 언급이 전혀 없는 경우 -- 대표자·팀·RND 실적 관련 필드는 이 판단 자체를
+LLM에게 묻지 않고 별도로 처리하므로 예시에서 제외합니다):
+- data_strategy -> has_report_basis: false (데이터 확보 전략은 리포트에 없음)
+- background_motivation -> has_report_basis: true (리포트의 서비스 설명·문제의식을
+  근거로 작성 가능)
+- target_market_analysis -> has_report_basis: true로 리포트의 시장성 판단 부분은
+  쓰되, 그 안에 존재하지 않는 구체 통계·기관명처럼 리포트에 없는 내용을 끼워넣지
+  않습니다.
+
+TABLE 필드(growth_targets, annual_budget_exec, financial_projection 등)는
+`has_report_basis`가 없습니다 -- 이런 필드는 성격상 향후 계획·추정치를 요구하므로
+리포트의 시장 규모·카테고리 등 간접 정보를 근거로 사용자가 검토할 초안 추정치를
+항상 제시하세요. 다만 존재하지 않는 구체 기관명·통계를 인용하지 말고, 추정 근거를
+basis에 명시해 추정치임을 분명히 하세요.
+
+## 분량 (팀 결정: 사용자가 처음부터 작문하지 않고 단어·수치만 다듬으면 되는 수준)
+각 TEXT 필드(has_report_basis: true인 경우)는 **최소 500자 이상**, 6~8문장의
+충분히 상세한 문단으로 작성하세요. 400자 근처에서 서둘러 마무리하지 말고, 아래
+요소를 전부 순서대로 풀어서 500자를 확실히 넘기세요:
+① 현황·배경 서술 ② 구체적 근거·수치·방법 ③ 차별점이나 세부 실행 방식
+④ 기대 효과·의의. 한두 문장으로 요약하고 끝내는 것은 금지입니다. 짧고 개조식인
+문장은 지양하고, 완결된 서술로 채우세요.
+
+## 그 외 규칙
 - 사업계획서 심사위원이 읽는 공식 문서체로, 과장 없이 정량적 근거를 포함해 작성합니다.
 - 문장 종결은 제안서·사업계획서 문체로 통일합니다. 기본적으로 "~이다", "~한다", "~된다"와
   같은 완전한 서술문을 사용합니다.
@@ -106,8 +195,6 @@ _SYSTEM_PROMPT_TEMPLATE = """당신은 대한민국 정부 창업지원사업 �
   유지합니다.
 - "치료", "진단", "처방" 등 의료행위로 오인될 수 있는 표현은 쓰지 않습니다 -- PREP
   GATE 판정 기준과 상충하면 이 서비스의 지원 자격 자체가 위험해집니다.
-- [검진 리포트]와 [사용자가 이미 입력한 내용]에 없는 사실(구체 수치·고유명사)을
-  지어내지 않습니다. 근거가 부족하면 일반적인 서술로 대체하세요.
 - 요청받은 필드만 채우세요. 요청하지 않은 필드는 만들지 마세요.
 """
 
@@ -122,11 +209,50 @@ def _build_client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.openai_api_key, timeout=_REQUEST_TIMEOUT_SECONDS)
 
 
+# TEXT 필드 하나를 표현하는 하위 스키마 -- 리포트/사용자 입력에 근거가 있는지를 모델이
+# has_report_basis로 먼저 명시적으로 답하게 강제한다. "그냥 문자열 하나 써라"보다 이렇게
+# 판단을 별도 필드로 분리해두면 실제로 훨씬 안정적이다 -- 실측(2026-09-11): 프롬프트
+# 문구만으로는 20개 필드를 한 번에 생성할 때 founder_capability(예시로 직접 지목한
+# 필드)만 지켜지고 team_hiring_plan/company_overview 등 다른 필드는 여전히 대표자 경력
+# 등을 지어냈다. has_report_basis가 false인데도 content에 그럴듯한 글을 쓸 수는 있지만,
+# 최종적으로 사용하는 값은 코드가 has_report_basis를 보고 결정하므로(_normalize_sections)
+# 모델의 산문 생성 성향과 무관하게 결과가 강제된다.
+_TEXT_FIELD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "has_report_basis": {
+            "type": "boolean",
+            "description": (
+                "[검진 리포트]나 [사용자가 이미 입력한 내용]에 이 필드와 관련된 내용이 "
+                "실제로 적혀 있으면 true, 전혀 없으면 false. 이 필드가 growth_targets 같은 "
+                "추정치 필드가 아닌 이상, 정확한 사실을 모르면 false로 답하세요."
+            ),
+        },
+        "content": {
+            "type": "string",
+            "description": (
+                "has_report_basis가 true일 때만 실제 작성 내용을 채우세요. "
+                "false라면 이 필드는 어차피 쓰이지 않으니 빈 문자열로 두세요."
+            ),
+        },
+    },
+    "required": ["has_report_basis", "content"],
+    "additionalProperties": False,
+}
+
+# growth_targets 등 "예외" 필드(추정치가 정상 업무인 필드)는 has_report_basis 판단 없이
+# 항상 채운다 -- TABLE은 이미 그렇고, TEXT 중에서도 있다면 여기 추가한다.
+_ALWAYS_FILL_TEXT_FIELDS: frozenset[str] = frozenset()
+
+
 def build_response_schema(target_fields: list[dict]) -> dict:
     """target_fields: [{"field_key", "label", "field_type", ...}, ...] (CHECKLIST 제외).
 
     TABLE 필드는 TABLE_ITEM_SCHEMAS에 항목 스키마가 등록돼 있어야 한다 -- 없으면
     시딩 데이터와 이 모듈의 스키마 목록이 어긋난 것이므로 조용히 넘기지 않고 바로 에러.
+    TEXT 필드는 _TEXT_FIELD_SCHEMA(has_report_basis + content)를 쓴다 -- 반환값을
+    그대로 API에 내보내지 않고 generate_missing_sections()의 _normalize_sections()가
+    한 번 더 가공한다.
     """
     properties: dict = {}
     for field in target_fields:
@@ -135,8 +261,10 @@ def build_response_schema(target_fields: list[dict]) -> dict:
             if item_schema is None:
                 raise ValueError(f"TABLE_ITEM_SCHEMAS에 {field['field_key']} 항목 스키마가 없습니다.")
             properties[field["field_key"]] = {"type": "array", "items": item_schema}
-        else:
+        elif field["field_key"] in _ALWAYS_FILL_TEXT_FIELDS:
             properties[field["field_key"]] = {"type": "string"}
+        else:
+            properties[field["field_key"]] = _TEXT_FIELD_SCHEMA
 
     return {
         "name": "proposal_sections",
@@ -148,6 +276,27 @@ def build_response_schema(target_fields: list[dict]) -> dict:
             "additionalProperties": False,
         },
     }
+
+
+def _normalize_sections(raw_sections: dict, target_fields: list[dict]) -> dict[str, object]:
+    """build_response_schema()가 만든 스키마의 원시 응답을 API가 쓰는 최종 형태로 가공한다.
+
+    TABLE과 _ALWAYS_FILL_TEXT_FIELDS는 그대로 통과. 그 외 TEXT 필드는
+    {"has_report_basis", "content"} 객체를 받아 has_report_basis가 false면 값을
+    NO_GROUNDING_PLACEHOLDER로 강제 교체한다 -- 모델이 content에 뭘 썼든 무시한다.
+    """
+    field_types = {field["field_key"]: field["field_type"] for field in target_fields}
+    normalized: dict[str, object] = {}
+    for key, value in raw_sections.items():
+        field_type = field_types.get(key)
+        if field_type == "TABLE" or key in _ALWAYS_FILL_TEXT_FIELDS:
+            normalized[key] = value
+        elif isinstance(value, dict):
+            normalized[key] = value.get("content", "") if value.get("has_report_basis") else NO_GROUNDING_PLACEHOLDER
+        else:
+            # strict json_schema가 보장하니 정상 상황에선 여기 안 온다 -- 방어적으로만 통과.
+            normalized[key] = value
+    return normalized
 
 
 def _build_user_prompt(report_text: str, field_values: dict, target_fields: list[dict]) -> str:
@@ -193,27 +342,13 @@ def _cache_key(template_type: str, report_text: str, field_values: dict, target_
     return _CACHE_KEY_PREFIX + hashlib.sha256(payload.encode()).hexdigest()
 
 
-async def generate_missing_sections(
+async def _call_llm_batch(
     template_type: str,
     report_text: str,
     field_values: dict,
     target_fields: list[dict],
 ) -> dict[str, object]:
-    """target_fields가 비어있으면(전부 사용자가 채웠거나 CHECKLIST뿐이면) 빈 dict를 반환한다.
-
-    반환값은 {field_key: str}(TEXT) 또는 {field_key: [dict, ...]}(TABLE)이 섞여 있다.
-    """
-    if not target_fields:
-        return {}
-
-    cache_key = _cache_key(template_type, report_text, field_values, target_fields)
-    try:
-        cached = await redis_client.get(cache_key)
-        if cached is not None:
-            return json.loads(cached)
-    except Exception:
-        pass  # 캐시 조회 실패는 치명적이지 않다 -- 그냥 다시 계산한다.
-
+    """target_fields 하나의 배치에 대해 실제 OpenAI 호출 1번을 수행하고 정규화까지 마친다."""
     client = _build_client()
     schema = build_response_schema(target_fields)
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
@@ -232,15 +367,83 @@ async def generate_missing_sections(
                 ],
                 response_format={"type": "json_schema", "json_schema": schema},
             )
-        sections = json.loads(response.choices[0].message.content)
+        raw_sections = json.loads(response.choices[0].message.content)
     except openai.OpenAIError as error:
         raise ProposalLLMUnavailable(f"OpenAI 호출 실패: {error}") from error
     except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
         raise ProposalLLMUnavailable(f"OpenAI 응답 형식이 예상과 다릅니다: {error}") from error
 
     try:
-        await redis_client.set(cache_key, json.dumps(sections, ensure_ascii=False), ex=_CACHE_TTL_SECONDS)
+        return _normalize_sections(raw_sections, target_fields)
+    except (KeyError, TypeError, AttributeError) as error:
+        raise ProposalLLMUnavailable(f"OpenAI 응답 형식이 예상과 다릅니다: {error}") from error
+
+
+async def generate_missing_sections(
+    template_type: str,
+    report_text: str,
+    field_values: dict,
+    target_fields: list[dict],
+) -> dict[str, object]:
+    """target_fields가 비어있으면(전부 사용자가 채웠거나 CHECKLIST뿐이면) 빈 dict를 반환한다.
+
+    반환값은 {field_key: str}(TEXT) 또는 {field_key: [dict, ...]}(TABLE)이 섞여 있다.
+
+    ⚠️ HALLUCINATION_PRONE_FIELDS는 나머지 필드와 **별도 호출**로 분리한다(실측,
+    2026-09-11): founder_capability/team_hiring_plan을 다른 16~17개 필드와 한
+    호출에 몰아넣으면 has_report_basis 자기점검이 종종 무너져 근거 없이 content를
+    채우는 것을 확인했다. 같은 필드들만 작은 배치로 따로 물으면 훨씬 안정적이다.
+    "유형당 호출 1번" 원칙은 유지하되(§docstring 상단), 이 경우만 최대 2번까지 허용한다.
+    """
+    if not target_fields:
+        return {}
+
+    cache_key = _cache_key(template_type, report_text, field_values, target_fields)
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached is not None:
+            return json.loads(cached)
     except Exception:
-        pass  # 캐시 저장 실패도 치명적이지 않다.
+        pass  # 캐시 조회 실패는 치명적이지 않다 -- 그냥 다시 계산한다.
+
+    prone_fields = [f for f in target_fields if f["field_key"] in HALLUCINATION_PRONE_FIELDS]
+    normal_fields = [f for f in target_fields if f["field_key"] not in HALLUCINATION_PRONE_FIELDS]
+    batches = [batch for batch in (normal_fields, prone_fields) if batch]
+
+    # return_exceptions=True 필수 -- 코드 리뷰로 확인된 버그(2026-09-17): 이게 없으면
+    # 배치 중 하나(예: bonus_criteria만 담긴 작은 배치)가 레이트리밋 등으로 실패할 때
+    # gather()가 그 예외를 즉시 전파해, 이미 성공한 다른 배치(정상 필드 15개 이상)의
+    # 결과까지 통째로 버려진다. app/api/proposals.py의 generate_proposal()은 이
+    # ProposalLLMUnavailable을 잡아 llm_target_fields 전체를 자리표시자로 바꿔버리므로,
+    # 호출을 둘로 쪼갠 것 자체가(§docstring 상단) 전체 실패 확률을 오히려 두 배로
+    # 키우는 역설이 생긴다. 배치별로 결과/예외를 따로 받아 성공한 배치만 합치면,
+    # generate_proposal()의 기존 "field_key가 generated에 없으면 자리표시자" 로직이
+    # 실패한 배치의 필드만 자연스럽게 자리표시자로 채운다 -- 이쪽은 코드 변경이 필요 없다.
+    results = await asyncio.gather(
+        *(_call_llm_batch(template_type, report_text, field_values, batch) for batch in batches),
+        return_exceptions=True,
+    )
+
+    sections: dict[str, object] = {}
+    any_batch_failed = False
+    for result in results:
+        if isinstance(result, BaseException):
+            any_batch_failed = True
+            continue
+        sections.update(result)
+
+    if not sections and any_batch_failed:
+        # 전부 실패(배치가 하나뿐인 보통의 경우 포함)했으면 예전과 동일하게 예외를
+        # 그대로 올려 llm_status="unavailable"로 총실패 처리한다.
+        raise next(result for result in results if isinstance(result, BaseException))
+
+    if not any_batch_failed:
+        # 일부 배치만 실패했을 때는 caching하지 않는다 -- 부분 결과를 10분간 그대로
+        # 캐싱하면, 재시도했을 때 OpenAI가 복구돼도 같은 요청이 캐시 히트로 계속
+        # 불완전한 결과를 돌려받는다.
+        try:
+            await redis_client.set(cache_key, json.dumps(sections, ensure_ascii=False), ex=_CACHE_TTL_SECONDS)
+        except Exception:
+            pass  # 캐시 저장 실패도 치명적이지 않다.
 
     return sections

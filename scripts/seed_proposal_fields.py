@@ -33,8 +33,14 @@ _R = "REQUIRED"
 _O = "OPTIONAL"
 _MATRIX: list[tuple[str, str, str, str, str, str | None, str | None, str | None]] = [
     # 2.0 일반현황·개요
+    # ⚠️ 2026-09-11 수정: 원래 "대표자 이력...보유 역량 등 기업/대표자 소개"였는데,
+    # 이 설명이 founder_capability(대표자 역량)와 같은 내용을 다시 요구하는 꼴이라
+    # 실제 생성 시 리포트에 없는 대표자 경력을 이 필드 안에 끼워넣는 할루시네이션이
+    # 발생했다. company_overview는 회사/서비스 자체만 다루고, 대표자 개인 이력은
+    # founder_capability 하나로 역할을 분리한다.
     ("company_overview", "일반현황", "기업개요·대표자", "TEXT",
-     "대표자 이력, 창업 동기, 보유 역량 등 기업/대표자 소개", _R, _R, _R),
+     "회사(서비스)의 설립 목적, 사업 분야, 핵심 사업 내용 소개 -- 대표자 개인 경력·이력은 "
+     "여기서 다루지 않는다(founder_capability에서 별도로 다룸)", _R, _R, _R),
     ("idea_overview", "일반현황", "창업아이템 개요", "TEXT",
      "창업 아이템을 한눈에 파악할 수 있도록 핵심 기능과 목적을 간략히 요약", _R, _R, _R),
     ("location_timing", "일반현황", "창업예정지·시기", "TEXT",
