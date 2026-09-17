@@ -15,18 +15,23 @@ from fastapi import UploadFile
 from pypdf import PdfReader
 from starlette.datastructures import Headers
 
+from docx import Document
+
 from app.api import proposals
 from app.api.proposals import (
     CompleteRequest,
     CompleteSection,
+    CustomField,
     _extract_pdf_text,
     _is_pdf,
     _placeholder_value,
     complete_proposal,
     get_field_definitions,
+    get_proposal_docx,
     get_proposal_pdf,
 )
 from app.domain import proposal_llm
+from app.domain.proposal_docx import render_proposal_docx
 from app.domain.proposal_llm import (
     ATTACHMENT_CHECKLISTS,
     TABLE_ITEM_SCHEMAS,
@@ -36,6 +41,7 @@ from app.domain.proposal_llm import (
     generate_missing_sections,
 )
 from app.domain.proposal_pdf import render_proposal_pdf
+from app.domain.proposal_sections import merge_custom_fields
 from scripts.seed_proposal_fields import (
     FIELD_DEFINITION_ROWS,
     TEMPLATE_FIELD_ROWS,
@@ -425,3 +431,248 @@ async def test_get_proposal_pdf_returns_real_pdf_binary(monkeypatch) -> None:
     assert response.media_type == "application/pdf"
     assert response.body[:4] == b"%PDF"
     assert "proposal_prop-1.pdf" in response.headers["content-disposition"]
+
+
+# ---------------------------------------------------------------------------
+# app/domain/proposal_sections.py -- custom_fields 병합 (프론트 요청 v6, 2026-09-11)
+# ---------------------------------------------------------------------------
+
+
+def test_merge_custom_fields_returns_sections_unchanged_when_no_custom_fields() -> None:
+    sections = [{"field_key": "company_overview", "label": "x", "field_type": "TEXT", "value": "v", "category": "일반현황"}]
+    assert merge_custom_fields(sections, []) is sections
+
+
+def test_merge_custom_fields_inserts_at_end_of_matching_category_block() -> None:
+    sections = [
+        {"field_key": "company_overview", "label": "기업개요", "field_type": "TEXT", "value": "a", "category": "일반현황"},
+        {"field_key": "idea_overview", "label": "아이템개요", "field_type": "TEXT", "value": "b", "category": "일반현황"},
+        {"field_key": "background_motivation", "label": "개발배경", "field_type": "TEXT", "value": "c", "category": "문제인식"},
+    ]
+    custom_fields = [{"category": "일반현황", "label": "추가 항목", "value": "커스텀1"}]
+
+    merged = merge_custom_fields(sections, custom_fields)
+
+    # 일반현황 블록(0,1) 바로 다음, 문제인식(2) 앞에 끼워져야 한다.
+    assert [s.get("field_key") for s in merged] == [
+        "company_overview", "idea_overview", None, "background_motivation",
+    ]
+    assert merged[2]["label"] == "추가 항목"
+    assert merged[2]["value"] == "커스텀1"
+    assert merged[2]["field_type"] == "TEXT"
+
+
+def test_merge_custom_fields_preserves_order_within_same_category() -> None:
+    sections = [{"field_key": "company_overview", "label": "x", "field_type": "TEXT", "value": "a", "category": "일반현황"}]
+    custom_fields = [
+        {"category": "일반현황", "label": "추가 항목", "value": "첫번째"},
+        {"category": "일반현황", "label": "추가 항목", "value": "두번째"},
+    ]
+
+    merged = merge_custom_fields(sections, custom_fields)
+
+    assert [s["value"] for s in merged[1:]] == ["첫번째", "두번째"]
+
+
+def test_merge_custom_fields_appends_unmatched_category_at_the_end() -> None:
+    # sections 어디에도 없는 category(오타 등)로 지정되면 자리를 못 찾으므로
+    # 문서 끝에 붙는다 -- 값 자체가 사라지는 것보다 안전하다.
+    sections = [{"field_key": "company_overview", "label": "x", "field_type": "TEXT", "value": "a", "category": "일반현황"}]
+    custom_fields = [{"category": "존재하지않는카테고리", "label": "추가 항목", "value": "고아값"}]
+
+    merged = merge_custom_fields(sections, custom_fields)
+
+    assert merged[-1]["value"] == "고아값"
+
+
+def test_merge_custom_fields_handles_multiple_categories_independently() -> None:
+    sections = [
+        {"field_key": "company_overview", "label": "x", "field_type": "TEXT", "value": "a", "category": "일반현황"},
+        {"field_key": "founder_capability", "label": "y", "field_type": "TEXT", "value": "b", "category": "팀구성"},
+    ]
+    custom_fields = [
+        {"category": "일반현황", "label": "추가 항목", "value": "일반현황용"},
+        {"category": "팀구성", "label": "추가 항목", "value": "팀구성용"},
+    ]
+
+    merged = merge_custom_fields(sections, custom_fields)
+
+    assert [s.get("field_key") or s["value"] for s in merged] == [
+        "company_overview", "일반현황용", "founder_capability", "팀구성용",
+    ]
+
+
+def test_merge_custom_fields_does_not_duplicate_when_category_is_non_contiguous() -> None:
+    # 코드 리뷰로 확인된 회귀(2026-09-17): sections 안에서 같은 category가 서로
+    # 떨어진 블록으로 나뉘어 있으면(예: a-일반현황, b-문제인식, c-일반현황) 예전
+    # 구현은 각 블록 경계마다 삽입해 같은 custom_field가 두 번 나왔다. 이제는
+    # "진짜 마지막 등장 위치" 하나에만 정확히 한 번 삽입돼야 한다.
+    sections = [
+        {"field_key": "a", "label": "A", "field_type": "TEXT", "value": "a", "category": "일반현황"},
+        {"field_key": "b", "label": "B", "field_type": "TEXT", "value": "b", "category": "문제인식"},
+        {"field_key": "c", "label": "C", "field_type": "TEXT", "value": "c", "category": "일반현황"},
+    ]
+    custom_fields = [{"category": "일반현황", "label": "추가 항목", "value": "X"}]
+
+    merged = merge_custom_fields(sections, custom_fields)
+
+    values = [s.get("field_key") or s["value"] for s in merged]
+    assert values == ["a", "b", "c", "X"]  # "일반현황"의 진짜 마지막(c) 바로 다음, 한 번만
+    assert values.count("X") == 1
+
+
+# ---------------------------------------------------------------------------
+# complete_proposal -- category 저장 + custom_fields 전달 (프론트 요청 v6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.db
+async def test_complete_proposal_stores_category_and_custom_fields(monkeypatch) -> None:
+    fake_set = AsyncMock()
+    monkeypatch.setattr(proposals.redis_client, "set", fake_set)
+
+    request = CompleteRequest(
+        template_type="PSST",
+        sections=[CompleteSection(field_key="company_overview", value="최종본")],
+        custom_fields=[CustomField(category="일반현황", label="추가 항목", value="커스텀 값")],
+    )
+    response = await complete_proposal("prop-1", request)
+
+    assert response.result.proposal_id == "prop-1"
+    stored = json.loads(fake_set.call_args[0][1])
+    assert stored["sections"][0]["category"] == "일반현황"
+    assert stored["custom_fields"] == [{"category": "일반현황", "label": "추가 항목", "value": "커스텀 값"}]
+
+
+@pytest.mark.db
+async def test_complete_proposal_defaults_custom_fields_to_empty_list(monkeypatch) -> None:
+    """custom_fields를 아예 안 보내는 기존 클라이언트도 계속 동작해야 한다."""
+    fake_set = AsyncMock()
+    monkeypatch.setattr(proposals.redis_client, "set", fake_set)
+
+    request = CompleteRequest(
+        template_type="PSST", sections=[CompleteSection(field_key="company_overview", value="최종본")]
+    )
+    await complete_proposal("prop-1", request)
+
+    stored = json.loads(fake_set.call_args[0][1])
+    assert stored["custom_fields"] == []
+
+
+# ---------------------------------------------------------------------------
+# app/domain/proposal_docx.py -- 순수 렌더링, DB/네트워크 불필요 (요청 2)
+# ---------------------------------------------------------------------------
+
+
+def _docx_paragraph_texts(docx_bytes: bytes) -> list[str]:
+    document = Document(BytesIO(docx_bytes))
+    return [p.text for p in document.paragraphs]
+
+
+def test_render_proposal_docx_produces_valid_docx_bytes() -> None:
+    docx_bytes = render_proposal_docx(
+        "PSST",
+        [
+            {"field_key": "company_overview", "label": "기업개요·대표자", "field_type": "TEXT", "value": "설명"},
+            {"field_key": "attachment_checklist", "label": "첨부서류", "field_type": "CHECKLIST", "value": ["사업자등록증"]},
+            {
+                "field_key": "growth_targets",
+                "label": "정량적 성장목표",
+                "field_type": "TABLE",
+                "value": [{"year": 1, "revenue_krw": 1000}],
+            },
+        ],
+    )
+    # .docx는 zip 컨테이너다 -- 매직 바이트로 최소한의 형식 확인.
+    assert docx_bytes[:2] == b"PK"
+    # 실제로 python-docx로 다시 읽어서 내용이 왕복하는지까지 확인한다.
+    document = Document(BytesIO(docx_bytes))
+    headings = [p.text for p in document.paragraphs if p.style.name.startswith("Heading")]
+    assert "기업개요·대표자" in headings
+    assert document.tables[0].rows[0].cells[0].text == "year"
+
+
+def test_render_proposal_docx_handles_mismatched_field_type_and_value_without_raising() -> None:
+    # proposal_pdf.py의 동일 테스트와 같은 회귀(field_type/value 불일치)를 docx
+    # 렌더러에서도 막는다.
+    docx_bytes = render_proposal_docx(
+        "PSST",
+        [
+            {"field_key": "growth_targets", "label": "정량적 성장목표", "field_type": "TABLE", "value": "문자열이 잘못 옴"},
+            {"field_key": "attachment_checklist", "label": "첨부서류", "field_type": "CHECKLIST", "value": "이것도 문자열"},
+        ],
+    )
+    assert docx_bytes[:2] == b"PK"
+    texts = _docx_paragraph_texts(docx_bytes)
+    assert "(형식 오류로 표시할 수 없습니다)" in texts
+
+
+def test_render_proposal_docx_handles_empty_values_without_raising() -> None:
+    docx_bytes = render_proposal_docx(
+        "IR",
+        [
+            {"field_key": "esg", "label": "사회적 가치·ESG", "field_type": "TEXT", "value": ""},
+            {"field_key": "attachment_checklist", "label": "첨부서류", "field_type": "CHECKLIST", "value": []},
+            {"field_key": "cap_table", "label": "지분구조", "field_type": "TABLE", "value": []},
+        ],
+    )
+    assert docx_bytes[:2] == b"PK"
+
+
+def test_render_proposal_docx_appended_custom_field_appears_after_its_category() -> None:
+    """merge_custom_fields()로 만든 순서를 그대로 렌더링에 넣었을 때, docx
+    본문에도 실제로 원래 필드 다음/다음 카테고리 필드 이전에 나오는지 확인한다."""
+    sections = merge_custom_fields(
+        [
+            {"field_key": "company_overview", "label": "기업개요", "field_type": "TEXT", "value": "a", "category": "일반현황"},
+            {"field_key": "background_motivation", "label": "개발배경", "field_type": "TEXT", "value": "b", "category": "문제인식"},
+        ],
+        [{"category": "일반현황", "label": "추가 항목", "value": "커스텀값"}],
+    )
+    docx_bytes = render_proposal_docx("PSST", sections)
+    headings = [p.text for p in Document(BytesIO(docx_bytes)).paragraphs if p.style.name.startswith("Heading")]
+
+    assert headings.index("기업개요") < headings.index("추가 항목") < headings.index("개발배경")
+
+
+# ---------------------------------------------------------------------------
+# GET /{proposal_id}/docx (요청 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_proposal_docx_returns_404_when_expired_or_missing(monkeypatch) -> None:
+    monkeypatch.setattr(proposals.redis_client, "get", AsyncMock(return_value=None))
+
+    response = await get_proposal_docx("does-not-exist")
+    assert response.status_code == 404
+    body = json.loads(response.body)
+    assert body["code"] == "PROPOSAL_NOT_FOUND"
+
+
+async def test_get_proposal_docx_returns_real_docx_binary_with_custom_fields(monkeypatch) -> None:
+    cached_payload = json.dumps(
+        {
+            "proposal_id": "prop-1",
+            "template_type": "PSST",
+            "sections": [
+                {
+                    "field_key": "company_overview",
+                    "label": "기업개요·대표자",
+                    "field_type": "TEXT",
+                    "value": "최종본",
+                    "category": "일반현황",
+                }
+            ],
+            "custom_fields": [{"category": "일반현황", "label": "추가 항목", "value": "커스텀"}],
+            "expires_at": "2026-09-07T12:10:00+00:00",
+        }
+    )
+    monkeypatch.setattr(proposals.redis_client, "get", AsyncMock(return_value=cached_payload))
+
+    response = await get_proposal_docx("prop-1")
+
+    assert response.media_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    assert response.body[:2] == b"PK"
+    assert "proposal_prop-1.docx" in response.headers["content-disposition"]
+    headings = [p.text for p in Document(BytesIO(response.body)).paragraphs if p.style.name.startswith("Heading")]
+    assert "추가 항목" in headings

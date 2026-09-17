@@ -67,8 +67,8 @@ _MATRIX: list[tuple[str, str, str, str, str, str | None, str | None, str | None]
     ("overseas_expansion", "성장전략", "해외시장 진출전략(타겟국가·GTM·진출실적)", "TEXT",
      "해외 진출 대상 국가, 진출 시기, 시장 진입 전략", _O, None, _O),
     # 2.4 팀 구성
-    ("founder_capability", "팀구성", "대표자 역량", "TEXT",
-     "대표자가 보유한 역량, 경력, 전문성", _R, _R, _R),
+    ("founder_capability", "팀구성", "대표자 및 팀원 역량", "TEXT",
+     "대표자·핵심 팀원의 관련 전공·경력·과거 성과 등 이 사업을 이끌 수 있는 근거", _R, _R, _R),
     ("team_hiring_plan", "팀구성", "팀 구성·고용계획", "TEXT",
      "현재 팀 구성과 향후 채용 계획", _R, _R, _R),
     ("new_hire_plan", "팀구성", "신규 인력 채용계획(고용창출 목표, 정량)", "TEXT",
