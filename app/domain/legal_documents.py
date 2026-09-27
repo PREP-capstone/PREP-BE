@@ -8,6 +8,8 @@ data/rule/manifest.csv(title 컬럼)가 원본. RAG evidence_documents.title이 
 DOCUMENT_TITLES: dict[str, str] = {
     "kr-medical-act-20260407": "의료법",
     "kr-medical-device-act-20260701": "의료기기법",
+    # db_구축_설계서.md §1.5(MFDS-R-2026-02) — 별표7과 별개로 본문(제45조 등)도 참조된다.
+    "kr-medical-device-act-rule-20260701": "의료기기법 시행규칙",
     "kr-medical-device-act-rule-annex7-20260701": "의료기기법 시행규칙 별표7 — 금지되는 광고의 범위",
     "kr-mfds-wellness-0091-03-20260212": "의료기기와 개인용 건강관리(웰니스) 제품 판단기준",
     "kr-mohw-nonmedical-health-guide-202209": "비의료 건강관리서비스 가이드라인 및 사례집(2차)",

@@ -162,6 +162,110 @@ def _build_client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
+async def extract_chunk_B(
+    client: AsyncOpenAI, chunk: dict, document_id: str, extra_context: str = ""
+) -> list[ExtractedDraft]:
+    """청크 하나를 Stage B로 추출한다. retry_extract가 실패 사유를 `extra_context`로
+    덧붙여 같은 청크만 다시 추출할 때 재사용한다 — extract_B와 로직을 중복시키지 않는다."""
+    user_message = build_chunk_message(chunk)
+    if extra_context:
+        user_message = f"{user_message}\n\n{extra_context}"
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
+        # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
+        # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
+        # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
+        # 검증·중복판정 단계가 흡수한다.
+        temperature=0,
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
+    )
+    parsed = json.loads(response.choices[0].message.content)
+
+    drafts: list[ExtractedDraft] = []
+    for item in parsed["matrix_entries"]:
+        data_type = item["data_type"]
+        function_type = item["function_type"]
+        acquire_method = None if item["acquire_method"] == "NONE" else item["acquire_method"]
+        invasive_signal = item["invasive_signal"]
+        keyword_hit = detect_invasive(chunk["content"])
+
+        hardcheck_fired = is_invasive_hardcheck(data_type, acquire_method, invasive_signal)
+        review_fired = needs_invasive_review(
+            data_type, acquire_method, invasive_signal, keyword_hit
+        )
+        # §3.2: acquire_method는 "침습적 하드체크 오버라이드 전용 필드"이고 해당 없는 일반
+        # 조합은 비워둔다. 무조건 저장하면 생체지표×단순기록 같은 평범한 칸이 획득방법만
+        # 다른 중복 행으로 쌓인다. 실제로 판정을 바꾼 경우에만 남긴다.
+        stored_acquire_method = acquire_method if (hardcheck_fired or review_fired) else None
+
+        # 침습적 하드체크는 6칸 표 조회보다 **먼저** 적용된다 — 걸리면 function_type과
+        # 표 조회 결과에 관계없이 FAIL로 오버라이드한다 (db_구축_설계서.md §3.2).
+        if hardcheck_fired:
+            verdict = HARDCHECK_VERDICT
+            exemption_note = None
+            avoidance_redesign = HARDCHECK_AVOIDANCE_REDESIGN
+            avoidance_certification = HARDCHECK_AVOIDANCE_CERTIFICATION
+        elif review_fired:
+            # 코드는 침습 신호를 잡았는데 LLM은 아니라고 한 불일치. detect_invasive는 청크
+            # 전체를 훑어 정밀도가 낮으므로 FAIL로 확정하지 않고 검수 대기로 뺀다. CONDITIONAL로
+            # 두면 이후 human_review 노드가 이 draft를 통과분과 함께 그대로 검수 큐에 올린다.
+            verdict = "CONDITIONAL"
+            exemption_note = None
+            avoidance_redesign = avoidance_certification = None
+        elif item["boundary_case"]:
+            # 3단계로도 안 풀리는 경계 케이스 — CONDITIONAL로 두면 human_review 검수 큐로
+            # 자연스럽게 넘어간다(자동 확정 금지 원칙, §5.3).
+            verdict = "CONDITIONAL"
+            exemption_note = None
+            avoidance_redesign = avoidance_certification = None
+        else:
+            lookup = GATE_MATRIX_TABLE[(data_type, function_type)]
+            verdict = lookup["verdict"]
+            exemption_note = lookup["exemption_note"]
+            # D-2 확정(2026-08-25, 코드 템플릿) — 매트릭스 FAIL 셀만 값이 있고
+            # PASS/CONDITIONAL 셀은 키 자체가 없어 get()이 None을 돌려준다.
+            avoidance_redesign = lookup.get("avoidance_redesign")
+            avoidance_certification = lookup.get("avoidance_certification")
+
+        legal_basis = {
+            "document_id": document_id,
+            "article": normalize_article(item["legal_basis"]["article"]),
+            "quote": item["legal_basis"]["quote"],
+        }
+        fields = {
+            "data_type": data_type,
+            "function_type": function_type,
+            "verdict": verdict,
+            "exemption_note": exemption_note,
+            "acquire_method": stored_acquire_method,
+            # gate_matrix에 저장되는 컬럼은 아니지만, auto_validate가 하드체크 오버라이드를
+            # 그대로 재현해 검증할 수 있도록 draft에 실어 보낸다.
+            "invasive_signal": invasive_signal,
+            "invasive_keyword_hit": keyword_hit,
+            "avoidance_redesign": avoidance_redesign,
+            "avoidance_certification": avoidance_certification,
+            "risk_code": None,  # TODO: GATE01_ENG01~02 연계 코드 미확정 (db_구축_설계서.md §3.2)
+            "priority": VERDICT_PRIORITY[verdict],
+            "legal_basis": legal_basis,
+        }
+        drafts.append(
+            {
+                "stage": "B",
+                "fields": fields,
+                "legal_basis": legal_basis,
+                "source_chunk_id": chunk["chunk_id"],
+            }
+        )
+
+    return drafts
+
+
 async def extract_B(state: PipelineState) -> dict:
     client = _build_client()
     drafts: list[ExtractedDraft] = list(state["drafts"])
@@ -169,89 +273,6 @@ async def extract_B(state: PipelineState) -> dict:
     for chunk in state["chunks"]:
         if not chunk["content"].strip():
             continue
-
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
-            # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
-            # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
-            # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
-            # 검증·중복판정 단계가 흡수한다.
-            temperature=0,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": build_chunk_message(chunk)},
-            ],
-            response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
-        )
-        parsed = json.loads(response.choices[0].message.content)
-
-        for item in parsed["matrix_entries"]:
-            data_type = item["data_type"]
-            function_type = item["function_type"]
-            acquire_method = None if item["acquire_method"] == "NONE" else item["acquire_method"]
-            invasive_signal = item["invasive_signal"]
-            keyword_hit = detect_invasive(chunk["content"])
-
-            hardcheck_fired = is_invasive_hardcheck(data_type, acquire_method, invasive_signal)
-            review_fired = needs_invasive_review(
-                data_type, acquire_method, invasive_signal, keyword_hit
-            )
-            # §3.2: acquire_method는 "침습적 하드체크 오버라이드 전용 필드"이고 해당 없는 일반
-            # 조합은 비워둔다. 무조건 저장하면 생체지표×단순기록 같은 평범한 칸이 획득방법만
-            # 다른 중복 행으로 쌓인다. 실제로 판정을 바꾼 경우에만 남긴다.
-            stored_acquire_method = acquire_method if (hardcheck_fired or review_fired) else None
-
-            # 침습적 하드체크는 6칸 표 조회보다 **먼저** 적용된다 — 걸리면 function_type과
-            # 표 조회 결과에 관계없이 FAIL로 오버라이드한다 (db_구축_설계서.md §3.2).
-            if hardcheck_fired:
-                verdict = HARDCHECK_VERDICT
-                exemption_note = None
-                avoidance_redesign = HARDCHECK_AVOIDANCE_REDESIGN
-                avoidance_certification = HARDCHECK_AVOIDANCE_CERTIFICATION
-            elif review_fired:
-                # 코드는 침습 신호를 잡았는데 LLM은 아니라고 한 불일치. detect_invasive는 청크
-                # 전체를 훑어 정밀도가 낮으므로 FAIL로 확정하지 않고 검수 대기로 뺀다.
-                # TODO(human_review): interrupt 연결되면 CONDITIONAL 대신 관리자 검수로 보낼 것.
-                verdict = "CONDITIONAL"
-                exemption_note = None
-                avoidance_redesign = avoidance_certification = None
-            elif item["boundary_case"]:
-                # TODO(human_review): 3단계로도 안 풀리는 경계 케이스 — interrupt로 관리자 검수에
-                # 넘겨야 하지만 아직 human_review 노드가 없어 CONDITIONAL로만 표시하고 넘어간다.
-                verdict = "CONDITIONAL"
-                exemption_note = None
-                avoidance_redesign = avoidance_certification = None
-            else:
-                lookup = GATE_MATRIX_TABLE[(data_type, function_type)]
-                verdict = lookup["verdict"]
-                exemption_note = lookup["exemption_note"]
-                # D-2 확정(2026-08-25, 코드 템플릿) — 매트릭스 FAIL 셀만 값이 있고
-                # PASS/CONDITIONAL 셀은 키 자체가 없어 get()이 None을 돌려준다.
-                avoidance_redesign = lookup.get("avoidance_redesign")
-                avoidance_certification = lookup.get("avoidance_certification")
-
-            legal_basis = {
-                "document_id": state["document_id"],
-                "article": normalize_article(item["legal_basis"]["article"]),
-                "quote": item["legal_basis"]["quote"],
-            }
-            fields = {
-                "data_type": data_type,
-                "function_type": function_type,
-                "verdict": verdict,
-                "exemption_note": exemption_note,
-                "acquire_method": stored_acquire_method,
-                # gate_matrix에 저장되는 컬럼은 아니지만, auto_validate가 하드체크 오버라이드를
-                # 그대로 재현해 검증할 수 있도록 draft에 실어 보낸다.
-                "invasive_signal": invasive_signal,
-                "invasive_keyword_hit": keyword_hit,
-                "avoidance_redesign": avoidance_redesign,
-                "avoidance_certification": avoidance_certification,
-                "risk_code": None,  # TODO: GATE01_ENG01~02 연계 코드 미확정 (db_구축_설계서.md §3.2)
-                "priority": VERDICT_PRIORITY[verdict],
-                "legal_basis": legal_basis,
-            }
-            drafts.append({"stage": "B", "fields": fields, "legal_basis": legal_basis})
+        drafts.extend(await extract_chunk_B(client, chunk, state["document_id"]))
 
     return {"drafts": drafts}

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>룰베이스 관리자 검수</title>
+<style>
+  body { font-family: -apple-system, "Malgun Gothic", sans-serif; margin: 24px; color: #1a1a1a; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; margin-top: 32px; }
+  section { margin-bottom: 24px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; text-align: left; vertical-align: top; }
+  th { background: #f5f5f5; }
+  button { cursor: pointer; padding: 4px 10px; }
+  .row { display: flex; gap: 24px; }
+  .col { flex: 1; }
+  .quote { background: #fffbe6; padding: 8px; white-space: pre-wrap; font-size: 13px; }
+  .badge-fail { color: #b00; font-weight: bold; }
+  .badge-pass { color: #080; }
+  textarea { width: 100%; font-family: monospace; font-size: 12px; }
+  #detail { display: none; }
+  details.guide { background: #f5f8ff; border: 1px solid #cdd8f0; border-radius: 6px; padding: 8px 14px; margin-bottom: 24px; }
+  details.guide summary { cursor: pointer; font-weight: bold; font-size: 14px; }
+  details.guide h3 { font-size: 13px; margin: 14px 0 4px; }
+  details.guide table { margin-bottom: 8px; }
+  details.guide li { font-size: 13px; margin-bottom: 4px; }
+  #alert-banner { display: none; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+  #alert-banner.related { background: #fff1f0; border: 1px solid #ffa39e; }
+  #alert-banner.unrelated-only { background: #f6f6f6; border: 1px solid #ddd; }
+  #alert-detail { display: none; margin-bottom: 24px; }
+  .alert-row { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+  .alert-row.related { border-left: 4px solid #cf1322; }
+  .alert-row.unrelated { border-left: 4px solid #bbb; opacity: 0.75; }
+  .alert-meta { font-size: 12px; color: #666; }
+  .article-item { background: #fafafa; padding: 6px 8px; margin: 4px 0; font-size: 12px; white-space: pre-wrap; }
+  .future { color: #d46b08; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>룰베이스 관리자 검수</h1>
+
+<div id="alert-banner" onclick="toggleAlertDetail()"></div>
+<section id="alert-detail">
+  <h2>법령 개정 알림</h2>
+  <div id="alert-list"></div>
+</section>
+
+<details class="guide" open>
+  <summary>target_stages(A/B/C) 어떻게 정하나 — 가이드</summary>
+
+  <h3>이미 알려진 문서 (db_구축_설계서.md §1.5)</h3>
+  <table>
+    <thead><tr><th>문서</th><th>Stage</th></tr></thead>
+    <tbody>
+      <tr><td>웰니스판단기준(지침서-0091-03)</td><td>A, B</td></tr>
+      <tr><td>디지털의료기기SW 허가·심사 가이드라인</td><td>A, B</td></tr>
+      <tr><td>모바일 의료용 앱 안전관리 지침</td><td>B</td></tr>
+      <tr><td>LLM 기반 디지털의료기기 가이드라인</td><td>B</td></tr>
+      <tr><td>비의료 건강관리서비스 가이드라인</td><td>A, B, C</td></tr>
+      <tr><td>개인정보 보호법</td><td>B, C</td></tr>
+      <tr><td>의료기기법</td><td>A, C</td></tr>
+      <tr><td>의료기기법 시행규칙(본문)</td><td>C</td></tr>
+      <tr><td>의료기기법 시행규칙 별표7</td><td>룰추출 대상 아님(RAG 전용)</td></tr>
+      <tr><td>의료법</td><td>A, C</td></tr>
+      <tr><td>약사법</td><td>A, C</td></tr>
+    </tbody>
+  </table>
+
+  <h3>표에 없는 새 문서라면 — 내용 성격으로 판단</h3>
+  <ul>
+    <li><b>A (gate_keywords)</b> = 개별 단어 추출. 질병명·생체지표(당뇨, 혈압), 금지행위(진단·처방·조제), 의사대체 표현이 <b>단어 단위로</b> 나오면 A. 조문의 정의·금지 규정에 이런 단어가 있으면 대부분 해당.</li>
+    <li><b>B (gate_matrix)</b> = data_type×function_type 조합 판정 기준. "이런 기능이면 의료기기, 이런 기능이면 웰니스"라는 <b>경계 사례·판단기준</b>을 설명하는 문서(판단가이드류가 전형적).</li>
+    <li><b>C (correction_rules)</b> = 위험 표현(동사+명사 조합). "혈압 진단", "당뇨 치료"처럼 <b>실제 마케팅 문구로 쓸 법한 구체적 예시</b>가 있는 문서. "이런 광고는 금지"처럼 <b>추상적 유형만 나열</b>하는 조문(별표7, 제24조 본문 등)은 Stage C에서 0건 나올 수 있음 — 버그 아니고 원래 그렇습니다.</li>
+  </ul>
+  <p style="font-size:13px;">애매하면 여러 개 같이 넣어봐도 됩니다 — 안 맞으면 항목 수 0으로 끝날 뿐, 위험하지 않습니다(LLM 호출 비용만 조금 나감).</p>
+</details>
+
+<section>
+  <h2>문서 투입</h2>
+  <p style="font-size:13px">
+    <label><input type="radio" name="source-mode" value="law" checked onchange="switchMode()"> 법령 (law.go.kr에서 조문 가져오기 — PDF 불필요)</label>
+    &nbsp;&nbsp;
+    <label><input type="radio" name="source-mode" value="pdf" onchange="switchMode()"> PDF 업로드 (지침서·안내서류)</label>
+  </p>
+
+  <div id="law-mode">
+    <div>
+      <input type="text" id="law-query" placeholder="법령명 검색 (예: 의료기기법)" size="30">
+      <button onclick="searchLaw()">검색</button>
+      <span class="alert-meta">검색이 느슨해서 관계없는 법이 섞여 나옵니다 — 정확한 걸 고르세요</span>
+    </div>
+    <div id="law-results"></div>
+
+    <div id="law-articles-box" style="display:none; margin-top:12px">
+      <div>
+        <b id="selected-law-title"></b>
+        &nbsp; document_id: <input type="text" id="law-document-id" size="38">
+        &nbsp; Stage: <input type="text" id="law-target-stages" value="A" size="8">
+        &nbsp;<label><input type="checkbox" id="changed-only" onchange="reloadArticles()"> 최근 개정에서 바뀐 조문만</label>
+      </div>
+      <div class="alert-meta" style="margin:6px 0">
+        필요한 조문만 고르세요 — 전체를 넣으면 LLM 비용이 조문 수만큼 나가고 무관한 후보만 쌓입니다.
+        (우리가 실제 인용하는 건 의료기기법 제2조, 의료법 제27조처럼 소수입니다)
+      </div>
+      <div>
+        <button onclick="toggleAllArticles(true)">전체 선택</button>
+        <button onclick="toggleAllArticles(false)">전체 해제</button>
+        <button onclick="ingestFromLaw()"><b>선택 조문 투입</b></button>
+        <span id="selected-count" class="alert-meta"></span>
+      </div>
+      <div id="law-articles" style="max-height:340px; overflow:auto; margin-top:8px"></div>
+    </div>
+  </div>
+
+  <form id="upload-form" style="display:none">
+    <input type="file" id="file" accept="application/pdf" required>
+    <input type="text" id="document_id" placeholder="document_id (비워두면 파일명에서 자동 인식/변환)">
+    <input type="text" id="target_stages" placeholder="예: A / B / C / A,B" value="A" required>
+    <select id="document_category">
+      <option value="">(자동 분류 — 파일명으로 판단)</option>
+      <option value="법령규제문서">법령규제문서</option>
+      <option value="판단가이드">판단가이드</option>
+      <option value="위험표현사전">위험표현사전</option>
+    </select>
+    <button type="submit">업로드 + 추출 시작</button>
+  </form>
+  <p id="upload-result"></p>
+</section>
+
+<section>
+  <h2>검수 대기 목록 <button onclick="loadQueue()">새로고침</button></h2>
+  <table id="queue-table">
+    <thead><tr><th>document_id</th><th>항목 수</th><th>생성 시각</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<section id="detail">
+  <h2 id="detail-title"></h2>
+  <div id="items"></div>
+  <button onclick="submitDecision()">결정 제출</button>
+  <p id="decision-result"></p>
+</section>
+
+<script>
+let currentThreadId = null;
+let currentItems = [];
+let currentChunksById = {};
+
+async function api(path, options = {}) {
+  const res = await fetch(path, options);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+document.getElementById("upload-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = new FormData();
+  form.append("file", document.getElementById("file").files[0]);
+  const documentId = document.getElementById("document_id").value;
+  if (documentId) {
+    form.append("document_id", documentId);
+  }
+  form.append("target_stages", document.getElementById("target_stages").value);
+  const category = document.getElementById("document_category").value;
+  if (category) {
+    // 비워두면(자동 분류 선택) 필드 자체를 안 보낸다 — 서버가 document_id로 자동 분류한다.
+    form.append("document_category", category);
+  }
+  try {
+    const result = await api("/admin/rule-documents", { method: "POST", body: form });
+    document.getElementById("upload-result").textContent =
+      `업로드됨: document_id=${result.document_id}, thread_id=${result.thread_id} (추출 완료까지 잠시 후 새로고침)`;
+  } catch (err) {
+    document.getElementById("upload-result").textContent = "실패: " + err.message;
+  }
+});
+
+async function loadQueue() {
+  const rows = await api("/admin/rule-drafts");
+  const tbody = document.querySelector("#queue-table tbody");
+  tbody.innerHTML = "";
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${row.document_id}</td><td>${row.item_count}</td><td>${row.created_at}</td>
+      <td><button onclick="openDetail('${row.thread_id}')">검수</button></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function openDetail(threadId) {
+  const detail = await api(`/admin/rule-drafts/${threadId}`);
+  currentThreadId = threadId;
+  currentItems = detail.items;
+  currentChunksById = Object.fromEntries(detail.chunks.map(c => [c.chunk_id, c]));
+
+  document.getElementById("detail").style.display = "block";
+  document.getElementById("detail-title").textContent = `검수: ${detail.document_id} (${threadId})`;
+
+  const container = document.getElementById("items");
+  container.innerHTML = "";
+  detail.items.forEach((item, index) => {
+    const chunk = currentChunksById[item.draft.source_chunk_id] || {};
+    const statusBadge = item.status === "auto_passed"
+      ? '<span class="badge-pass">자동검증 통과</span>'
+      : `<span class="badge-fail">검증 실패: ${item.reasons.join(", ")}</span>`;
+
+    const div = document.createElement("div");
+    div.className = "row";
+    div.style.borderBottom = "1px solid #ccc";
+    div.style.padding = "12px 0";
+    div.innerHTML = `
+      <div class="col">
+        <b>원문 (${chunk.article_number || "-"})</b>
+        <div class="quote">${(chunk.content || "").replace(/</g, "&lt;")}</div>
+        <div><b>인용:</b> ${(item.draft.legal_basis?.quote || "").replace(/</g, "&lt;")}</div>
+      </div>
+      <div class="col">
+        ${statusBadge}
+        <br>Stage ${item.draft.stage}
+        <textarea rows="8" id="fields-${index}">${JSON.stringify(item.draft.fields, null, 2)}</textarea>
+        <br>
+        <label><input type="radio" name="action-${index}" value="approve" checked> 승인</label>
+        <label><input type="radio" name="action-${index}" value="reject"> 반려</label>
+        <input type="text" id="reason-${index}" placeholder="반려 사유(반려 시)">
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function submitDecision() {
+  const decisions = currentItems.map((item, index) => {
+    const action = document.querySelector(`input[name="action-${index}"]:checked`).value;
+    const reason = document.getElementById(`reason-${index}`).value || null;
+    const editedText = document.getElementById(`fields-${index}`).value;
+    let editedFields = null;
+    try {
+      const parsed = JSON.parse(editedText);
+      if (JSON.stringify(parsed) !== JSON.stringify(item.draft.fields)) {
+        editedFields = parsed;
+      }
+    } catch (e) {
+      alert(`항목 ${index + 1}의 필드 JSON이 올바르지 않습니다: ${e.message}`);
+      throw e;
+    }
+    return { action, reason, edited_fields: editedFields };
+  });
+
+  try {
+    await api(`/admin/rule-drafts/${currentThreadId}/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decisions }),
+    });
+    document.getElementById("decision-result").textContent = "제출 완료.";
+    document.getElementById("detail").style.display = "none";
+    loadQueue();
+  } catch (err) {
+    document.getElementById("decision-result").textContent = "실패: " + err.message;
+  }
+}
+
+// ---- 법령(law.go.kr) 경로 ----
+let selectedLaw = null;
+
+function switchMode() {
+  const mode = document.querySelector('input[name="source-mode"]:checked').value;
+  document.getElementById("law-mode").style.display = mode === "law" ? "block" : "none";
+  document.getElementById("upload-form").style.display = mode === "pdf" ? "block" : "none";
+}
+
+async function searchLaw() {
+  const query = document.getElementById("law-query").value.trim();
+  if (!query) return;
+  const results = await api(`/admin/law-search?query=${encodeURIComponent(query)}`);
+  document.getElementById("law-results").innerHTML = results.length
+    ? `<table><thead><tr><th>법령명</th><th>구분</th><th>공포번호</th><th>시행일자</th><th></th></tr></thead><tbody>`
+      + results.map(r => `<tr>
+          <td>${escapeHtml(r.title)}</td><td>${escapeHtml(r.law_type)}</td>
+          <td>${r.promulgation_no}</td><td>${r.effective_date}</td>
+          <td><button onclick="selectLaw('${r.mst}', '${escapeHtml(r.title)}', '${escapeHtml(r.suggested_document_id)}')">선택</button></td>
+        </tr>`).join("") + "</tbody></table>"
+    : "<p class='alert-meta'>검색 결과 없음</p>";
+}
+
+async function selectLaw(mst, title, suggestedDocumentId) {
+  selectedLaw = { mst, title };
+  document.getElementById("selected-law-title").textContent = title;
+  document.getElementById("law-document-id").value = suggestedDocumentId;
+  document.getElementById("law-articles-box").style.display = "block";
+  await reloadArticles();
+}
+
+async function reloadArticles() {
+  if (!selectedLaw) return;
+  const changedOnly = document.getElementById("changed-only").checked;
+  const articles = await api(`/admin/law-articles?mst=${selectedLaw.mst}&changed_only=${changedOnly}`);
+  document.getElementById("law-articles").innerHTML = articles.map(a => {
+    const future = isFuture(a.effective_date);
+    return `<div class="article-item">
+      <label>
+        <input type="checkbox" class="article-cb" value="${a.article_key}" onchange="updateSelectedCount()" ${future ? "disabled" : ""}>
+        <b>${escapeHtml(a.article_label)} ${escapeHtml(a.title)}</b>
+        ${a.changed ? ' <span style="color:#cf1322">[개정]</span>' : ""}
+        ${future ? `<span class="future">[${a.effective_date} 시행 예정 — 선택 불가]</span>` : ""}
+      </label>
+      <div style="margin-left:20px; color:#555">${escapeHtml(a.body.slice(0, 200))}</div>
+    </div>`;
+  }).join("");
+  updateSelectedCount();
+}
+
+function toggleAllArticles(checked) {
+  // 시행 예정 조문(disabled)은 건드리지 않는다 — 아직 효력 없는 법을 룰에 넣으면 안 된다.
+  document.querySelectorAll(".article-cb:not(:disabled)").forEach(cb => { cb.checked = checked; });
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  const n = document.querySelectorAll(".article-cb:checked").length;
+  document.getElementById("selected-count").textContent = n ? `${n}개 조문 선택됨` : "";
+}
+
+async function ingestFromLaw() {
+  const articleKeys = [...document.querySelectorAll(".article-cb:checked")].map(cb => cb.value);
+  if (!articleKeys.length) {
+    alert("조문을 하나 이상 선택하세요.");
+    return;
+  }
+  const body = {
+    mst: selectedLaw.mst,
+    document_id: document.getElementById("law-document-id").value.trim(),
+    target_stages: document.getElementById("law-target-stages").value.split(",").map(s => s.trim()).filter(Boolean),
+    article_keys: articleKeys,
+  };
+  try {
+    const result = await api("/admin/rule-documents/from-law", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    document.getElementById("upload-result").textContent =
+      `투입됨: document_id=${result.document_id}, 조문 ${articleNumbers.length}건 (추출 완료까지 잠시 후 새로고침)`;
+  } catch (err) {
+    document.getElementById("upload-result").textContent = "실패: " + err.message;
+  }
+}
+
+// ---- 법령 개정 알림 ----
+let alertsCache = [];
+
+function toggleAlertDetail() {
+  const detail = document.getElementById("alert-detail");
+  detail.style.display = detail.style.display === "block" ? "none" : "block";
+}
+
+function escapeHtml(text) {
+  return (text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+// 조문시행일자가 오늘보다 뒤면 아직 시행 전 — 지금 룰에 반영하면 효력 없는 법을
+// 근거로 판정하게 되므로 눈에 띄게 표시한다.
+function isFuture(yyyymmdd) {
+  if (!yyyymmdd || yyyymmdd.length !== 8) return false;
+  const today = new Date();
+  const todayStr = today.getFullYear().toString()
+    + String(today.getMonth() + 1).padStart(2, "0")
+    + String(today.getDate()).padStart(2, "0");
+  return yyyymmdd > todayStr;
+}
+
+function renderArticles(articles) {
+  if (!articles.length) return "<div class='alert-meta'>(없음)</div>";
+  return articles.map(a => {
+    const future = isFuture(a["조문시행일자"])
+      ? ` <span class="future">시행 예정 ${a["조문시행일자"]}</span>`
+      : ` (시행 ${a["조문시행일자"]})`;
+    const label = a["조문표기"] || `제${a["조문번호"]}조`;
+    return `<div class="article-item"><b>${escapeHtml(label)} ${escapeHtml(a["조문제목"])}</b>${future}
+${escapeHtml((a["본문"] || "").slice(0, 400))}</div>`;
+  }).join("");
+}
+
+async function loadAlerts() {
+  alertsCache = await api("/admin/law-alerts");
+  const related = alertsCache.filter(a => a.relevance === "related");
+  const unrelated = alertsCache.filter(a => a.relevance === "unrelated");
+
+  const banner = document.getElementById("alert-banner");
+  if (!alertsCache.length) {
+    banner.style.display = "none";
+  } else {
+    banner.style.display = "block";
+    banner.className = related.length ? "related" : "unrelated-only";
+    const parts = [];
+    if (related.length) parts.push(`⚠️ <b>우리 룰과 관련된 법령 개정 ${related.length}건</b>`);
+    if (unrelated.length) parts.push(`무관한 개정 ${unrelated.length}건`);
+    banner.innerHTML = parts.join(" · ") + " — 클릭해서 상세 보기";
+  }
+
+  const list = document.getElementById("alert-list");
+  list.innerHTML = alertsCache.map(a => `
+    <div class="alert-row ${a.relevance}">
+      <b>${escapeHtml(a.law_title)}</b>
+      ${a.relevance === "related"
+        ? '<span style="color:#cf1322">· 우리 룰이 인용하는 조문이 바뀜</span>'
+        : '<span style="color:#888">· 우리 룰과 무관</span>'}
+      <div class="alert-meta">
+        공포번호 ${a.known_promulgation_no} → ${a.latest_promulgation_no} ·
+        시행 ${a.known_effective_date} → ${a.latest_effective_date} ·
+        변경 조문 ${a.changed_count}건 · 감지 ${a.detected_at.slice(0, 10)}
+      </div>
+      ${a.missing_citations.length ? `<div style="margin-top:6px;color:#cf1322">
+        🚨 <b>우리 룰이 인용하는데 현행 법령에 없는 조문: ${a.missing_citations.map(n => "제" + n + "조").join(", ")}</b>
+        <div class="alert-meta">삭제·이동된 조문입니다. 해당 룰은 근거 조회(legal_basis_article 조인)가 깨진 상태라 확인이 필요합니다.</div>
+      </div>` : ""}
+      ${a.related_articles.length ? "<div style='margin-top:6px'><b>우리 룰이 인용 중인 변경 조문</b>" + renderArticles(a.related_articles) + "</div>" : ""}
+      <details style="margin-top:6px">
+        <summary style="font-size:13px;cursor:pointer">변경된 전체 조문 ${a.changed_count}건 보기</summary>
+        ${renderArticles(a.changed_articles)}
+      </details>
+      <div style="margin-top:8px">
+        <button onclick="updateAlert('${a.alert_id}', 'dismissed')">확인함(대응 불필요)</button>
+        <button onclick="updateAlert('${a.alert_id}', 'resolved')">반영 완료</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function updateAlert(alertId, status) {
+  await api(`/admin/law-alerts/${alertId}/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  loadAlerts();
+}
+
+loadQueue();
+loadAlerts();
+</script>
+</body>
+</html>
