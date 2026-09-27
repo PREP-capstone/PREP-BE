@@ -8,6 +8,8 @@
 import pytest
 
 from app.api.category_classifier import CategoryClassifyRequest, predict_category
+from transformers import RobertaTokenizerFast
+
 from app.domain import category_classifier
 from app.domain.category_classifier import (
     CATEGORY_1_LABELS,
@@ -65,6 +67,21 @@ def test_validate_label_config_rejects_mismatched_labels(tmp_path) -> None:
 
     with pytest.raises(CategoryModelUnavailable):
         category_classifier._validate_label_config(str(tmp_path))
+
+
+@pytest.mark.ml_model
+def test_load_uses_roberta_tokenizer_not_bert() -> None:
+    # 회귀 방지: 2026-08-29~2026-09-27 사이 BertTokenizerFast를 잘못 로드해온 버그
+    # (PREP-BE #135) 재발 방지용. train.py는 RobertaTokenizerFast(klue/roberta-base)
+    # 로만 학습했으므로, 서빙도 반드시 이 클래스를 명시 로드해야 한다 — 다른
+    # 토크나이저 클래스는 같은 tokenizer.json을 읽어도 다른 토큰 ID를 만들어내
+    # 에러 없이 조용히 예측 품질만 떨어뜨린다.
+    category_classifier._load.cache_clear()
+    try:
+        tokenizer, _session = category_classifier._load()
+        assert isinstance(tokenizer, RobertaTokenizerFast)
+    finally:
+        category_classifier._load.cache_clear()
 
 
 @pytest.mark.ml_model
