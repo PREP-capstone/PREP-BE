@@ -96,6 +96,24 @@ async def test_gate_returns_conditional_for_biomarker_trend_analysis() -> None:
         await _delete_session(session_id)
 
 
+async def test_gate_classifies_stress_record_as_lifestyle_not_biomarker() -> None:
+    """이슈 1 회귀 — "스트레스 기록"은 gate_keywords(DATA_TYPE)에 있다는 이유만으로 생체지표로
+    오분류돼 CONDITIONAL이어야 할 조합이 FAIL로 나왔다. 수면/스트레스/정신적 안정은 GATE
+    기준 라이프스타일이다(db_구축_설계서.md §3.2, data_sensitivity의 lifestyle_005).
+    2026-09-27 백엔드 이슈로 확인."""
+    session_id = await _create_session(
+        "스트레스 기록으로 위험 수치를 예측하고 진단한다.",
+        [HealthDataItemInput(name="스트레스 기록", data_type="text", source="user_input")],
+        service_actions=["predict"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "라이프스타일"
+        assert response.verdict == "CONDITIONAL"
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
     """기기연동 + 침습적 신호 조합은 하드체크로 FAIL.
 
@@ -271,6 +289,22 @@ async def test_regulatory_risk_computes_privacy_score_from_stored_item_code() ->
         await _delete_session(session_id)
 
 
+async def test_regulatory_risk_bare_data_type_noun_scores_zero_without_risky_context() -> None:
+    """이슈 3 회귀 — "체온"은 gate_keywords(DATA_TYPE, weight=4)로 시딩돼 있어, 의료행위
+    맥락(진단/경고 등) 없이 단어만 있어도 weight 때문에 점수가 붙었다(db_구축_설계서.md §8.1
+    "DISEASE→의료목적 맥락 확인" 미준수). DATA_TYPE 카테고리를 규제위험도 채점에서 제외한
+    뒤에는 위험 문구가 없으면 0점이어야 한다. 2026-09-27 백엔드 이슈로 확인."""
+    session_id = await _create_session(
+        "사용자가 측정한 체온을 기록만 하고 보여준다.",
+        [HealthDataItemInput(name="체온", data_type="numeric", source="user_input")],
+    )
+    try:
+        response = await judge_regulatory_risk(GateRequest(session_id=session_id))
+        assert response.regulatory_score == 0
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_regulatory_risk_fills_applicable_laws_from_service_type() -> None:
     request = CreateAnalysisSessionRequest(
         service_name="service-law-map-test",
@@ -315,6 +349,25 @@ async def test_correction_candidates_matches_stored_service_description() -> Non
         response = await judge_correction_candidates(GateRequest(session_id=session_id))
         assert any(c.risky_text == "복약지도" for c in response.candidates)
         assert all(c.match_source == "rule" for c in response.candidates)
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_correction_candidates_excludes_negated_risky_phrase() -> None:
+    """이슈 2 회귀 — "복약지도를 하지 않고"처럼 위험 문구 뒤에 부정 표현이 바로 붙으면
+    실제로는 위험 기능이 없다는 뜻이라 매칭에서 빠져야 한다. 규칙 기반 매칭이 0건이 되면
+    LLM①이 자동으로 호출되므로(이슈 #58) 빈 리스트로 고정해서 네트워크 호출을 막는다.
+    2026-09-27 백엔드 이슈로 확인."""
+    session_id = await _create_session(
+        "복약지도를 하지 않고 단순 정보만 제공한다.",
+        [HealthDataItemInput(name="복용약물", data_type="text", source="user_input")],
+    )
+    try:
+        with patch(
+            "app.api.judgement.generate_correction_candidates", new=AsyncMock(return_value=[])
+        ):
+            response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert response.candidates == []
     finally:
         await _delete_session(session_id)
 

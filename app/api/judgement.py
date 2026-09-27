@@ -6,6 +6,7 @@ data_type(라이프스타일/생체지표)과는 이름만 같고 뜻이 다르�
 """
 
 import asyncio
+import re
 import uuid
 from typing import Literal
 
@@ -400,15 +401,56 @@ def _dedupe_matched_rules(matches: list[CorrectionMatch]) -> list[MatchedRule]:
     return list(by_basis.values())
 
 
+# 부정 표현 처리(이슈 2) — 위험 단어/문구 뒤에 "~하지 않고", "~없이", "~아니" 등이 바로
+# 붙으면 실제로는 위험 기능이 없다는 뜻이라 매칭에서 제외한다. 공백 제거 후 검사하는 건
+# gate_matrix_table.py의 detect_invasive()와 같은 전략이나, 거기는 접두형("비침습")이라
+# 정규식으로 바로 지울 수 있었던 반면 여기는 후위형("진단하지 않고")이라 매칭 위치 뒤
+# 윈도우를 봐야 한다.
+_WHITESPACE = re.compile(r"\s+")
+_NEGATION_WINDOW = 8
+_NEGATION_PATTERN = re.compile(r"(지\s*않|없이|아니)")
+
+
+def _has_unnegated_match(compact_text: str, needle: str) -> bool:
+    """needle이 compact_text에 있고, 그 직후에 부정 표현이 붙지 않은 occurrence가 하나라도 있으면 True."""
+    if not needle:
+        return False
+    start = 0
+    while True:
+        idx = compact_text.find(needle, start)
+        if idx == -1:
+            return False
+        tail = compact_text[idx + len(needle) : idx + len(needle) + _NEGATION_WINDOW]
+        if not _NEGATION_PATTERN.search(tail):
+            return True
+        start = idx + len(needle)
+
+
 async def _match_gate_keywords(service_description: str, rule_version_ids: list[uuid.UUID]) -> list[GateKeyword]:
-    """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다."""
+    """gate_keywords를 단어 단위로 직접 매칭 — correction_rules.risky_text 문구 매칭보다 recall이 높다.
+
+    DATA_TYPE 카테고리는 제외한다 — GATE data_type 판별/Stage C 명사풀과 공유되는 원천이라
+    "체온"처럼 단순 데이터 항목명일 뿐인 단어까지 그대로 채점하면 의료목적 맥락과 무관하게
+    weight만으로 점수가 붙는다(db_구축_설계서.md §8.1 "DISEASE→의료목적 맥락 확인" 미준수,
+    2026-09-27 백엔드 이슈로 확인). 이 목록은 correction_rules의 keyword_hit 역참조(derived_
+    from_keyword_id)에도 쓰이므로, 여기서 빠지면 DATA_TYPE 명사만으로 파생된 correction_rule도
+    실제 risky_text 문구가 있어야만(phrase_hit) 매칭된다.
+    """
+    compact_description = _WHITESPACE.sub("", service_description)
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
-                select(GateKeyword).where(GateKeyword.rule_version_id.in_(rule_version_ids))
+                select(GateKeyword).where(
+                    GateKeyword.rule_version_id.in_(rule_version_ids),
+                    GateKeyword.keyword_category != "DATA_TYPE",
+                )
             )
         ).scalars().all()
-    return [row for row in rows if row.keyword and row.keyword in service_description]
+    return [
+        row
+        for row in rows
+        if row.keyword and _has_unnegated_match(compact_description, _WHITESPACE.sub("", row.keyword))
+    ]
 
 
 async def _fill_quotes(matches: list[CorrectionMatch]) -> None:
@@ -456,6 +498,7 @@ async def _match_correction_rules(
     (원래 반대 방향 추적용 FK를 거꾸로 탄, 더 관대한 매칭).
     """
     matched_keyword_ids = {row.keyword_id for row in matched_keywords}
+    compact_description = _WHITESPACE.sub("", service_description)
 
     async with AsyncSessionLocal() as session:
         rows = (
@@ -466,7 +509,9 @@ async def _match_correction_rules(
 
     matched: dict[str, CorrectionMatch] = {}
     for row in rows:
-        phrase_hit = row.risky_text and row.risky_text in service_description
+        phrase_hit = bool(row.risky_text) and _has_unnegated_match(
+            compact_description, _WHITESPACE.sub("", row.risky_text)
+        )
         keyword_hit = row.derived_from_keyword_id in matched_keyword_ids
         if not (phrase_hit or keyword_hit):
             continue
