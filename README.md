@@ -66,8 +66,8 @@ gh release download --repo PREP-capstone/PREP-AI --pattern "best_healthcare_mode
 `pytest -m "not ml_model"`.
 
 ⚠️ 이 모델을 다른 곳에서도 로드할 계획이면 `app/domain/category_classifier.py`
-모듈 docstring의 함정(AutoTokenizer 대신 BertTokenizerFast)을 꼭 참고할 것 —
-겉보기엔 에러 없이 돌아가면서 예측만 조용히 틀어진다.
+모듈 docstring의 함정(AutoTokenizer도 BertTokenizerFast도 아닌 RobertaTokenizerFast가
+정답)을 꼭 참고할 것 — 겉보기엔 에러 없이 돌아가면서 예측만 조용히 틀어진다.
 
 운영 배포 시 이 모델 파일이 EC2/컨테이너까지 자동으로 배치되는 흐름은
 `docs/EC2_DOCKER_NGINX_DEPLOYMENT.md` §9 참고.
