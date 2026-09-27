@@ -372,6 +372,39 @@ async def test_correction_candidates_excludes_negated_risky_phrase() -> None:
         await _delete_session(session_id)
 
 
+async def test_correction_candidates_excludes_negated_risky_phrase_with_inserted_particle() -> None:
+    """이슈 2 수정 과정에서 발견된 회귀(2026-09-27 코드리뷰) — "하지 않"만 잡던 정규식은
+    "하지는 않", "하지도 않"처럼 조사가 끼면 못 잡았다. 부정 표현으로 인식돼야 한다."""
+    session_id = await _create_session(
+        "복약지도를 하지는 않습니다.",
+        [HealthDataItemInput(name="복용약물", data_type="text", source="user_input")],
+    )
+    try:
+        with patch(
+            "app.api.judgement.generate_correction_candidates", new=AsyncMock(return_value=[])
+        ):
+            response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert response.candidates == []
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_correction_candidates_matches_risky_phrase_despite_unrelated_negation_lookalike() -> None:
+    """이슈 2 수정 과정에서 발견된 회귀(2026-09-27 코드리뷰) — 최초 구현은 "아니"도 부정
+    트리거로 넣었는데, "피아니스트"/"아니메이션"처럼 무관한 단어 중간에 낀 부분 문자열까지
+    부정으로 오인해서 정상 매칭을 지워버렸다. 그래서 "아니" 트리거는 제거했다 — 위험 문구
+    근처에 "아니"가 든 무관한 단어가 있어도 정상 매칭돼야 한다."""
+    session_id = await _create_session(
+        "복약지도와 아니메이션 튜토리얼을 함께 제공합니다.",
+        [HealthDataItemInput(name="복용약물", data_type="text", source="user_input")],
+    )
+    try:
+        response = await judge_correction_candidates(GateRequest(session_id=session_id))
+        assert any(c.risky_text == "복약지도" for c in response.candidates)
+    finally:
+        await _delete_session(session_id)
+
+
 async def test_correction_candidates_legal_basis_title() -> None:
     """DOCUMENT_TITLES에 있는 document_id는 legal_basis.title이 채워지고,
     매핑에 없는 document_id(LLM① 폴백이 낼 수 있음)는 None으로 빠져야 한다."""

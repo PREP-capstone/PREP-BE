@@ -401,14 +401,17 @@ def _dedupe_matched_rules(matches: list[CorrectionMatch]) -> list[MatchedRule]:
     return list(by_basis.values())
 
 
-# 부정 표현 처리(이슈 2) — 위험 단어/문구 뒤에 "~하지 않고", "~없이", "~아니" 등이 바로
-# 붙으면 실제로는 위험 기능이 없다는 뜻이라 매칭에서 제외한다. 공백 제거 후 검사하는 건
+# 부정 표현 처리(이슈 2) — 위험 단어/문구 뒤에 "~하지 않고", "~없이" 등이 바로 붙으면
+# 실제로는 위험 기능이 없다는 뜻이라 매칭에서 제외한다. 공백 제거 후 검사하는 건
 # gate_matrix_table.py의 detect_invasive()와 같은 전략이나, 거기는 접두형("비침습")이라
 # 정규식으로 바로 지울 수 있었던 반면 여기는 후위형("진단하지 않고")이라 매칭 위치 뒤
-# 윈도우를 봐야 한다.
+# 윈도우를 봐야 한다. "아니"는 일부러 안 넣는다 — "피아니스트"처럼 무관한 단어 중간에 낀
+# 부분 문자열까지 부정으로 오인해 정상 매칭을 지워버리는 오탐이 코드리뷰로 확인됨
+# (2026-09-27). 윈도우는 "~를 하지는 않"(4글자 뒤 "않")까지 잡을 수 있는 최소값(5)으로 둔다 —
+# 너무 넓히면 위 오탐 종류가 다시 생긴다.
 _WHITESPACE = re.compile(r"\s+")
-_NEGATION_WINDOW = 8
-_NEGATION_PATTERN = re.compile(r"(지\s*않|없이|아니)")
+_NEGATION_WINDOW = 5
+_NEGATION_PATTERN = re.compile(r"(지(?:는|도)?\s*않|없이)")
 
 
 def _has_unnegated_match(compact_text: str, needle: str) -> bool:
