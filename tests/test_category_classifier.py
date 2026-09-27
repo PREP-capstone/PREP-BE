@@ -69,10 +69,15 @@ def test_validate_label_config_rejects_mismatched_labels(tmp_path) -> None:
 
 @pytest.mark.ml_model
 def test_predict_categories_returns_valid_labels_with_confidence() -> None:
-    # 실측 정확도(Avg Macro F1 0.6775, 2026-08-23 기준 계속 학습 중)가 아직 높지
-    # 않아 특정 문장의 정답 라벨을 단정하지 않는다 — 대신 라벨/확신도가 유효한
-    # 범위에서 나오는지, 그리고 pooler_output이 아니라 last_hidden_state[:,0]을
-    # 쓸 때만 나오는 "분별력 있는" 확신도 범위(거의 균등분포가 아님)를 검증한다.
+    # 특정 문장의 정답 라벨을 단정하지 않는다(모델이 계속 재학습되며 값이
+    # 바뀔 수 있음) — 대신 라벨/확신도가 유효한 범위에서 나오는지, 그리고
+    # pooler_output이 아니라 last_hidden_state[:,0]을 쓸 때만 나오는 "분별력
+    # 있는" 확신도 범위(거의 균등분포가 아님)를 검증한다.
+    # 주의: 아래 confidence 기준값은 과거 BertTokenizerFast(오답 토크나이저)
+    # 기준으로 잡혔던 것 — RobertaTokenizerFast로 수정된 뒤에는 실제 확신도가
+    # 더 높게 나올 가능성이 크다(2026-09-27 category_classifier.py docstring 참고).
+    # 임계값 자체는 하한선이라 계속 통과하겠지만, 모델 파일이 있는 환경에서
+    # 실제 값을 한 번 확인해보는 걸 권장한다.
     (category_1, category_1_confidence), (category_2, category_2_confidence) = predict_categories(
         "매일 식단 사진을 찍으면 칼로리를 계산해주는 서비스"
     )

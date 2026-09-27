@@ -232,11 +232,13 @@ best_healthcare_model_2line`)로 `service_description` 텍스트에서 `category
 
 ### ⚠️ 두 가지 함정 — 겉보기엔 정상 동작하는 것처럼 보여서 위험하다
 
-1. **AutoTokenizer 쓰지 말 것**. 이 체크포인트의 `tokenizer_config.json`은
-   `tokenizer_class: RobertaTokenizer`로 잘못 기록돼 있지만 실제 vocab은 BERT
-   WordPiece 형식이다. `AutoTokenizer`로 로드하면 한글 입력이 전부 깨진 토큰으로
-   분해되어 **모든 입력이 같은 라벨로 수렴한다**(단일축 구버전 체크포인트로 실측:
-   항상 LABEL_3, confidence ~0.3). `BertTokenizerFast`를 명시 로드해야 한다.
+1. **AutoTokenizer도, BertTokenizerFast도 쓰지 말 것 — RobertaTokenizerFast가
+   정답이다.** `AutoTokenizer`로 로드하면 한글 입력이 전부 깨진 토큰으로 분해되어
+   **모든 입력이 같은 라벨로 수렴한다**(단일축 구버전 체크포인트로 실측: 항상
+   LABEL_3, confidence ~0.3). 이 증상 때문에 한때 `BertTokenizerFast`로 바꿨었지만,
+   이후 재검증 결과 그것도 오답으로 확인됐다 — `RobertaTokenizerFast.from_pretrained(
+   "klue/roberta-base")`가 학습 때 쓴 토크나이저와 토큰 ID까지 완전히 일치하는
+   진짜 정답이다(2026-09-27 실측, `app/domain/category_classifier.py` docstring 참고).
 2. **`outputs.pooler_output` 쓰지 말 것**. 이 체크포인트는 커스텀 멀티태스크
    구조(`encoder` + `category_head` + `function_head`, raw state_dict로 저장돼
    HuggingFace 표준 `save_pretrained` 형식이 아니다)라 `pooler_output`을 헤드에

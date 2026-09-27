@@ -13,13 +13,33 @@ ONNX 그래프의 입력은 `input_ids`/`attention_mask`(둘 다 int64, `token_t
 불필요 — PREP-AI export_onnx.py가 그렇게 트레이싱함), 출력은 `category_logits`
 (8종)/`function_logits`(4종) 순서다.
 
-⚠️ 함정 하나가 실측으로 확인됐다(2026-08-22~23) — 지금도 유효:
+⚠️ 함정 정정 (2026-09-27, PREP-AI 쪽 재평가 스크립트로 실측 재확인):
 
-**AutoTokenizer 쓰지 말 것** — 원본 PyTorch 체크포인트의 tokenizer_config.json이
-`tokenizer_class: RobertaTokenizer`로 잘못 기록돼 있었다(실제 vocab은 BERT
-WordPiece). PREP-AI release 패키징 시 이 필드를 `BertTokenizerFast`로 정정해서
-올리지만, 혹시 정정을 빠뜨린 release가 올라올 경우를 대비해 이 코드에서도
-`AutoTokenizer` 대신 `BertTokenizerFast`를 명시적으로 로드한다.
+**BertTokenizerFast도 쓰지 말 것 — RobertaTokenizerFast가 정답이다.**
+2026-08-22~23에는 "AutoTokenizer로 로드하면 한글 입력이 깨진 토큰으로
+분해되어 모든 예측이 한 라벨로 수렴한다"는 증상만 보고 `BertTokenizerFast`로
+바꿨는데, 이게 잘못된 결론이었다 — 실제로는 `RobertaTokenizerFast.from_pretrained(
+"klue/roberta-base")`가 train.py가 학습 내내 사용한 토크나이저와 완전히
+동일한 토큰 ID를 만든다(직접 대조 확인). `BertTokenizerFast`로 로드하면 같은
+문장이 전혀 다른 토큰 ID로 쪼개져(예: 32토큰 vs 22토큰, 겹치는 값 없음)
+모델이 학습 때와 다른 입력을 받게 된다 — 에러 없이 조용히 예측 품질만
+떨어뜨린다는 점에서 AutoTokenizer 문제와 증상이 똑같이 은밀하다.
+
+PREP-AI 검증 데이터 515건으로 직접 측정한 임팩트:
+
+| | RobertaTokenizerFast(정답) | BertTokenizerFast(오답) |
+|---|---|---|
+| 축1(category_1) 정확도 | 0.90 | 0.57 |
+| 축1 macro F1 | 0.88 | 0.43 |
+| 유전자/미용 F1 | 0.94 / 0.75 | 0.00 / 0.00 |
+
+지금까지의 ONNX 검증(`모델_경량화_ONNX_양자화.md`)은 "PyTorch 출력 ↔ ONNX
+출력"을 비교했는데, 그 PyTorch 쪽도 똑같이 `BertTokenizerFast`로 토큰화한
+입력을 썼기 때문에 내부적으로는 일치했다 — 즉 "ONNX 변환이 PyTorch와
+일치한다"는 것만 검증됐고, "그 토큰화 자체가 학습 때와 일치하는가"는 이번에
+처음 검증됐다. 이 코드는 2026-08-29(ONNX 백엔드 전환)부터 지금까지
+`BertTokenizerFast`를 명시 로드해 왔으므로, 그 사이 배포된 실제 서비스
+예측은 이 표의 "오답" 쪽 품질이었을 가능성이 높다.
 
 (pooler_output 대신 last_hidden_state[:,0]을 써야 하는 함정은 이제 여기서
 신경 쓸 필요가 없다 — ONNX로 export되는 시점에 그 pooling 방식이 그래프 안에
@@ -56,7 +76,7 @@ CATEGORY_2_LABELS: list[str] = [
     "개입치료",
 ]
 
-_MAX_TOKEN_LENGTH = 256
+_MAX_TOKEN_LENGTH = 512  # klue/roberta-base 구조상 최대(514)에 맞춤 — 2026-09-27 v3부터 학습 max_len도 512
 
 
 class CategoryModelUnavailable(Exception):
@@ -80,7 +100,7 @@ def _validate_label_config(model_dir: str) -> None:
 def _load():
     try:
         import onnxruntime as ort
-        from transformers import BertTokenizerFast
+        from transformers import RobertaTokenizerFast
     except ImportError as error:
         raise CategoryModelUnavailable("onnxruntime/transformers가 설치되어 있지 않습니다.") from error
 
@@ -88,7 +108,7 @@ def _load():
     model_path = f"{model_dir}/{settings.category_model_file}"
     _validate_label_config(model_dir)
     try:
-        tokenizer = BertTokenizerFast.from_pretrained(model_dir)
+        tokenizer = RobertaTokenizerFast.from_pretrained(model_dir)
         session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
     except Exception as error:
         # onnxruntime의 로드 실패 예외(NoSuchFile/Fail/InvalidGraph/InvalidProtobuf 등,
