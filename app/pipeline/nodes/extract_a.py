@@ -159,6 +159,50 @@ def _build_client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
+async def extract_chunk_A(
+    client: AsyncOpenAI, chunk: dict, document_id: str, extra_context: str = ""
+) -> list[ExtractedDraft]:
+    """청크 하나를 Stage A로 추출한다. retry_extract가 실패 사유를 `extra_context`로
+    덧붙여 같은 청크만 다시 추출할 때 재사용한다 — extract_A와 로직을 중복시키지 않는다."""
+    user_message = build_chunk_message(chunk)
+    if extra_context:
+        user_message = f"{user_message}\n\n{extra_context}"
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
+        # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
+        # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
+        # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
+        # 검증·중복판정 단계가 흡수한다.
+        temperature=0,
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
+    )
+    parsed = json.loads(response.choices[0].message.content)
+
+    drafts: list[ExtractedDraft] = []
+    for item in parsed["keywords"]:
+        legal_basis = {
+            "document_id": document_id,
+            "article": normalize_article(item["legal_basis"]["article"]),
+            "quote": item["legal_basis"]["quote"],
+        }
+        fields = {**item, "legal_basis": legal_basis}
+        drafts.append(
+            {
+                "stage": "A",
+                "fields": fields,
+                "legal_basis": legal_basis,
+                "source_chunk_id": chunk["chunk_id"],
+            }
+        )
+    return drafts
+
+
 async def extract_A(state: PipelineState) -> dict:
     client = _build_client()
     drafts: list[ExtractedDraft] = list(state["drafts"])
@@ -166,30 +210,6 @@ async def extract_A(state: PipelineState) -> dict:
     for chunk in state["chunks"]:
         if not chunk["content"].strip():
             continue
-
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            # 룰베이스 구축은 재현 가능해야 한다. 같은 조문을 다시 돌렸을 때 다른 룰이 나오면
-            # 검수·회귀 판단의 근거가 사라지므로 온도를 0으로 고정한다.
-            # 참고: temperature=0으로도 원본 출력은 완전히 재현되지 않는다(모델이 비트 단위로
-            # 결정적이지 않음). seed 고정도 시도했으나 효과가 없어 되돌렸다 — 재현성은
-            # 검증·중복판정 단계가 흡수한다.
-            temperature=0,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": build_chunk_message(chunk)},
-            ],
-            response_format={"type": "json_schema", "json_schema": _RESPONSE_SCHEMA},
-        )
-        parsed = json.loads(response.choices[0].message.content)
-
-        for item in parsed["keywords"]:
-            legal_basis = {
-                "document_id": state["document_id"],
-                "article": normalize_article(item["legal_basis"]["article"]),
-                "quote": item["legal_basis"]["quote"],
-            }
-            fields = {**item, "legal_basis": legal_basis}
-            drafts.append({"stage": "A", "fields": fields, "legal_basis": legal_basis})
+        drafts.extend(await extract_chunk_A(client, chunk, state["document_id"]))
 
     return {"drafts": drafts}

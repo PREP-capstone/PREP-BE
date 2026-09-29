@@ -49,6 +49,7 @@ _STAGE_C_REQUIRED_FIELDS = [
 
 async def auto_validate(state: PipelineState) -> dict:
     failed_checks: list[str] = []
+    failed_drafts: list[dict] = []
     valid_drafts: list[ExtractedDraft] = []
     seen_keywords: set[str] = set()
     seen_matrix_combos: set[tuple[str, str, str | None]] = set()
@@ -73,6 +74,9 @@ async def auto_validate(state: PipelineState) -> dict:
 
         if checks:
             failed_checks.extend(checks)
+            # retry_extract가 "어느 청크를, 왜 다시 뽑아야 하는지" 알아야 해서 draft 자체를
+            # 사유와 함께 보존한다 — 예전엔 집계(failed_counts)만 남기고 버렸다.
+            failed_drafts.append({"draft": draft, "reasons": checks})
         else:
             valid_drafts.append(draft)
             if draft["stage"] == "A":
@@ -90,6 +94,7 @@ async def auto_validate(state: PipelineState) -> dict:
         "passed": len(failed_checks) == 0,
         "failed_checks": sorted(set(failed_checks)),
         "failed_counts": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+        "failed_drafts": failed_drafts,
     }
     return {"drafts": valid_drafts, "validation": validation}
 
