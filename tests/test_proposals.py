@@ -25,6 +25,9 @@ from app.api.proposals import (
     _extract_pdf_text,
     _is_pdf,
     _placeholder_value,
+    ProposalJobResult,
+    _run_proposal_generation_job,
+    get_proposal_generation_job,
     complete_proposal,
     get_field_definitions,
     get_proposal_docx,
@@ -557,6 +560,84 @@ def test_render_proposal_pdf_handles_empty_values_without_raising() -> None:
 # ---------------------------------------------------------------------------
 # complete / pdf -- 실제 Redis 대신 monkeypatch로 대체 (CI에서 실행)
 # ---------------------------------------------------------------------------
+
+
+async def test_proposal_generation_job_moves_to_completed(monkeypatch) -> None:
+    store: dict[str, str] = {}
+
+    async def fake_set(key: str, value: str, ex: int | None = None) -> None:
+        store[key] = value
+
+    async def fake_get(key: str) -> str | None:
+        return store.get(key)
+
+    monkeypatch.setattr(proposals.redis_client, "set", fake_set)
+    monkeypatch.setattr(proposals.redis_client, "get", fake_get)
+    monkeypatch.setattr(proposals, "_extract_pdf_text", lambda content: "추출된 리포트")
+    monkeypatch.setattr(
+        proposals,
+        "_build_generated_result",
+        AsyncMock(
+            return_value=proposals.GenerateResult(
+                proposal_id="proposal-1",
+                template_type="PSST",
+                llm_status="ok",
+                sections=[],
+            )
+        ),
+    )
+    now = proposals.datetime.now(proposals.timezone.utc)
+    job = ProposalJobResult(
+        job_id="job-1",
+        status="pending",
+        template_type="PSST",
+        created_at=now,
+        updated_at=now,
+    )
+
+    await _run_proposal_generation_job(job, b"pdf", {})
+
+    assert job.status == "completed"
+    assert job.proposal_id == "proposal-1"
+    persisted = json.loads(store["proposal_job:job-1"])
+    assert persisted["status"] == "completed"
+    assert persisted["proposal_id"] == "proposal-1"
+
+
+async def test_proposal_generation_job_moves_to_failed_on_llm_error(monkeypatch) -> None:
+    async def fake_set(key: str, value: str, ex: int | None = None) -> None:
+        fake_set.payload = json.loads(value)
+
+    monkeypatch.setattr(proposals.redis_client, "set", fake_set)
+    monkeypatch.setattr(proposals, "_extract_pdf_text", lambda content: "추출된 리포트")
+    monkeypatch.setattr(
+        proposals,
+        "_build_generated_result",
+        AsyncMock(side_effect=ProposalLLMUnavailable("OpenAI timeout")),
+    )
+    now = proposals.datetime.now(proposals.timezone.utc)
+    job = ProposalJobResult(
+        job_id="job-2",
+        status="pending",
+        template_type="PSST",
+        created_at=now,
+        updated_at=now,
+    )
+
+    await _run_proposal_generation_job(job, b"pdf", {})
+
+    assert job.status == "failed"
+    assert job.error_code == "PROPOSAL_LLM_UNAVAILABLE"
+    assert fake_set.payload["status"] == "failed"
+
+
+async def test_get_proposal_generation_job_returns_404_when_expired(monkeypatch) -> None:
+    monkeypatch.setattr(proposals.redis_client, "get", AsyncMock(return_value=None))
+
+    response = await get_proposal_generation_job("expired-job")
+
+    assert response.status_code == 404
+    assert json.loads(response.body)["code"] == "PROPOSAL_JOB_NOT_FOUND"
 
 
 async def test_complete_proposal_rejects_unknown_template_type() -> None:

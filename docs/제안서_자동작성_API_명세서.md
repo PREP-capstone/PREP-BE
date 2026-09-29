@@ -222,7 +222,54 @@ Authorization: Bearer `<accessToken>`
 
 이 시점(완료 전)에는 이 응답 전체를 캐시에 저장하지 않는다 — 재요청 시 매번 새로 생성. (단, ③의 LLM 호출 결과 자체는 `app/domain/proposal_llm.py` 내부에서 동일 입력이면 10분간 재사용된다 — 완료 전 재시도 비용 절감용으로, 제안서 자체의 10분 TTL과는 별개 목적이다.)
 
-### 5.3 `POST /api/v1/proposals/{proposal_id}/complete`
+### 5.3 `POST /api/v1/proposals/generate/async` (multipart/form-data)
+
+첫 초안 생성은 PDF 텍스트 추출과 LLM 호출에 시간이 걸릴 수 있으므로, 화면에서 요청 타임아웃이 발생할 가능성이 있으면 비동기 API를 사용한다. 요청 형식은 `POST /api/v1/proposals/generate`와 동일하지만, 생성 결과 대신 작업 상태를 `202 Accepted`로 즉시 반환한다.
+
+| 파트 | 타입 | 설명 |
+|---|---|---|
+| `report` | File (PDF) | 검진 결과 리포트 PDF. 10MB 제한 |
+| `template_type` | Form | `PSST` / `RND` / `IR` |
+| `field_values` | Form (JSON 문자열) | 사용자가 채운 필드값. 생략 시 `{}` |
+
+```json
+{
+  "isSuccess": true,
+  "code": "PROPOSAL_GENERATION_ACCEPTED",
+  "message": "제안서 초안 생성 작업을 접수했습니다.",
+  "result": {
+    "job_id": "uuid",
+    "status": "pending",
+    "template_type": "PSST",
+    "proposal_id": null,
+    "llm_status": null,
+    "sections": [],
+    "error_code": null,
+    "error_message": null,
+    "created_at": "2026-09-29T12:00:00+00:00",
+    "updated_at": "2026-09-29T12:00:00+00:00"
+  }
+}
+```
+
+### 5.4 `GET /api/v1/proposals/generate/jobs/{job_id}`
+
+비동기 작업 상태를 조회한다. 프론트는 `status`가 `completed` 또는 `failed`가 될 때까지 1~2초 간격으로 polling한다. 작업 상태는 Redis에 30분간 보관한다.
+
+| `status` | 설명 |
+|---|---|
+| `pending` | 작업이 접수됐으나 아직 실행되지 않음 |
+| `processing` | PDF 추출 또는 LLM 생성 중 |
+| `completed` | `proposal_id`, `llm_status`, `sections` 확인 가능 |
+| `failed` | `error_code`, `error_message` 확인 후 재시도 필요 |
+
+완료 응답의 `sections` 구조는 동기식 `generate` 응답과 동일하다. `proposal_id`를 사용자가 수정한 뒤 기존 `POST /api/v1/proposals/{proposal_id}/complete`에 전달하면 제안서 저장 및 PDF/DOCX 다운로드 흐름을 이어갈 수 있다.
+
+작업이 만료되었거나 존재하지 않으면 `PROPOSAL_JOB_NOT_FOUND`(404)를 반환한다. 기존 동기식 API와 같은 원칙에 따라 LLM 장애는 작업 자체를 실패시키지 않고 `status=completed`, `llm_status=unavailable` 및 자리표시자로 반환한다. PDF 추출·DB 조회 등 예외적인 처리 실패는 `status=failed`, `error_code=PROPOSAL_GENERATION_FAILED`로 구분한다.
+
+현재 구현은 별도 worker 없이 API 컨테이너의 백그라운드 작업으로 실행하는 MVP 방식이다. API 프로세스가 재시작되는 순간 실행 중인 작업은 보장되지 않으므로, 대규모 운영 단계에서는 Celery/RQ/ARQ 같은 durable worker로 교체한다.
+
+### 5.5 `POST /api/v1/proposals/{proposal_id}/complete`
 
 "완료" 또는 "PDF 저장하기" 클릭 시 호출. 사용자가 수정한 최종본을 받아 Redis에 저장하고 10분 TTL을 시작한다.
 

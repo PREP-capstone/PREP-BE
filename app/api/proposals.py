@@ -9,14 +9,15 @@ funding.py와 중복 구현이다 -- app/domain/pdf_utils.py 같은 공유 모�
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, Response, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from sqlalchemy import select
 
@@ -36,9 +37,13 @@ from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/proposals", tags=["proposals"])
 
+logger = logging.getLogger(__name__)
+
 _MAX_REPORT_BYTES = 10 * 1024 * 1024
 _PROPOSAL_TTL_SECONDS = 600
 _CACHE_KEY_PREFIX = "proposal:"
+_PROPOSAL_JOB_TTL_SECONDS = 1800
+_JOB_KEY_PREFIX = "proposal_job:"
 TEMPLATE_TYPES = frozenset({"PSST", "RND", "IR"})
 
 # ProposalSection/CompleteSection이 공통으로 쓰는 값 타입 -- field_type에 따라 셋 중 하나.
@@ -175,10 +180,125 @@ class GenerateResponse(ApiResponse):
     result: GenerateResult
 
 
+class ProposalJobResult(BaseModel):
+    job_id: str
+    status: str
+    template_type: str
+    proposal_id: str | None = None
+    llm_status: str | None = None
+    sections: list[ProposalSection] = Field(default_factory=list)
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProposalJobResponse(ApiResponse):
+    result: ProposalJobResult
+
+
+def _job_key(job_id: str) -> str:
+    return _JOB_KEY_PREFIX + job_id
+
+
+async def _save_job(job: ProposalJobResult) -> None:
+    await redis_client.set(
+        _job_key(job.job_id),
+        json.dumps(job.model_dump(mode="json"), ensure_ascii=False),
+        ex=_PROPOSAL_JOB_TTL_SECONDS,
+    )
+
+
+async def _load_job(job_id: str) -> ProposalJobResult | None:
+    cached = await redis_client.get(_job_key(job_id))
+    if cached is None:
+        return None
+    return ProposalJobResult.model_validate(json.loads(cached))
+
+
 def _placeholder_value(field_type: str, label: str) -> SectionValue:
     if field_type == "TABLE":
         return []
     return f"[자동 생성 실패 -- 직접 입력해주세요: {label}]"
+
+
+async def _build_generated_result(
+    template_type: str,
+    report_text: str,
+    values: dict,
+    proposal_id: str,
+) -> GenerateResult:
+    fields = await _fetch_field_definitions(template_type)
+
+    sections: list[ProposalSection] = []
+    llm_target_fields: list[dict] = []
+
+    for field in fields:
+        user_value = values.get(field.field_key)
+        if isinstance(user_value, (str, list)) and user_value:
+            sections.append(
+                ProposalSection(
+                    field_key=field.field_key, label=field.label, field_type=field.field_type, value=user_value
+                )
+            )
+            continue
+
+        if field.field_type == "CHECKLIST":
+            sections.append(
+                ProposalSection(
+                    field_key=field.field_key,
+                    label=field.label,
+                    field_type=field.field_type,
+                    value=ATTACHMENT_CHECKLISTS.get(template_type, []),
+                )
+            )
+            continue
+
+        if field.field_key in ALWAYS_BLANK_FIELDS:
+            sections.append(
+                ProposalSection(
+                    field_key=field.field_key,
+                    label=field.label,
+                    field_type=field.field_type,
+                    value=[] if field.field_type == "TABLE" else "",
+                )
+            )
+            continue
+
+        llm_target_fields.append(
+            {
+                "field_key": field.field_key,
+                "label": field.label,
+                "field_type": field.field_type,
+                "description": field.description,
+            }
+        )
+
+    llm_status = "ok"
+    generated: dict = {}
+    if llm_target_fields:
+        try:
+            generated = await generate_missing_sections(template_type, report_text, values, llm_target_fields)
+        except ProposalLLMUnavailable:
+            llm_status = "unavailable"
+
+    for field_spec in llm_target_fields:
+        key = field_spec["field_key"]
+        value = generated.get(key, _placeholder_value(field_spec["field_type"], field_spec["label"]))
+        sections.append(
+            ProposalSection(
+                field_key=key, label=field_spec["label"], field_type=field_spec["field_type"], value=value
+            )
+        )
+
+    order = {field.field_key: field.display_order for field in fields}
+    sections.sort(key=lambda section: order.get(section.field_key, 0))
+    return GenerateResult(
+        proposal_id=proposal_id,
+        template_type=template_type,
+        llm_status=llm_status,
+        sections=sections,
+    )
 
 
 @router.post(
@@ -212,80 +332,11 @@ async def generate_proposal(
         values = json.loads(field_values) if field_values else {}
     except json.JSONDecodeError:
         return await _error(400, "PROPOSAL_FIELD_VALUES_INVALID", "field_values는 올바른 JSON 문자열이어야 합니다.")
+    if not isinstance(values, dict):
+        return await _error(400, "PROPOSAL_FIELD_VALUES_INVALID", "field_values JSON은 객체여야 합니다.")
 
     report_text = _extract_pdf_text(content)
-    fields = await _fetch_field_definitions(template_type)
-
-    sections: list[ProposalSection] = []
-    llm_target_fields: list[dict] = []  # generate_missing_sections()에 넘길 스펙만 추림
-
-    for field in fields:
-        user_value = values.get(field.field_key)
-        if isinstance(user_value, (str, list)) and user_value:
-            sections.append(
-                ProposalSection(
-                    field_key=field.field_key, label=field.label, field_type=field.field_type, value=user_value
-                )
-            )
-            continue
-
-        if field.field_type == "CHECKLIST":
-            sections.append(
-                ProposalSection(
-                    field_key=field.field_key,
-                    label=field.label,
-                    field_type=field.field_type,
-                    value=ATTACHMENT_CHECKLISTS.get(template_type, []),
-                )
-            )
-            continue
-
-        if field.field_key in ALWAYS_BLANK_FIELDS:
-            # 팀 회의 결정(2026-09-14): 대표자/팀/RND 실적 등은 리포트에 근거가 있을 수
-            # 없는 성격이라 LLM에 아예 묻지 않는다 -- 사용자 값이 없으면 빈 값 그대로
-            # 반환해 프론트가 "빈칸(필수)"으로 표시하게 한다. 사용자가 직접 값을 채운
-            # 경우는 위 첫 분기에서 이미 처리돼 여기 도달하지 않는다.
-            sections.append(
-                ProposalSection(
-                    field_key=field.field_key,
-                    label=field.label,
-                    field_type=field.field_type,
-                    value=[] if field.field_type == "TABLE" else "",
-                )
-            )
-            continue
-
-        llm_target_fields.append(
-            {
-                "field_key": field.field_key,
-                "label": field.label,
-                "field_type": field.field_type,
-                "description": field.description,
-            }
-        )
-
-    llm_status = "ok"
-    generated: dict = {}
-    if llm_target_fields:
-        try:
-            generated = await generate_missing_sections(template_type, report_text, values, llm_target_fields)
-        except ProposalLLMUnavailable:
-            llm_status = "unavailable"
-
-    for field_spec in llm_target_fields:
-        key = field_spec["field_key"]
-        if key in generated:
-            value: SectionValue = generated[key]
-        else:
-            value = _placeholder_value(field_spec["field_type"], field_spec["label"])
-        sections.append(
-            ProposalSection(
-                field_key=key, label=field_spec["label"], field_type=field_spec["field_type"], value=value
-            )
-        )
-
-    order = {field.field_key: field.display_order for field in fields}
-    sections.sort(key=lambda section: order.get(section.field_key, 0))
+    result = await _build_generated_result(template_type, report_text, values, str(uuid.uuid4()))
 
     # 완료(POST /{id}/complete) 전까지는 캐시하지 않는다 (§0, §5.2) -- 재요청 시 매번 새로 생성.
     # (generate_missing_sections() 내부의 짧은 캐시는 "완료 전 재시도 비용 절감"용으로 별개다.)
@@ -293,9 +344,122 @@ async def generate_proposal(
         isSuccess=True,
         code="COMMON200",
         message="성공",
-        result=GenerateResult(
-            proposal_id=str(uuid.uuid4()), template_type=template_type, llm_status=llm_status, sections=sections
-        ),
+        result=result,
+    )
+
+
+async def _run_proposal_generation_job(
+    job: ProposalJobResult,
+    content: bytes,
+    values: dict,
+) -> None:
+    """인프로세스 백그라운드에서 실행되는 생성 작업.
+
+    작업 상태와 완료 결과는 Redis에 저장하므로 프론트는 요청 타임아웃 없이 polling할
+    수 있다. 현재는 별도 worker 없이 단일 API 컨테이너에서 실행하는 MVP 구조이며,
+    프로세스 재시작 중인 작업은 TTL 만료/재요청으로 처리한다.
+    """
+    try:
+        job.status = "processing"
+        job.updated_at = datetime.now(timezone.utc)
+        await _save_job(job)
+
+        report_text = _extract_pdf_text(content)
+        result = await _build_generated_result(job.template_type, report_text, values, str(uuid.uuid4()))
+        job.status = "completed"
+        job.proposal_id = result.proposal_id
+        job.llm_status = result.llm_status
+        job.sections = result.sections
+        job.updated_at = datetime.now(timezone.utc)
+        await _save_job(job)
+    except ProposalLLMUnavailable as error:
+        job.status = "failed"
+        job.error_code = "PROPOSAL_LLM_UNAVAILABLE"
+        job.error_message = str(error)
+        job.updated_at = datetime.now(timezone.utc)
+        await _save_job(job)
+    except Exception:
+        logger.exception("proposal generation job failed: job_id=%s", job.job_id)
+        job.status = "failed"
+        job.error_code = "PROPOSAL_GENERATION_FAILED"
+        job.error_message = "제안서 초안 생성 중 오류가 발생했습니다. 다시 시도해주세요."
+        job.updated_at = datetime.now(timezone.utc)
+        await _save_job(job)
+
+
+@router.post(
+    "/generate/async",
+    response_model=ProposalJobResponse,
+    status_code=202,
+    responses={
+        400: {"model": ProposalErrorResponse},
+        413: {"model": ProposalErrorResponse},
+        503: {"model": ProposalErrorResponse},
+    },
+)
+async def generate_proposal_async(
+    background_tasks: BackgroundTasks,
+    report: Annotated[UploadFile, File(description="PREP 아이디어 검진 리포트 PDF")],
+    template_type: Annotated[str, Form(description="PSST / RND / IR")],
+    field_values: Annotated[str, Form(description="사용자가 채운 필드값(JSON 문자열)")] = "{}",
+) -> ProposalJobResponse | JSONResponse:
+    """PDF 검증 후 즉시 작업 ID를 반환하고 초안 생성은 백그라운드에서 수행한다."""
+    if template_type not in TEMPLATE_TYPES:
+        return await _error(
+            400,
+            "PROPOSAL_TEMPLATE_TYPE_INVALID",
+            f"template_type은 {sorted(TEMPLATE_TYPES)} 중 하나여야 합니다.",
+        )
+    if not _is_pdf(report):
+        return await _error(400, "PROPOSAL_REPORT_PDF_REQUIRED", "PDF 파일만 업로드할 수 있습니다.")
+
+    content = await report.read()
+    if len(content) > _MAX_REPORT_BYTES:
+        return await _error(413, "PROPOSAL_REPORT_TOO_LARGE", "리포트 PDF는 10MB 이하만 업로드할 수 있습니다.")
+    try:
+        values = json.loads(field_values) if field_values else {}
+    except json.JSONDecodeError:
+        return await _error(400, "PROPOSAL_FIELD_VALUES_INVALID", "field_values는 올바른 JSON 문자열이어야 합니다.")
+    if not isinstance(values, dict):
+        return await _error(400, "PROPOSAL_FIELD_VALUES_INVALID", "field_values JSON은 객체여야 합니다.")
+
+    now = datetime.now(timezone.utc)
+    job = ProposalJobResult(
+        job_id=str(uuid.uuid4()),
+        status="pending",
+        template_type=template_type,
+        created_at=now,
+        updated_at=now,
+    )
+    try:
+        await _save_job(job)
+    except Exception:
+        logger.exception("proposal generation job could not be persisted: job_id=%s", job.job_id)
+        return await _error(503, "PROPOSAL_JOB_UNAVAILABLE", "제안서 생성 작업을 시작할 수 없습니다.")
+
+    background_tasks.add_task(_run_proposal_generation_job, job, content, values)
+    return ProposalJobResponse(
+        isSuccess=True,
+        code="PROPOSAL_GENERATION_ACCEPTED",
+        message="제안서 초안 생성 작업을 접수했습니다.",
+        result=job,
+    )
+
+
+@router.get(
+    "/generate/jobs/{job_id}",
+    response_model=ProposalJobResponse,
+    responses={404: {"model": ProposalErrorResponse}},
+)
+async def get_proposal_generation_job(job_id: str) -> ProposalJobResponse | JSONResponse:
+    job = await _load_job(job_id)
+    if job is None:
+        return await _error(404, "PROPOSAL_JOB_NOT_FOUND", "제안서 생성 작업을 찾을 수 없거나 만료되었습니다.")
+    return ProposalJobResponse(
+        isSuccess=True,
+        code="PROPOSAL_GENERATION_STATUS_FOUND",
+        message="제안서 생성 작업 상태를 조회했습니다.",
+        result=job,
     )
 
 
