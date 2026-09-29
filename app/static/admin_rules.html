@@ -185,8 +185,11 @@ async function loadQueue() {
   tbody.innerHTML = "";
   for (const row of rows) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${row.document_id}</td><td>${row.item_count}</td><td>${row.created_at}</td>
-      <td><button onclick="openDetail('${row.thread_id}')">검수</button></td>`;
+    tr.innerHTML = `<td>${escapeHtml(row.document_id)}</td><td>${row.item_count}</td><td>${escapeHtml(row.created_at)}</td>
+      <td><button type="button">검수</button></td>`;
+    // 문자열로 조립한 onclick에 값을 끼워넣지 않는다 — HTML 이스케이프는 JS 문자열
+    // 컨텍스트를 막아주지 못해서 따옴표가 든 값이 들어오면 핸들러가 깨진다.
+    tr.querySelector("button").addEventListener("click", () => openDetail(row.thread_id));
     tbody.appendChild(tr);
   }
 }
@@ -206,7 +209,7 @@ async function openDetail(threadId) {
     const chunk = currentChunksById[item.draft.source_chunk_id] || {};
     const statusBadge = item.status === "auto_passed"
       ? '<span class="badge-pass">자동검증 통과</span>'
-      : `<span class="badge-fail">검증 실패: ${item.reasons.join(", ")}</span>`;
+      : `<span class="badge-fail">검증 실패: ${escapeHtml(item.reasons.join(", "))}</span>`;
 
     const div = document.createElement("div");
     div.className = "row";
@@ -214,14 +217,14 @@ async function openDetail(threadId) {
     div.style.padding = "12px 0";
     div.innerHTML = `
       <div class="col">
-        <b>원문 (${chunk.article_number || "-"})</b>
-        <div class="quote">${(chunk.content || "").replace(/</g, "&lt;")}</div>
-        <div><b>인용:</b> ${(item.draft.legal_basis?.quote || "").replace(/</g, "&lt;")}</div>
+        <b>원문 (${escapeHtml(chunk.article_number || "-")})</b>
+        <div class="quote">${escapeHtml(chunk.content || "")}</div>
+        <div><b>인용:</b> ${escapeHtml(item.draft.legal_basis?.quote || "")}</div>
       </div>
       <div class="col">
         ${statusBadge}
-        <br>Stage ${item.draft.stage}
-        <textarea rows="8" id="fields-${index}">${JSON.stringify(item.draft.fields, null, 2)}</textarea>
+        <br>Stage ${escapeHtml(item.draft.stage)}
+        <textarea rows="8" id="fields-${index}">${escapeHtml(JSON.stringify(item.draft.fields, null, 2))}</textarea>
         <br>
         <label><input type="radio" name="action-${index}" value="approve" checked> 승인</label>
         <label><input type="radio" name="action-${index}" value="reject"> 반려</label>
@@ -277,14 +280,23 @@ async function searchLaw() {
   const query = document.getElementById("law-query").value.trim();
   if (!query) return;
   const results = await api(`/admin/law-search?query=${encodeURIComponent(query)}`);
-  document.getElementById("law-results").innerHTML = results.length
-    ? `<table><thead><tr><th>법령명</th><th>구분</th><th>공포번호</th><th>시행일자</th><th></th></tr></thead><tbody>`
-      + results.map(r => `<tr>
-          <td>${escapeHtml(r.title)}</td><td>${escapeHtml(r.law_type)}</td>
-          <td>${r.promulgation_no}</td><td>${r.effective_date}</td>
-          <td><button onclick="selectLaw('${r.mst}', '${escapeHtml(r.title)}', '${escapeHtml(r.suggested_document_id)}')">선택</button></td>
-        </tr>`).join("") + "</tbody></table>"
-    : "<p class='alert-meta'>검색 결과 없음</p>";
+  const box = document.getElementById("law-results");
+  if (!results.length) {
+    box.innerHTML = "<p class='alert-meta'>검색 결과 없음</p>";
+    return;
+  }
+  box.innerHTML = `<table><thead><tr><th>법령명</th><th>구분</th><th>공포번호</th><th>시행일자</th><th></th></tr></thead><tbody>`
+    + results.map((r, i) => `<tr>
+        <td>${escapeHtml(r.title)}</td><td>${escapeHtml(r.law_type)}</td>
+        <td>${escapeHtml(r.promulgation_no)}</td><td>${escapeHtml(r.effective_date)}</td>
+        <td><button type="button" data-index="${i}">선택</button></td>
+      </tr>`).join("") + "</tbody></table>";
+  // 법령명은 law.go.kr에서 온 외부 값이다. onclick 문자열에 끼워넣으면 따옴표가 든 제목에서
+  // JS 문자열이 깨진다(HTML 이스케이프로는 막을 수 없는 컨텍스트) — 인덱스만 넘긴다.
+  box.querySelectorAll("button[data-index]").forEach(button => {
+    const r = results[Number(button.dataset.index)];
+    button.addEventListener("click", () => selectLaw(r.mst, r.title, r.suggested_document_id));
+  });
 }
 
 async function selectLaw(mst, title, suggestedDocumentId) {
@@ -376,9 +388,10 @@ function isFuture(yyyymmdd) {
 function renderArticles(articles) {
   if (!articles.length) return "<div class='alert-meta'>(없음)</div>";
   return articles.map(a => {
+    const effective = escapeHtml(a["조문시행일자"]);
     const future = isFuture(a["조문시행일자"])
-      ? ` <span class="future">시행 예정 ${a["조문시행일자"]}</span>`
-      : ` (시행 ${a["조문시행일자"]})`;
+      ? ` <span class="future">시행 예정 ${effective}</span>`
+      : ` (시행 ${effective})`;
     const label = a["조문표기"] || `제${a["조문번호"]}조`;
     return `<div class="article-item"><b>${escapeHtml(label)} ${escapeHtml(a["조문제목"])}</b>${future}
 ${escapeHtml((a["본문"] || "").slice(0, 400))}</div>`;

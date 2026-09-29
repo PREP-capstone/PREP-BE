@@ -6,6 +6,7 @@ langgraph_파이프라인_설계서.md §4.5(관리자 검수 인터페이스)/d
 엔드포인트 대신, 승인·반려가 섞인 decisions 배열 하나를 받는 단일 엔드포인트로 합쳤다.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,8 @@ from app.domain import law_api
 from app.pipeline.checkpointer import get_checkpointer
 from app.pipeline.document_id_normalize import normalize_document_id
 from app.pipeline.graph import build_graph
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin-rule-review"])
 
@@ -48,9 +51,20 @@ def _is_pdf(file: UploadFile) -> bool:
 
 async def _run_pipeline(thread_id: str, initial_state: dict) -> None:
     """백그라운드 태스크 — LLM 추출은 청크 수에 따라 수십 초~수 분 걸릴 수 있어 업로드
-    응답을 블로킹하지 않는다. human_review의 interrupt()에서 자연스럽게 멈춘다."""
+    응답을 블로킹하지 않는다. human_review의 interrupt()에서 자연스럽게 멈춘다.
+
+    예외를 직접 로그로 남긴다 — 응답은 이미 나간 뒤라 관리자에게 전달할 경로가 없고,
+    그냥 새어나가면 "검수 목록에 안 뜨는데 이유를 알 수 없는" 상태가 된다.
+    """
     graph = build_graph(checkpointer=get_checkpointer())
-    await graph.ainvoke(initial_state, config={"configurable": {"thread_id": thread_id}})
+    try:
+        await graph.ainvoke(initial_state, config={"configurable": {"thread_id": thread_id}})
+    except Exception:
+        logger.exception(
+            "룰 추출 파이프라인 실패: thread_id=%s document_id=%s",
+            thread_id,
+            initial_state.get("document_id"),
+        )
 
 
 class RuleDocumentUploadResponse(BaseModel):
@@ -96,6 +110,9 @@ async def upload_rule_document(
     initial_state = {
         "source_path": str(saved_path),
         "document_id": resolved_document_id,
+        # 자동 분류는 정규화 전 한글 제목을 봐야 한다 — resolved_document_id는 영문 slug라
+        # "시행규칙" 같은 패턴이 남아있지 않다(classify_document_source 참고).
+        "source_title": raw_document_id,
         "document_category": document_category,
         "target_stages": stages,
         "chunks": [],
@@ -318,29 +335,68 @@ class RuleDraftDecisionResponse(BaseModel):
     status: str
 
 
+async def _claim_for_resolution(thread_id: str, decision_count: int) -> None:
+    """pending 행만 resolving으로 선점한다.
+
+    조회와 상태 변경을 한 트랜잭션(SELECT ... FOR UPDATE)으로 묶어야 한다 — 상태를 읽고
+    세션을 닫은 뒤 resume하면 동시에 들어온 제출 두 건이 모두 검사를 통과해 같은 배치를
+    두 번 publish한다.
+    """
+    async with AsyncSessionLocal() as session:
+        row = (
+            await session.execute(
+                select(RuleReviewQueue)
+                .where(RuleReviewQueue.thread_id == thread_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="검수 항목을 찾을 수 없습니다.")
+        if row.status == "resolving":
+            raise HTTPException(status_code=409, detail="다른 요청이 처리 중입니다.")
+        if row.status != "pending":
+            raise HTTPException(status_code=409, detail="이미 처리된 검수 항목입니다.")
+        if decision_count != len(row.items):
+            raise HTTPException(
+                status_code=422, detail="decisions 개수가 검수 항목 수와 일치해야 합니다."
+            )
+        row.status = "resolving"
+        await session.commit()
+
+
+async def _set_review_status(thread_id: str, status: str) -> None:
+    async with AsyncSessionLocal() as session:
+        row = await session.get(RuleReviewQueue, thread_id)
+        if row is None:
+            return
+        row.status = status
+        await session.commit()
+
+
 @router.post("/rule-drafts/{thread_id}/decision", response_model=RuleDraftDecisionResponse)
 async def decide_rule_draft(
     thread_id: str,
     request: RuleDraftDecisionRequest,
     reviewer: str = Depends(require_admin),
 ) -> RuleDraftDecisionResponse:
-    async with AsyncSessionLocal() as session:
-        row = await session.get(RuleReviewQueue, thread_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="검수 항목을 찾을 수 없습니다.")
-    if row.status != "pending":
-        raise HTTPException(status_code=409, detail="이미 처리된 검수 항목입니다.")
-    if len(request.decisions) != len(row.items):
-        raise HTTPException(
-            status_code=422, detail="decisions 개수가 검수 항목 수와 일치해야 합니다."
-        )
+    await _claim_for_resolution(thread_id, len(request.decisions))
 
     graph = build_graph(checkpointer=get_checkpointer())
     resume_payload = {
         "decisions": [d.model_dump() for d in request.decisions],
         "reviewed_by": reviewer,
     }
-    await graph.ainvoke(Command(resume=resume_payload), config={"configurable": {"thread_id": thread_id}})
+    try:
+        await graph.ainvoke(
+            Command(resume=resume_payload), config={"configurable": {"thread_id": thread_id}}
+        )
+    except Exception:
+        # publish 실패 등으로 그래프가 죽으면 pending으로 되돌린다 — resolved로 남겨두면
+        # 재제출이 409로 막혀 그 스레드를 손으로 DB를 고치지 않고는 살릴 수 없다.
+        logger.exception("검수 결정 처리 실패: thread_id=%s", thread_id)
+        await _set_review_status(thread_id, "pending")
+        raise
+    await _set_review_status(thread_id, "resolved")
     return RuleDraftDecisionResponse(status="resolved")
 
 
@@ -405,12 +461,13 @@ class LawAlertStatusRequest(BaseModel):
 
 @router.post("/law-alerts/{alert_id}/status", response_model=LawAlertSummary)
 async def update_law_alert_status(
-    alert_id: str,
+    # UUID로 받아야 형식이 틀린 값이 500이 아니라 422로 떨어진다.
+    alert_id: uuid.UUID,
     request: LawAlertStatusRequest,
     reviewer: str = Depends(require_admin),
 ) -> LawAlertSummary:
     async with AsyncSessionLocal() as session:
-        row = await session.get(LawAmendmentAlert, uuid.UUID(alert_id))
+        row = await session.get(LawAmendmentAlert, alert_id)
         if row is None:
             raise HTTPException(status_code=404, detail="알림을 찾을 수 없습니다.")
         row.status = request.status

@@ -31,8 +31,8 @@ from app.pipeline.checkpointer import close_checkpointer, init_checkpointer
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # human_review의 interrupt/resume 상태 영속화용 — 요청마다 새로 열면 커넥션 풀 낭비고,
-    # 검수가 몇 시간 뒤에 재개돼도 같은 풀을 써야 해서 앱 생애주기 동안 하나만 연다.
+    # human_review의 interrupt/resume 상태 영속화용 커넥션 풀 — 검수가 몇 시간 뒤에
+    # 재개돼도 같은 풀을 써야 해서 앱 생애주기 동안 하나만 연다.
     await init_checkpointer()
     yield
     await close_checkpointer()

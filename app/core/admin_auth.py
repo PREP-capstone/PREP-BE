@@ -18,9 +18,10 @@ _security = HTTPBasic()
 def require_admin(credentials: HTTPBasicCredentials = Depends(_security)) -> str:
     known_password = settings.admin_credential_map.get(credentials.username)
     # 타이밍 공격 방지 — 계정이 없어도 항상 compare_digest를 한 번은 돌려서 존재 여부가
-    # 응답 시간으로 새지 않게 한다.
+    # 응답 시간으로 새지 않게 한다. str끼리 비교하면 비ASCII 문자가 섞였을 때
+    # compare_digest가 TypeError를 던져 401이 아니라 500이 나가므로 바이트로 맞춘다.
     is_valid = known_password is not None and secrets.compare_digest(
-        credentials.password, known_password
+        credentials.password.encode("utf-8"), known_password.encode("utf-8")
     )
     if not is_valid:
         raise HTTPException(

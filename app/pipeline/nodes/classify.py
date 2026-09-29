@@ -42,5 +42,7 @@ def _classify_by_title(title: str) -> str:
 def classify_document_source(state: PipelineState) -> dict:
     if state.get("document_category"):
         return {}  # 관리자가 이미 지정 — 자동 분류로 덮어쓰지 않는다
-    title = state.get("document_id") or ""
+    # document_id는 업로드 시점에 kr-* 영문 slug로 정규화돼 있어 한글 패턴이 남아있지 않다
+    # (document_id_normalize.py). 정규화 전 원본 제목을 봐야 분류가 성립한다.
+    title = state.get("source_title") or state.get("document_id") or ""
     return {"document_category": _classify_by_title(title)}

@@ -43,6 +43,10 @@ class ValidationResult(TypedDict):
 class PipelineState(TypedDict):
     source_path: NotRequired[str]  # load_shared_chunks 경로가 붙으면 없을 수도 있음
     document_id: str
+    # 정규화 전 원본 제목(한글 파일명/법령명). document_id는 업로드 시점에 kr-* 영문 slug로
+    # 정규화되므로(document_id_normalize.py) classify_document_source가 그 값으로는 "시행규칙"
+    # 같은 한글 패턴을 찾을 수 없다 — 분류는 반드시 이 원본 제목을 봐야 한다.
+    source_title: NotRequired[str]
     document_category: Literal["법령규제문서", "판단가이드", "위험표현사전"]
     raw_text: str
     chunks: list[Chunk]

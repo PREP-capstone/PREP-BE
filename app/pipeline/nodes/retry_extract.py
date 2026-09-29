@@ -53,21 +53,25 @@ async def retry_extract(state: PipelineState) -> dict:
         chunk = chunks_by_id.get(chunk_id)
         extra_context = _build_extra_context(group)
 
+        retried: list[ExtractedDraft] = []
         if chunk is not None and stage == "A":
-            drafts.extend(await extract_chunk_A(client, chunk, state["document_id"], extra_context))
+            retried = await extract_chunk_A(client, chunk, state["document_id"], extra_context)
         elif chunk is not None and stage == "B":
-            drafts.extend(await extract_chunk_B(client, chunk, state["document_id"], extra_context))
+            retried = await extract_chunk_B(client, chunk, state["document_id"], extra_context)
         elif chunk is not None and stage == "C":
             if active_keywords is None:
                 active_keywords = await _load_active_keywords()
-            drafts.extend(
-                await extract_chunk_C(client, chunk, state["document_id"], active_keywords, extra_context)
+            retried = await extract_chunk_C(
+                client, chunk, state["document_id"], active_keywords, extra_context
             )
-        else:
-            # Stage D(미구현)이거나 원본 청크를 못 찾은 경우 — 재추출할 방법이 없다고 원본
-            # draft를 버리면 "자동 폐기 금지"(§5.3) 원칙이 깨져서 human_review 큐에서 영영
-            # 사라진다. 그대로 다시 실어서 다음 auto_validate에서도 보이게 하고, 결국
-            # retry_count 소진 시 human_review로 넘어가게 한다.
-            drafts.extend(entry["draft"] for entry in group)
+
+        # 재추출 결과가 0건이면 원본 draft를 그대로 다시 싣는다. 해당되는 경우는 두 가지다.
+        # - Stage D(미구현)이거나 원본 청크를 못 찾아 재추출 자체가 불가능한 경우
+        # - 재추출은 했지만 LLM이 빈 배열을 반환한 경우(프롬프트가 "관련 키워드가 없으면
+        #   빈 배열"을 명시적으로 허용한다 — extract_a.py)
+        # 어느 쪽이든 여기서 안 실으면 auto_validate가 drafts에서 이미 뺀 상태라 검수 큐에도
+        # 못 올라가고 그대로 폐기된다("자동 폐기 금지" 원칙, §5.3). 다음 auto_validate에서
+        # 다시 보이게 해서 retry_count 소진 시 human_review로 넘어가게 한다.
+        drafts.extend(retried or [entry["draft"] for entry in group])
 
     return {"drafts": drafts, "retry_count": state["retry_count"] + 1}

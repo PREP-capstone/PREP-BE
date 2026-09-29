@@ -12,13 +12,15 @@ NUL 문자·목차 줄·헤딩 오인식 같은 걸 일일이 우회해야 하�
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import httpx
 
 from app.core.config import settings
 
-_BASE_URL = "http://www.law.go.kr/DRF"
+# OC 키가 쿼리스트링으로 나가므로 평문 http로 부르지 않는다.
+_BASE_URL = "https://www.law.go.kr/DRF"
 _TIMEOUT = 15.0
 
 
@@ -98,9 +100,29 @@ def article_key(article: dict) -> str:
     return f"{article.get('조문번호')}-{branch}" if branch else str(article.get("조문번호"))
 
 
+_DELETED_ARTICLE = re.compile(r"^제\d+조(의\d+)?\s*삭제")
+
+
+def _is_live_article(article: dict) -> bool:
+    """실제 효력이 있는 조문만 남긴다.
+
+    두 종류를 걸러낸다.
+    - `조문여부="전문"`: 장/절 제목 줄("제2장 의료인"). 추출할 내용이 없고 청크로 만들면
+      LLM 호출만 낭비된다.
+    - "제7조 삭제 <2024.9.20>" 형태의 삭제된 조문. 이건 반드시 빠져야 한다 —
+      find_missing_citations가 "현행 법령에 있는 조문" 집합을 이 함수 결과로 잡기 때문에,
+      삭제 조문을 남기면 근거 소실 감지가 그대로 무력화된다.
+
+    처음엔 조문제목 유무로 걸렀는데, 제목만 없고 내용은 있는 실질 조문(의료법 제88조의3)이
+    같이 날아갔다 — 조문 선택 목록에도 안 뜨고 청크로도 안 들어갔다(2026-09-27 자체리뷰).
+    """
+    if article.get("조문여부") not in (None, "조문"):
+        return False
+    return not _DELETED_ARTICLE.match((article.get("조문내용") or "").strip())
+
+
 async def fetch_articles(mst: str) -> list[dict]:
-    """법령 본문의 조문 목록. 조문제목이 없는 항목(장/절 제목 줄)은 제외한다 — 추출할
-    내용이 없고 청크로 만들면 LLM 호출만 낭비된다."""
+    """법령 본문의 조문 목록(장/절 제목 줄·삭제 조문 제외 — _is_live_article 참고)."""
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(
             f"{_BASE_URL}/lawService.do",
@@ -122,7 +144,7 @@ async def fetch_articles(mst: str) -> list[dict]:
             "본문": article_body(a),
         }
         for a in articles
-        if a.get("조문제목")
+        if _is_live_article(a)
     ]
 
 
@@ -139,11 +161,14 @@ def articles_to_chunks(articles: list[dict], document_id: str) -> list[dict]:
     """
     chunks = []
     for article in articles:
-        body = article.get("본문") or ""
-        if not body.strip():
-            continue
+        body = (article.get("본문") or "").strip()
         # fetch_articles를 거치지 않은 원본 dict가 들어올 수도 있어 표기를 다시 계산한다.
         article_number = article.get("조문표기") or article_label(article)
+        # 본문이 비어 있거나 조문표기뿐인 조문(의료법 제88조의3 — API가 본문을 주지 않는다)은
+        # 건너뛴다. 인용할 원문이 없어 추출해도 전부 "인용미확인"으로 걸리고 LLM 호출만 든다.
+        # 조문 목록에서는 빼지 않는다 — 법령에 실재하는 조문이라 근거 소실 감지의 기준이다.
+        if not body or body == article_number:
+            continue
         chunks.append(
             {
                 "chunk_id": str(uuid.uuid4()),

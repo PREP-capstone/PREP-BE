@@ -124,8 +124,11 @@ async def test_human_review_batch_approve_and_reject_e2e() -> None:
     try:
         async with AsyncSessionLocal() as session:
             queue_row = await session.get(RuleReviewQueue, thread_id)
-            assert queue_row.status == "resolved"
+            # status는 노드가 아니라 API가 publish 성공까지 보고 확정한다(rule_documents.py) —
+            # 그래프만 직접 태우는 이 테스트에서는 pending 그대로다.
+            assert queue_row.status == "pending"
             assert queue_row.reviewed_by == "tester"
+            assert len(queue_row.decisions) == 2
 
             rows = (
                 await session.execute(

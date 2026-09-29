@@ -30,7 +30,10 @@ class RuleReviewQueue(Base):
     # RAG의 evidence_chunks와 달리 별도 테이블에 저장되지 않고 그래프 실행 중에만 존재해서,
     # 체크포인터 내부를 admin API가 직접 뒤지게 하는 대신 여기 그대로 복사해 둔다.
     chunks: Mapped[list] = mapped_column(JSON, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")  # pending / resolved
+    # pending(검수 대기) / resolving(결정 제출됨, publish 진행 중) / resolved(완료).
+    # resolving을 둔 이유: 상태를 pending에서 곧바로 resolved로 올려버리면 publish가 실패했을 때
+    # 되돌릴 근거가 없어 그 스레드를 영구히 재제출 불가 상태로 만든다(2026-09-27 자체리뷰).
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     # 승인/반려 결정이 나온 뒤 채워짐. [{"index":, "action":, "reason":, "edited_fields":}]
     decisions: Mapped[list | None] = mapped_column(JSON, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)
