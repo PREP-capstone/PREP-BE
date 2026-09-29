@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import UploadFile
+from fastapi.background import BackgroundTasks
 from pypdf import PdfReader
 from starlette.datastructures import Headers
 
@@ -27,6 +28,7 @@ from app.api.proposals import (
     _placeholder_value,
     ProposalJobResult,
     _run_proposal_generation_job,
+    generate_proposal_async,
     get_proposal_generation_job,
     complete_proposal,
     get_field_definitions,
@@ -604,7 +606,7 @@ async def test_proposal_generation_job_moves_to_completed(monkeypatch) -> None:
     assert persisted["proposal_id"] == "proposal-1"
 
 
-async def test_proposal_generation_job_moves_to_failed_on_llm_error(monkeypatch) -> None:
+async def test_proposal_generation_job_moves_to_failed_on_unexpected_error(monkeypatch) -> None:
     async def fake_set(key: str, value: str, ex: int | None = None) -> None:
         fake_set.payload = json.loads(value)
 
@@ -613,7 +615,7 @@ async def test_proposal_generation_job_moves_to_failed_on_llm_error(monkeypatch)
     monkeypatch.setattr(
         proposals,
         "_build_generated_result",
-        AsyncMock(side_effect=ProposalLLMUnavailable("OpenAI timeout")),
+        AsyncMock(side_effect=RuntimeError("unexpected failure")),
     )
     now = proposals.datetime.now(proposals.timezone.utc)
     job = ProposalJobResult(
@@ -627,8 +629,56 @@ async def test_proposal_generation_job_moves_to_failed_on_llm_error(monkeypatch)
     await _run_proposal_generation_job(job, b"pdf", {})
 
     assert job.status == "failed"
-    assert job.error_code == "PROPOSAL_LLM_UNAVAILABLE"
+    assert job.error_code == "PROPOSAL_GENERATION_FAILED"
     assert fake_set.payload["status"] == "failed"
+
+
+async def test_generate_proposal_async_returns_202_and_job_id(monkeypatch) -> None:
+    saved_jobs: list[ProposalJobResult] = []
+
+    async def fake_save(job: ProposalJobResult) -> None:
+        saved_jobs.append(job)
+
+    monkeypatch.setattr(proposals, "_save_job", fake_save)
+    background_tasks = BackgroundTasks()
+    report = UploadFile(filename="report.pdf", file=BytesIO(b"%PDF-test"))
+
+    response = await generate_proposal_async(
+        background_tasks=background_tasks,
+        report=report,
+        template_type="PSST",
+        field_values="{}",
+    )
+
+    # 함수 직접 호출에서는 FastAPI decorator의 HTTP status를 확인할 수 없으므로
+    # 응답 envelope과 BackgroundTasks 등록을 검증한다. 실제 라우트 status_code는 202로 선언돼 있다.
+    assert response.code == "PROPOSAL_GENERATION_ACCEPTED"
+    assert response.result.status == "pending"
+    assert response.result.job_id
+    assert len(saved_jobs) == 1
+    assert len(background_tasks.tasks) == 1
+    route = next(route for route in proposals.router.routes if route.path.endswith("/generate/async"))
+    assert route.status_code == 202
+
+
+async def test_get_proposal_generation_job_marks_stale_processing_job_failed(monkeypatch) -> None:
+    now = proposals.datetime.now(proposals.timezone.utc)
+    stale = ProposalJobResult(
+        job_id="stale-job",
+        status="processing",
+        template_type="PSST",
+        created_at=now - proposals.timedelta(seconds=proposals._PROPOSAL_JOB_STALE_SECONDS + 1),
+        updated_at=now - proposals.timedelta(seconds=proposals._PROPOSAL_JOB_STALE_SECONDS + 1),
+    )
+    monkeypatch.setattr(proposals.redis_client, "get", AsyncMock(return_value=stale.model_dump_json()))
+    fake_set = AsyncMock()
+    monkeypatch.setattr(proposals.redis_client, "set", fake_set)
+
+    response = await get_proposal_generation_job("stale-job")
+
+    assert response.result.status == "failed"
+    assert response.result.error_code == "PROPOSAL_JOB_STALE"
+    fake_set.assert_awaited_once()
 
 
 async def test_get_proposal_generation_job_returns_404_when_expired(monkeypatch) -> None:

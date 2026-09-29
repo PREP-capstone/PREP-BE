@@ -265,7 +265,7 @@ Authorization: Bearer `<accessToken>`
 
 완료 응답의 `sections` 구조는 동기식 `generate` 응답과 동일하다. `proposal_id`를 사용자가 수정한 뒤 기존 `POST /api/v1/proposals/{proposal_id}/complete`에 전달하면 제안서 저장 및 PDF/DOCX 다운로드 흐름을 이어갈 수 있다.
 
-작업이 만료되었거나 존재하지 않으면 `PROPOSAL_JOB_NOT_FOUND`(404)를 반환한다. 기존 동기식 API와 같은 원칙에 따라 LLM 장애는 작업 자체를 실패시키지 않고 `status=completed`, `llm_status=unavailable` 및 자리표시자로 반환한다. PDF 추출·DB 조회 등 예외적인 처리 실패는 `status=failed`, `error_code=PROPOSAL_GENERATION_FAILED`로 구분한다.
+작업이 만료되었거나 존재하지 않으면 `PROPOSAL_JOB_NOT_FOUND`(404)를 반환한다. 기존 동기식 API와 같은 원칙에 따라 LLM 장애는 작업 자체를 실패시키지 않고 `status=completed`, `llm_status=unavailable` 및 자리표시자로 반환한다. PDF 추출·DB 조회 등 예외적인 처리 실패는 `status=failed`, `error_code=PROPOSAL_GENERATION_FAILED`로 구분한다. 서버 재시작 등으로 `pending` 또는 `processing` 상태가 5분 이상 갱신되지 않으면 다음 상태 조회 시 `status=failed`, `error_code=PROPOSAL_JOB_STALE`로 전환한다.
 
 현재 구현은 별도 worker 없이 API 컨테이너의 백그라운드 작업으로 실행하는 MVP 방식이다. API 프로세스가 재시작되는 순간 실행 중인 작업은 보장되지 않으므로, 대규모 운영 단계에서는 Celery/RQ/ARQ 같은 durable worker로 교체한다.
 

@@ -43,6 +43,7 @@ _MAX_REPORT_BYTES = 10 * 1024 * 1024
 _PROPOSAL_TTL_SECONDS = 600
 _CACHE_KEY_PREFIX = "proposal:"
 _PROPOSAL_JOB_TTL_SECONDS = 1800
+_PROPOSAL_JOB_STALE_SECONDS = 300
 _JOB_KEY_PREFIX = "proposal_job:"
 TEMPLATE_TYPES = frozenset({"PSST", "RND", "IR"})
 
@@ -213,7 +214,16 @@ async def _load_job(job_id: str) -> ProposalJobResult | None:
     cached = await redis_client.get(_job_key(job_id))
     if cached is None:
         return None
-    return ProposalJobResult.model_validate(json.loads(cached))
+    job = ProposalJobResult.model_validate(json.loads(cached))
+    if job.status in {"pending", "processing"}:
+        age_seconds = (datetime.now(timezone.utc) - job.updated_at).total_seconds()
+        if age_seconds > _PROPOSAL_JOB_STALE_SECONDS:
+            job.status = "failed"
+            job.error_code = "PROPOSAL_JOB_STALE"
+            job.error_message = "제안서 생성 작업이 중단되었습니다. 다시 시도해주세요."
+            job.updated_at = datetime.now(timezone.utc)
+            await _save_job(job)
+    return job
 
 
 def _placeholder_value(field_type: str, label: str) -> SectionValue:
@@ -370,12 +380,6 @@ async def _run_proposal_generation_job(
         job.proposal_id = result.proposal_id
         job.llm_status = result.llm_status
         job.sections = result.sections
-        job.updated_at = datetime.now(timezone.utc)
-        await _save_job(job)
-    except ProposalLLMUnavailable as error:
-        job.status = "failed"
-        job.error_code = "PROPOSAL_LLM_UNAVAILABLE"
-        job.error_message = str(error)
         job.updated_at = datetime.now(timezone.utc)
         await _save_job(job)
     except Exception:
