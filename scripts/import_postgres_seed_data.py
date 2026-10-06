@@ -9,6 +9,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
+from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +34,8 @@ NS = {
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
 }
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+EXAMPLE_ROW_NOTE_PREFIX = "예시행"
+DOMESTIC_COUNTRY = "한국"
 
 
 def clean_text(value: Any) -> str:
@@ -286,6 +289,10 @@ def load_competitors(data_dir: Path) -> list[dict[str, Any]]:
         competitor_id = clean_text(row[0] if len(row) > 0 else "")
         if not competitor_id:
             continue
+        # 수집 시트의 작성 예시(CP001 눔, CP002 삼성헬스)는 실제 행(CP087, CP089)과 중복이라 적재하지
+        # 않는다 — 그대로 들어가면 시장 현실성의 경쟁사 수와 BM 빈도가 한 건씩 부풀려진다(#145).
+        if clean_text(row[12] if len(row) > 12 else "").startswith(EXAMPLE_ROW_NOTE_PREFIX):
+            continue
         output.append(
             {
                 "competitor_id": competitor_id,
@@ -310,26 +317,54 @@ def load_competitors(data_dir: Path) -> list[dict[str, Any]]:
     return output
 
 
+def precedent_level(domestic: int, overall: int) -> str:
+    """db_구축_설계서.md §3.6 precedent_level 임계값(국내 기준)."""
+    if domestic >= 5:
+        return "많음"
+    if domestic >= 3:
+        return "중간"
+    if domestic >= 1:
+        return "적음"
+    return "가능" if overall > 0 else "어려움"
+
+
+def aggregate_bm_mapping(competitors: list[dict[str, Any]], computed_at: date | None = None) -> list[dict[str, Any]]:
+    """competitors에서 bm_mapping을 집계한다 — db_구축_설계서.md §3.6의 VIEW 정의와 같은 식.
+
+    예전에는 수집 시트의 bm_mapping 탭(수식 60행 고정)의 계산값을 그대로 읽었다. 그 뒤에 추가된
+    조합은 탭에 행이 없어 계산되지 않았고, 2026-08-14 값에서 멈춘 채 35개 조합이 빠져 있었다(#145).
+    시트 수식 대신 여기서 직접 집계하면 competitors가 바뀔 때마다 임포트만 다시 돌리면 된다.
+    mapping_id는 조합이 처음 나온 경쟁사 순서대로 매긴다(시트와 같은 방식).
+    """
+    keys = ("category_1", "category_2", "target", "service_type", "bm_pattern")
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for competitor in competitors:
+        combo = tuple(competitor[key] for key in keys)
+        if any(value is None for value in combo):
+            continue
+        groups.setdefault(combo, []).append(competitor)
+
+    computed_at = computed_at or date.today()
+    rows = []
+    for index, (combo, members) in enumerate(groups.items(), 1):
+        domestic = sum(member["country"] == DOMESTIC_COUNTRY for member in members)
+        rows.append(
+            {
+                "mapping_id": f"BM{index:03d}",
+                **dict(zip(keys, combo)),
+                "frequency_score": domestic,
+                "frequency_score_global": len(members),
+                "precedent_level": precedent_level(domestic, len(members)),
+                "contributing_competitor_ids": ",".join(member["competitor_id"] for member in members),
+                "evidence_id": None,
+                "last_computed_at": computed_at,
+            }
+        )
+    return rows
+
+
 def load_bm_mapping(data_dir: Path) -> list[dict[str, Any]]:
-    rows = dict_rows(data_dir / "경쟁사DB_BM매핑_수집시트.xlsx", "bm_mapping")
-    return [
-        {
-            "mapping_id": clean_text(row["mapping_id"]),
-            "category_1": null_if_blank(row["category_1"]),
-            "category_2": null_if_blank(row["category_2"]),
-            "target": null_if_blank(row["target"]),
-            "service_type": null_if_blank(row["service_type"]),
-            "bm_pattern": null_if_blank(row["bm_pattern"]),
-            "frequency_score": parse_int(row["frequency_score"]),
-            "frequency_score_global": parse_int(row["frequency_score_global"]),
-            "precedent_level": null_if_blank(row["precedent_level"]),
-            "contributing_competitor_ids": null_if_blank(row["contributing_competitor_ids"]),
-            "evidence_id": null_if_blank(row["evidence_id"]),
-            "last_computed_at": parse_date(row["last_computed_at"]),
-        }
-        for row in rows
-        if clean_text(row.get("mapping_id"))
-    ]
+    return aggregate_bm_mapping(load_competitors(data_dir))
 
 
 def load_all(data_dir: Path) -> list[tuple[type[Any], list[dict[str, Any]]]]:
@@ -366,6 +401,22 @@ async def upsert_model(model: type[Any], rows: list[dict[str, Any]]) -> None:
         await session.commit()
 
 
+async def delete_rows_absent_from_seed(model: type[Any], rows: list[dict[str, Any]]) -> int:
+    """시드에 없는 행을 지운다 — upsert만 하면 예시행이나 예전 mapping_id가 DB에 남는다.
+
+    competitors(시트가 원본)와 bm_mapping(competitors에서 파생)에만 쓴다. rows가 비어 있으면
+    시트를 못 읽은 것일 수 있으므로 아무것도 지우지 않는다.
+    """
+    if not rows:
+        return 0
+    (primary_key,) = model.__table__.primary_key.columns
+    keep = [row[primary_key.name] for row in rows]
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(delete(model).where(getattr(model, primary_key.name).notin_(keep)))
+        await session.commit()
+    return result.rowcount
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Import Postgres seed Excel workbooks into catalog tables."
@@ -384,6 +435,13 @@ async def main() -> None:
 
     for model, rows in datasets:
         await upsert_model(model, rows)
+
+    # bm_mapping이 competitors보다 먼저 정리돼야 하는 FK는 없지만, 파생 테이블부터 지운다.
+    for model in (BmMapping, Competitor):
+        rows = next(rows for dataset_model, rows in datasets if dataset_model is model)
+        deleted = await delete_rows_absent_from_seed(model, rows)
+        if deleted:
+            print(f"{model.__tablename__}: 시드에 없는 {deleted}행 삭제")
 
     print("Imported Postgres seed data.")
 
