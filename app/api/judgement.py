@@ -40,8 +40,13 @@ from app.pipeline.gate_matrix_table import (
     HARDCHECK_AVOIDANCE_REDESIGN,
     HARDCHECK_LEGAL_BASIS,
     HARDCHECK_VERDICT,
+    MEDICAL_PURPOSE_AVOIDANCE_CERTIFICATION,
+    MEDICAL_PURPOSE_AVOIDANCE_REDESIGN,
+    MEDICAL_PURPOSE_LEGAL_BASIS,
+    MEDICAL_PURPOSE_VERDICT,
     detect_genetic_test_signal,
     detect_invasive,
+    detect_medical_purpose,
     is_invasive_hardcheck,
 )
 from app.schemas.common import ApiResponse, HealthDataItemInput, LegalBasis
@@ -150,6 +155,10 @@ class GateResponse(BaseModel):
     # 같은 화이트리스트 규칙으로 채운다. judge_gate는 항상 채운다 — None 기본값은 이 필드가 생기기
     # 전에 GateResponse를 직접 만들던 호출부(테스트 등) 호환용이다.
     legal_basis: LegalBasis | None = None
+    # 6칸 표로는 FAIL이 아니지만 설명문에 질병 진단·치료·처방 목적이 명시돼 FAIL로 올린 경우(#141).
+    # medical_purpose_phrase는 그 판단의 근거가 된 설명문 문구다. 해당 없으면 False / None.
+    medical_purpose_fired: bool = False
+    medical_purpose_phrase: str | None = None
 
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -259,6 +268,26 @@ def _build_gate_reasoning(
     ]
 
 
+def _build_medical_purpose_reasoning(
+    data_type: str,
+    function_type: str,
+    acquire_method: str | None,
+    invasive_signal: bool,
+    matrix_verdict: str,
+    phrase: str,
+) -> list[str]:
+    """의료 목적 하드체크로 FAIL이 된 경우의 판정 이유 4줄. 3번째 줄은 침습 신호 대신 설명문에서
+    잡힌 문구를 보여준다 — 선택한 기능 조합만으로는 FAIL이 아니었다는 점과 함께 밝혀야, 사용자가
+    "기록만 골랐는데 왜 FAIL인가"를 이해하고 어떤 표현을 고쳐야 하는지 안다."""
+    return [
+        _describe_data_and_acquire(data_type, acquire_method, invasive_signal, hardcheck_fired=False),
+        _describe_function_type(data_type, function_type),
+        f"서비스 설명의 \"{phrase}\" 표현이 질병을 진단·치료·처방하는 목적을 나타냅니다.",
+        f"선택한 기능 조합만으로는 {matrix_verdict}이지만, 설명에 질병 진단·치료 목적이 명시돼 "
+        "의료기기 해당 가능성이 높은 것으로 판정됐습니다(FAIL).",
+    ]
+
+
 def _detect_invasive_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
     # detect_invasive()는 내부에서 공백을 전부 지우고 매칭한다 — 서로 다른 필드를
     # 이어붙이면 경계가 사라져 부정표현/키워드가 필드를 가로질러 엉뚱하게 매칭된다.
@@ -325,6 +354,33 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         )
 
     cell = GATE_MATRIX_TABLE[(data_type, function_type)]
+
+    # 의료 목적 하드체크 — 6칸 표가 이미 FAIL이면 그 근거(매트릭스 칸)를 그대로 쓰고, FAIL이 아닐
+    # 때만 설명문을 본다. 표는 선택한 기능만 보므로 "진단하고 치료법을 처방한다"고 쓰고 기록만
+    # 고른 서비스가 PASS로 나오던 것을 막는다(gate_matrix_table.py의 의료 목적 하드체크 주석 참조).
+    medical_purpose_phrase = (
+        detect_medical_purpose(analysis_session.service_description) if cell["verdict"] != "FAIL" else None
+    )
+    if medical_purpose_phrase:
+        return GateResponse(
+            data_type=data_type,
+            function_type=function_type,
+            acquire_method=acquire_method,
+            invasive_signal=invasive_signal,
+            verdict=MEDICAL_PURPOSE_VERDICT,
+            hardcheck_fired=False,
+            avoidance_redesign=MEDICAL_PURPOSE_AVOIDANCE_REDESIGN,
+            avoidance_certification=(
+                GENETIC_AVOIDANCE_CERTIFICATION if genetic_signal else MEDICAL_PURPOSE_AVOIDANCE_CERTIFICATION
+            ),
+            reasoning=_build_medical_purpose_reasoning(
+                data_type, function_type, acquire_method, invasive_signal, cell["verdict"], medical_purpose_phrase
+            ),
+            legal_basis=await _gate_legal_basis(MEDICAL_PURPOSE_LEGAL_BASIS),
+            medical_purpose_fired=True,
+            medical_purpose_phrase=medical_purpose_phrase,
+        )
+
     avoidance_certification = cell.get("avoidance_certification")
     if cell["verdict"] == "FAIL" and genetic_signal:
         # 매트릭스 verdict는 그대로 두고(§3.2 data_type/function_type 조합만으로 이미 FAIL) 인증

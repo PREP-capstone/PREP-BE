@@ -102,7 +102,9 @@ async def test_gate_classifies_stress_record_as_lifestyle_not_biomarker() -> Non
     기준 라이프스타일이다(db_구축_설계서.md §3.2, data_sensitivity의 lifestyle_005).
     2026-09-27 백엔드 이슈로 확인."""
     session_id = await _create_session(
-        "스트레스 기록으로 위험 수치를 예측하고 진단한다.",
+        # 설명에 "진단한다"가 있으면 의료 목적 하드체크(#141)로 FAIL이 되므로, 이 테스트가 보려는
+        # 데이터 유형 분류와 6칸 표 결과만 남도록 예측 표현만 쓴다.
+        "스트레스 기록으로 다음 주 스트레스 수준을 예측한다.",
         [HealthDataItemInput(name="스트레스 기록", data_type="text", source="user_input")],
         service_actions=["predict"],
     )
@@ -540,5 +542,41 @@ async def test_gate_returns_409_when_no_health_data_registered() -> None:
     try:
         response = await judge_gate(GateRequest(session_id=session_id))
         assert response.status_code == 409
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_fails_on_medical_purpose_description_even_with_record_only() -> None:
+    """#141 S5 — 기능은 기록만 골랐어도 설명이 질병 진단·치료·처방을 말하면 FAIL이고, 근거는
+    의료기기법 제2조 원문까지 실제 RAG에서 채워진다."""
+    session_id = await _create_session(
+        "수면 패턴을 분석해 불면증을 진단하고 맞춤 치료법과 영양제를 처방한다.",
+        [HealthDataItemInput(name="수면 시간", data_type="numeric", source="os_sync", item_code="lifestyle_002")],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.data_type == "라이프스타일"
+        assert response.function_type == "단순기록"
+        assert response.verdict == "FAIL"
+        assert response.medical_purpose_fired is True
+        assert response.legal_basis.document_id == "kr-medical-device-act-20260701"
+        assert response.legal_basis.article == "제2조"
+        assert response.legal_basis.quote_status == "FOUND"
+    finally:
+        await _delete_session(session_id)
+
+
+async def test_gate_keeps_pass_when_medical_purpose_is_negated() -> None:
+    """#141 R6 — "진단하거나 치료하지 않고"는 의료 목적이 아니므로 PASS가 유지된다."""
+    session_id = await _create_session(
+        "질병을 진단하거나 치료하지 않고 걸음수만 기록한다.",
+        [HealthDataItemInput(name="걸음수", data_type="numeric", source="os_sync", item_code="lifestyle_001")],
+        service_actions=["record"],
+    )
+    try:
+        response = await judge_gate(GateRequest(session_id=session_id))
+        assert response.verdict == "PASS"
+        assert response.medical_purpose_fired is False
     finally:
         await _delete_session(session_id)

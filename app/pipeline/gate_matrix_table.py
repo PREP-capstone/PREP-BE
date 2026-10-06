@@ -187,6 +187,65 @@ def detect_genetic_test_signal(text: str) -> bool:
     return any(keyword in compact for keyword in GENETIC_TEST_KEYWORDS)
 
 
+# ---- 의료 목적 하드체크 (6칸 표가 FAIL이 아닐 때 적용) ----
+#
+# 6칸 표는 데이터 유형과 "선택한 기능"만 본다. 그래서 설명문에 "불면증을 진단하고 치료법을
+# 처방한다"고 써도 기능을 기록만 고르면 PASS가 나왔다(2026-10-06 검증 S5 — 의료기기를 PASS로
+# 판정한 치명 오류, 이슈 #141). 의료기기법 제2조는 질병을 진단·치료·경감·처치·예방할 "목적"이면
+# 의료기기로 보므로, 설명문에 그 목적이 명시되면 데이터 유형·선택 기능과 무관하게 FAIL로 올린다.
+#
+# 잘못 잡으면 정상 서비스가 FAIL이 되므로 세 가지로 범위를 좁힌다.
+#   1) 서비스가 그 행위를 "한다"는 표현만 본다. "진단명 기록", "처방전 보관", "치료 중인 환자"처럼
+#      이미 일어난 사실을 기록하는 표현은 _MEDICAL_PURPOSE_RECORD_SUFFIXES로 제외한다.
+#   2) 부정 표현은 같은 절 끝까지 본다. "진단이나 치료를 대신하지 않는다", "진단하거나 경고하지
+#      않는다", "진단이나 예측 없이"는 신호가 아니다. judgement.py의 _NEGATION_WINDOW(5글자)는
+#      "진단하거나 치료하지 않고"의 "진단"을 놓쳐서(검증 R6) 여기서는 쓰지 않는다.
+#   3) 다만 "진단하고 치료는 하지 않는다"처럼 키워드 뒤에 순차 연결어미(-하고, -하며, -해서)가
+#      먼저 오면 그 뒤의 부정은 다른 행위에 걸리는 것이라 키워드는 긍정으로 본다.
+# 예방은 넣지 않았다 — "생활습관병 예방을 위한 걸음수 기록"처럼 웰니스 문맥에서 흔해 과탐이 크다.
+MEDICAL_PURPOSE_VERDICT = "FAIL"
+MEDICAL_PURPOSE_LEGAL_BASIS: tuple[str, str] = ("kr-medical-device-act-20260701", "제2조")
+MEDICAL_PURPOSE_AVOIDANCE_REDESIGN = (
+    "서비스 설명에서 질병을 진단·치료·처방한다는 표현과 그에 해당하는 기능을 빼고, 기록·추이 확인 같은 "
+    "일상 건강관리 범위로 한정하면 다시 판정받을 수 있습니다."
+)
+MEDICAL_PURPOSE_AVOIDANCE_CERTIFICATION = f"진단·치료·처방 기능을 그대로 유지하려면 {_CERTIFICATION_GUIDANCE}"
+
+_MEDICAL_PURPOSE_KEYWORD = re.compile(r"진단|치료|처방")
+# 키워드 바로 뒤에 붙으면 "이미 일어난 의료 사실의 기록"을 뜻하는 말 — 서비스의 목적이 아니다.
+# "진단 서비스", "치료 전문", "치료 중심", "진단 후보"는 기록 표현이 아니라서 부정 전방탐색으로 뺀다.
+_MEDICAL_PURPOSE_RECORD_SUFFIXES = re.compile(
+    r"명|서(?!비스)|전(?!문)|(?:을|를)?받|이력|기록|내역|일정|일지|중(?:인|에|이던)|후(?!보)|약|된"
+)
+_CLAUSE_BOUNDARY = re.compile(r"[.,;!?\n。]")
+_CLAUSE_NEGATION = re.compile(
+    r"지(?:는|도)?않|지못|없이|없습|없다|없음|없는|없고|없으|아닌|아니|아닙|안합|안함|안해"
+)
+_SEQUENTIAL_CONNECTIVE = re.compile(r"하고|하며|하면서|해서|하여|한뒤|한후|해주고|해주며")
+_CLAUSE_LOOKAHEAD = 60
+_PHRASE_CONTEXT = 8
+
+
+def detect_medical_purpose(text: str) -> str | None:
+    """설명문에 서비스가 질병을 진단·치료·처방한다는 표현이 있으면 그 주변 문구를, 없으면 None을 돌려준다.
+
+    돌려준 문구는 GATE 응답의 판정 이유에 그대로 실린다 — 어떤 표현 때문에 FAIL인지 사용자가 볼 수
+    있어야 잘못 잡힌 경우에도 원인을 바로 안다.
+    """
+    for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
+        tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
+        boundary = _CLAUSE_BOUNDARY.search(tail_raw)
+        clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
+        if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail):
+            continue
+        negation = _CLAUSE_NEGATION.search(clause_tail)
+        if negation and not _SEQUENTIAL_CONNECTIVE.search(clause_tail[: negation.start()]):
+            continue
+        start = max(match.start() - _PHRASE_CONTEXT, 0)
+        return text[start : match.end() + _PHRASE_CONTEXT].strip()
+    return None
+
+
 def is_invasive_hardcheck(data_type: str, acquire_method: str | None, invasive_signal: bool) -> bool:
     """FAIL 하드 오버라이드 대상인지 판단한다. function_type은 의도적으로 보지 않는다."""
     return data_type == "생체지표" and acquire_method == "기기연동" and invasive_signal
