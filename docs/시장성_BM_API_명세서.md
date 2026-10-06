@@ -260,6 +260,15 @@ best_healthcare_model_2line`)로 `service_description` 텍스트에서 `category
   `PATCH /api/v1/analysis-sessions/{session_id}/category`(생성 후 반영)로 채운다.
 - `competitors`(101건)·`bm_mapping`(59건) 시드 데이터로 실제 매칭 동작 확인 완료
   (2026-08-22, `scripts/import_postgres_seed_data.py`).
+- **2026-10-06 갱신(#145)**: 지금은 `competitors` 99건·`bm_mapping` 93건이다.
+  - 수집 시트의 예시행 2개(CP001 눔, CP002 삼성헬스)가 실제 행과 중복으로 적재돼 있어 임포터가
+    건너뛰게 했다. (운동, 데이터기록관리) 경쟁사가 5곳 → 4곳이 되어 시장 현실성이 낮음 → 중간이 된다.
+  - `bm_mapping`은 시트의 bm_mapping 탭이 아니라 임포터가 `competitors`에서 직접 집계한다
+    (`db_구축_설계서.md` §3.6 식). 탭의 수식이 60행으로 고정돼 있어 그 뒤에 추가된 35개 조합이
+    빠져 있었다. `contributing_competitor_ids`는 설계대로 competitor_id 목록이다.
+  - 임포트는 시드에 없는 `competitors`·`bm_mapping` 행을 지운다. 경쟁사를 5행 넘게 지우게 되면
+    쓰기 전에 멈춘다(`--allow-large-prune`으로 해제).
+  - 알려진 한계: BM 추천은 국내 빈도 순 상위 2개인데 동점 기준이 없다(#148).
 - `competitors.limitation`/`competitors.price` 컬럼은 이미 존재·시딩되어 있다
   (Google Sheet 경쟁사DB_BM매핑_수집시트 기준) — §15.10에서 "보강 필요"로 남아있던
   항목이 이미 반영된 상태였다.

@@ -64,6 +64,19 @@ This imports `data_sensitivity`, `public_data_catalog`, `api_catalog`,
 `trend_signal_config`, `action_templates`, `mvp_strategy_templates`,
 `competitors`, and `bm_mapping`.
 
+Notes on `competitors` and `bm_mapping` (since 2026-10-06, issue #145):
+
+- `bm_mapping` is no longer read from the workbook's `bm_mapping` tab. The importer
+  aggregates it from `competitors` with the formula in `docs/db_구축_설계서.md` §3.6,
+  so re-running the import after editing competitors is enough to refresh it.
+- Example rows in the workbook (note starting with `예시행`) are skipped.
+- The import **deletes** `competitors` and `bm_mapping` rows that are not in the seed.
+  The workbook is the source of truth; do not insert competitors directly into the DB.
+- Safety limit: if more than 5 `competitors` rows would be deleted, the import stops
+  before writing anything. This usually means the workbook was saved without cached
+  formula values (competitor IDs are formulas). Re-save it in Excel/Google Sheets, or
+  pass `--allow-large-prune` if the deletion is intended.
+
 ## ChromaDB Deployment
 
 ChromaDB is not stored in RDS. It is stored in the path configured by
