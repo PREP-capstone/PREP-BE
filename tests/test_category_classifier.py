@@ -8,6 +8,8 @@
 import pytest
 
 from app.api.category_classifier import CategoryClassifyRequest, predict_category
+from transformers import RobertaTokenizerFast
+
 from app.domain import category_classifier
 from app.domain.category_classifier import (
     CATEGORY_1_LABELS,
@@ -68,11 +70,31 @@ def test_validate_label_config_rejects_mismatched_labels(tmp_path) -> None:
 
 
 @pytest.mark.ml_model
+def test_load_uses_roberta_tokenizer_not_bert() -> None:
+    # 회귀 방지: 2026-08-29~2026-09-27 사이 BertTokenizerFast를 잘못 로드해온 버그
+    # (PREP-BE #135) 재발 방지용. train.py는 RobertaTokenizerFast(klue/roberta-base)
+    # 로만 학습했으므로, 서빙도 반드시 이 클래스를 명시 로드해야 한다 — 다른
+    # 토크나이저 클래스는 같은 tokenizer.json을 읽어도 다른 토큰 ID를 만들어내
+    # 에러 없이 조용히 예측 품질만 떨어뜨린다.
+    category_classifier._load.cache_clear()
+    try:
+        tokenizer, _session = category_classifier._load()
+        assert isinstance(tokenizer, RobertaTokenizerFast)
+    finally:
+        category_classifier._load.cache_clear()
+
+
+@pytest.mark.ml_model
 def test_predict_categories_returns_valid_labels_with_confidence() -> None:
-    # 실측 정확도(Avg Macro F1 0.6775, 2026-08-23 기준 계속 학습 중)가 아직 높지
-    # 않아 특정 문장의 정답 라벨을 단정하지 않는다 — 대신 라벨/확신도가 유효한
-    # 범위에서 나오는지, 그리고 pooler_output이 아니라 last_hidden_state[:,0]을
-    # 쓸 때만 나오는 "분별력 있는" 확신도 범위(거의 균등분포가 아님)를 검증한다.
+    # 특정 문장의 정답 라벨을 단정하지 않는다(모델이 계속 재학습되며 값이
+    # 바뀔 수 있음) — 대신 라벨/확신도가 유효한 범위에서 나오는지, 그리고
+    # pooler_output이 아니라 last_hidden_state[:,0]을 쓸 때만 나오는 "분별력
+    # 있는" 확신도 범위(거의 균등분포가 아님)를 검증한다.
+    # 주의: 아래 confidence 기준값은 과거 BertTokenizerFast(오답 토크나이저)
+    # 기준으로 잡혔던 것 — RobertaTokenizerFast로 수정된 뒤에는 실제 확신도가
+    # 더 높게 나올 가능성이 크다(2026-09-27 category_classifier.py docstring 참고).
+    # 임계값 자체는 하한선이라 계속 통과하겠지만, 모델 파일이 있는 환경에서
+    # 실제 값을 한 번 확인해보는 걸 권장한다.
     (category_1, category_1_confidence), (category_2, category_2_confidence) = predict_categories(
         "매일 식단 사진을 찍으면 칼로리를 계산해주는 서비스"
     )
