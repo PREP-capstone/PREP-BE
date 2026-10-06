@@ -42,6 +42,25 @@ GATE_MATRIX_TABLE: dict[tuple[str, str], dict] = {
     ("라이프스타일", "수치예측·진단"): {"verdict": "CONDITIONAL", "exemption_note": None},
 }
 
+WELLNESS_DOCUMENT_ID = "kr-mfds-wellness-0091-03-20260212"  # 웰니스 판단기준 지침서-0091-03
+LLM_GUIDE_DOCUMENT_ID = "kr-mfds-llm-digital-medical-device-1511-01-20260630"  # LLM 기반 디지털의료기기 가이드라인
+
+# 6칸 각각의 판정 근거 (document_id, article) — 룰_추출_기준_최종확정본.md 6칸 매핑표의 "근거" 열.
+# 원래 scripts/seed_gate_matrix.py에만 있었는데, GATE 응답(judge_gate)에도 "왜 이 판정인지"
+# 근거 조문을 붙이기 위해 여기로 옮겼다(2026-10-01) — 시드와 API가 같은 상수를 봐야 둘이
+# 갈라지지 않는다. article은 §1.5.1 표기 규칙을 따르며 RAG evidence_chunks.section_id와
+# 조인되는 키다. III.2.가/III.2.다는 2026-08-17 정합성 점검에서 III.가/III.다 표기 오류를
+# 운영 DB에서 고친 값이다(룰베이스_RAG_정합성_추적표.md v1.3) — 시드 스크립트엔 그 수정이
+# 반영돼 있지 않았다.
+GATE_MATRIX_LEGAL_BASIS: dict[tuple[str, str], tuple[str, str]] = {
+    ("생체지표", "단순기록"): (WELLNESS_DOCUMENT_ID, "IV.1.가"),
+    ("생체지표", "비교·추이분석"): (WELLNESS_DOCUMENT_ID, "III.2.가"),
+    ("생체지표", "수치예측·진단"): (WELLNESS_DOCUMENT_ID, "IV.3"),
+    ("라이프스타일", "단순기록"): (WELLNESS_DOCUMENT_ID, "IV.1"),
+    ("라이프스타일", "비교·추이분석"): (WELLNESS_DOCUMENT_ID, "III.2.다"),
+    ("라이프스타일", "수치예측·진단"): (LLM_GUIDE_DOCUMENT_ID, "표3-1"),
+}
+
 
 # ---- 침습적 하드체크 (6칸 표 조회 **이전** 단계) ----
 #
@@ -60,6 +79,11 @@ HARDCHECK_AVOIDANCE_REDESIGN = (
     "기기연동을 없애고 사용자가 직접 입력하는 방식으로 전환하면 하드체크 대상에서 제외됩니다."
 )
 HARDCHECK_AVOIDANCE_CERTIFICATION = f"침습적 측정 기능을 그대로 유지하려면 {_CERTIFICATION_GUIDANCE}"
+
+# 하드체크 FAIL의 근거 조문. 위해도 판단요소 목록(침습 여부 포함)은 III.2.가에 있고, "침습적이면
+# 고위해도라 개인용 건강관리제품이 아닌 것으로 본다"는 판정 규정은 III.2.나에 있다 — FAIL이라는
+# 결론의 근거는 판정 규정 쪽이라 III.2.나를 쓴다.
+HARDCHECK_LEGAL_BASIS: tuple[str, str] = (WELLNESS_DOCUMENT_ID, "III.2.나")
 
 # D-1 확정 (2026-08-12) — 판단 기준은 **"각질층을 관통하는가"**.
 # 근거: 지침서-0091-03 고위해도 2번 "피부 뚫어 혈액 채취, 체내 삽입".

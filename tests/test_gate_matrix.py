@@ -8,11 +8,15 @@
 
 import pytest
 
+from app.domain.legal_documents import DOCUMENT_TITLES
+from app.pipeline.article_ref import normalize_article
 from app.pipeline.gate_matrix_table import (
     DATA_TYPE_ENUM,
     FUNCTION_TYPE_ENUM,
+    GATE_MATRIX_LEGAL_BASIS,
     GATE_MATRIX_TABLE,
     GENETIC_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_LEGAL_BASIS,
     HARDCHECK_VERDICT,
     INVASIVE_KEYWORDS,
     MATRIX_VERDICT_ENUM,
@@ -72,6 +76,25 @@ def test_invasive_criterion_is_stated_in_prompt() -> None:
 
     assert "각질층을 관통하는가" in _SYSTEM_PROMPT
     assert "마이크로니들" in _SYSTEM_PROMPT  # 패치 분기 예시가 살아 있는지
+
+
+def test_every_matrix_cell_and_hardcheck_has_a_legal_basis() -> None:
+    """GATE 응답의 legal_basis(판정엔진_개발설계서.md §10.5)는 이 상수에서만 온다 — 칸이 하나라도
+    빠지면 judge_gate가 KeyError로 죽는다."""
+    assert set(GATE_MATRIX_LEGAL_BASIS) == set(GATE_MATRIX_TABLE)
+    assert HARDCHECK_LEGAL_BASIS[1] == "III.2.나"
+
+
+@pytest.mark.parametrize(
+    ("document_id", "article"), sorted(set(GATE_MATRIX_LEGAL_BASIS.values()) | {HARDCHECK_LEGAL_BASIS})
+)
+def test_gate_legal_basis_uses_normalized_article_and_known_document(document_id: str, article: str) -> None:
+    """article은 RAG evidence_chunks.section_id와 조인되는 키라 §1.5.1 정규화가 끝난 값이어야 한다 —
+    아니면 quote 조회가 에러 없이 MISSING_CHUNK로 조용히 빈다. III.가/III.다처럼 문서 구조를 건너뛴
+    표기(2026-08-17 정합성 점검에서 발견, 운영 DB만 고쳐졌던 것)가 다시 들어오지 않게 같이 막는다."""
+    assert normalize_article(article) == article
+    assert article not in {"III.가", "III.다"}
+    assert document_id in DOCUMENT_TITLES
 
 
 def test_verdict_priority_orders_fail_first() -> None:
