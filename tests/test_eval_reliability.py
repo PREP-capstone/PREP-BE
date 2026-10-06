@@ -12,6 +12,7 @@ import pytest
 from scripts import eval_reliability as er
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "data" / "eval" / "golden_set_template.csv"
+GOLDEN = TEMPLATE.parent / "golden_set.csv"
 
 
 def test_cohen_kappa_matches_hand_computation() -> None:
@@ -75,6 +76,15 @@ def test_template_rows_parse_into_cases() -> None:
     ]
     assert first.service_actions == ["record", "visualize_trend"]
     assert [case.case_id for case in er.load_cases(TEMPLATE, split="dev")] == ["EX02"]
+
+
+def test_golden_set_is_loadable_with_unique_ids_and_known_splits() -> None:
+    # 팀이 엑셀로 직접 고치는 파일이라, 형식 오류(잘못된 판정값·수집방법, 빈 데이터 항목, 중복 번호)를
+    # 측정을 돌리기 전에 CI에서 먼저 잡는다. split=example은 템플릿 전용이다.
+    cases = er.load_cases(GOLDEN)
+    case_ids = [case.case_id for case in cases]
+    assert len(case_ids) == len(set(case_ids))
+    assert {case.split for case in cases} <= {"dev", "test"}
 
 
 def _fake_result(summary: str) -> dict:
