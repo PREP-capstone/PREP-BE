@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import pytest
+
 from scripts import import_postgres_seed_data as seed
 
 
@@ -60,3 +62,13 @@ def test_seed_sheet_excludes_example_rows_and_covers_every_competitor() -> None:
         if all(c[key] for key in ("category_1", "category_2", "target", "service_type", "bm_pattern"))
     }
     assert contributing == eligible
+
+
+def test_prune_limit_stops_when_too_many_competitors_would_be_deleted() -> None:
+    within_limit = [f"CP{i:03d}" for i in range(seed.MAX_COMPETITOR_PRUNE)]
+    seed.check_prune_limit(within_limit, allow_large_prune=False)  # 상한 이하는 통과
+
+    over_limit = [*within_limit, "CP999"]
+    with pytest.raises(SystemExit):
+        seed.check_prune_limit(over_limit, allow_large_prune=False)
+    seed.check_prune_limit(over_limit, allow_large_prune=True)  # 명시적으로 허용하면 통과

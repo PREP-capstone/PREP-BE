@@ -9,7 +9,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +35,10 @@ NS = {
 }
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 EXAMPLE_ROW_NOTE_PREFIX = "예시행"
+# 한 번의 임포트로 지울 수 있는 competitors 행 수 상한. 수집 시트의 competitor_id는 수식이라,
+# 계산값 없이 저장된 파일을 읽으면 일부 행만 읽힐 수 있다 — 그 상태로 "시드에 없는 행"을 지우면
+# 실제 경쟁사가 DB에서 사라진다. 상한을 넘으면 아무것도 쓰지 않고 멈춘다(--allow-large-prune으로 해제).
+MAX_COMPETITOR_PRUNE = 5
 DOMESTIC_COUNTRY = "한국"
 
 
@@ -401,20 +405,43 @@ async def upsert_model(model: type[Any], rows: list[dict[str, Any]]) -> None:
         await session.commit()
 
 
+async def find_rows_absent_from_seed(model: type[Any], rows: list[dict[str, Any]]) -> list[str]:
+    """DB에는 있는데 시드에는 없는 행의 기본키 목록. rows가 비어 있으면 시트를 못 읽은 것일 수
+    있으므로 빈 목록을 돌려준다(아무것도 지우지 않는다)."""
+    if not rows:
+        return []
+    (primary_key,) = model.__table__.primary_key.columns
+    column = getattr(model, primary_key.name)
+    keep = [row[primary_key.name] for row in rows]
+    async with AsyncSessionLocal() as session:
+        return sorted((await session.scalars(select(column).where(column.notin_(keep)))).all())
+
+
 async def delete_rows_absent_from_seed(model: type[Any], rows: list[dict[str, Any]]) -> int:
     """시드에 없는 행을 지운다 — upsert만 하면 예시행이나 예전 mapping_id가 DB에 남는다.
 
-    competitors(시트가 원본)와 bm_mapping(competitors에서 파생)에만 쓴다. rows가 비어 있으면
-    시트를 못 읽은 것일 수 있으므로 아무것도 지우지 않는다.
+    competitors(시트가 원본)와 bm_mapping(competitors에서 파생)에만 쓴다.
     """
-    if not rows:
+    absent = await find_rows_absent_from_seed(model, rows)
+    if not absent:
         return 0
     (primary_key,) = model.__table__.primary_key.columns
-    keep = [row[primary_key.name] for row in rows]
     async with AsyncSessionLocal() as session:
-        result = await session.execute(delete(model).where(getattr(model, primary_key.name).notin_(keep)))
+        result = await session.execute(delete(model).where(getattr(model, primary_key.name).in_(absent)))
         await session.commit()
     return result.rowcount
+
+
+def check_prune_limit(absent_competitors: list[str], allow_large_prune: bool) -> None:
+    """지울 competitors가 상한을 넘으면 멈춘다 — 시트를 일부만 읽은 상태로 운영 DB를 지우는 사고 방지."""
+    if len(absent_competitors) <= MAX_COMPETITOR_PRUNE or allow_large_prune:
+        return
+    preview = ", ".join(absent_competitors[:10])
+    raise SystemExit(
+        f"중단: 시드에 없는 competitors가 {len(absent_competitors)}행입니다(상한 {MAX_COMPETITOR_PRUNE}행). "
+        f"시트의 competitor_id 계산값이 빠진 채 저장됐을 수 있습니다. 대상: {preview} ...\n"
+        "정말 지우려는 것이면 --allow-large-prune을 붙여 다시 실행하세요. DB에는 아무것도 쓰지 않았습니다."
+    )
 
 
 async def main() -> None:
@@ -423,6 +450,11 @@ async def main() -> None:
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--dry-run", action="store_true", help="Parse XLSX files without DB writes.")
+    parser.add_argument(
+        "--allow-large-prune",
+        action="store_true",
+        help=f"시드에 없는 competitors를 {MAX_COMPETITOR_PRUNE}행 넘게 지우는 것을 허용",
+    )
     args = parser.parse_args()
 
     datasets = load_all(args.data_dir)
@@ -433,12 +465,16 @@ async def main() -> None:
     if args.dry_run:
         return
 
+    seed_rows = {model: rows for model, rows in datasets}
+    # 쓰기 전에 먼저 확인한다 — 상한을 넘으면 upsert도 하지 않고 멈춘다.
+    check_prune_limit(await find_rows_absent_from_seed(Competitor, seed_rows[Competitor]), args.allow_large_prune)
+
     for model, rows in datasets:
         await upsert_model(model, rows)
 
     # bm_mapping이 competitors보다 먼저 정리돼야 하는 FK는 없지만, 파생 테이블부터 지운다.
     for model in (BmMapping, Competitor):
-        rows = next(rows for dataset_model, rows in datasets if dataset_model is model)
+        rows = seed_rows[model]
         deleted = await delete_rows_absent_from_seed(model, rows)
         if deleted:
             print(f"{model.__tablename__}: 시드에 없는 {deleted}행 삭제")
