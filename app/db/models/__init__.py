@@ -19,7 +19,9 @@ from app.db.models.evidence_chunk import EvidenceChunk
 from app.db.models.evidence_document import EvidenceDocument
 from app.db.models.gate_keyword import GateKeyword
 from app.db.models.gate_matrix import GateMatrix
+from app.db.models.law_amendment_alert import LawAmendmentAlert
 from app.db.models.proposal import ProposalFieldDefinition, ProposalTemplateFieldMap
+from app.db.models.rule_review_queue import RuleReviewQueue
 from app.db.models.rule_version import RuleVersion
 from app.db.models.signal_config import SignalConfig
 from app.db.models.verb_substitution import VerbSubstitution
@@ -40,10 +42,12 @@ __all__ = [
     "GateKeyword",
     "GateMatrix",
     "HealthDataItem",
+    "LawAmendmentAlert",
     "MvpStrategyTemplate",
     "ProposalFieldDefinition",
     "ProposalTemplateFieldMap",
     "PublicDataCatalog",
+    "RuleReviewQueue",
     "RuleVersion",
     "SectionLinkRule",
     "ServiceLawMap",

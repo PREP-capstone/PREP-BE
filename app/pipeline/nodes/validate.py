@@ -6,6 +6,7 @@ Stage C: 필수필드/점수범위(0~3, regulatory·advertising 2축)/인용(leg
 """
 
 import re
+import uuid
 
 from sqlalchemy import func, select
 
@@ -49,6 +50,7 @@ _STAGE_C_REQUIRED_FIELDS = [
 
 async def auto_validate(state: PipelineState) -> dict:
     failed_checks: list[str] = []
+    failed_drafts: list[dict] = []
     valid_drafts: list[ExtractedDraft] = []
     seen_keywords: set[str] = set()
     seen_matrix_combos: set[tuple[str, str, str | None]] = set()
@@ -73,6 +75,9 @@ async def auto_validate(state: PipelineState) -> dict:
 
         if checks:
             failed_checks.extend(checks)
+            # retry_extract가 "어느 청크를, 왜 다시 뽑아야 하는지" 알아야 해서 draft 자체를
+            # 사유와 함께 보존한다 — 예전엔 집계(failed_counts)만 남기고 버렸다.
+            failed_drafts.append({"draft": draft, "reasons": checks})
         else:
             valid_drafts.append(draft)
             if draft["stage"] == "A":
@@ -90,8 +95,59 @@ async def auto_validate(state: PipelineState) -> dict:
         "passed": len(failed_checks) == 0,
         "failed_checks": sorted(set(failed_checks)),
         "failed_counts": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+        "failed_drafts": failed_drafts,
     }
     return {"drafts": valid_drafts, "validation": validation}
+
+
+def draft_identity(draft: ExtractedDraft) -> tuple | None:
+    """중복 판정에 쓰는 키. 필드가 빠져 키를 못 만들면 None."""
+    fields = draft.get("fields") or {}
+    try:
+        if draft["stage"] == "A":
+            return ("A", _normalize_keyword(fields["keyword"]))
+        if draft["stage"] == "B":
+            return ("B", *_matrix_combo(fields))
+        if draft["stage"] == "C":
+            return ("C", fields["risky_text"].strip().lower())
+    except (KeyError, AttributeError):
+        return None
+    return None
+
+
+def structural_errors(draft: ExtractedDraft) -> list[str]:
+    """DB·원문 대조 없이 볼 수 있는 검증(필수필드/enum/범위)만 돌린다.
+
+    검수 API가 승인 전에 호출한다 — 이게 걸린 draft가 publish로 넘어가 실패하면 체크포인트는
+    이미 human_review를 지난 뒤라, 재제출해도 새 결정이 반영되지 않고 같은 publish만 반복
+    실패한다(2026-10-06 LangGraph로 재현 확인). 인용미확인·중복후보는 사람이 판단해 승인할 수
+    있어 여기서 막지 않는다.
+    """
+    stage = draft.get("stage")
+    if stage == "A":
+        checks = _check_required_fields_a(draft)
+        if not checks:
+            checks = _check_enums_a(draft) + _check_weight_range(draft)
+    elif stage == "B":
+        checks = _check_required_fields_b(draft) or _check_enums_b(draft)
+    elif stage == "C":
+        checks = _check_required_fields_c(draft)
+        if not checks:
+            checks = _check_score_range_c(draft) + _check_derived_keyword_id_format(draft)
+    else:
+        checks = ["값오류"]
+    return sorted(set(checks))
+
+
+def _check_derived_keyword_id_format(draft: ExtractedDraft) -> list[str]:
+    derived_id = draft["fields"].get("derived_from_keyword_id")
+    if derived_id is None:
+        return []
+    try:
+        uuid.UUID(str(derived_id))
+    except ValueError:
+        return ["값오류"]
+    return []
 
 
 async def _load_existing_keywords() -> set[str]:

@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     funding_fetch_limit: int = 100
     funding_request_timeout_seconds: float = 8.0
     startup_plus_project_url: str = "https://www.startup-plus.kr/project"
+    # 관리자 검수(/admin/rule-*) Basic Auth 계정. "user1:pass1,user2:pass2" 형태.
+    # 캡스톤 규모라 별도 admin_users 테이블 없이 env로만 관리하기로 확정(2026-09-27).
+    admin_credentials: str = ""
+    # 국가법령정보센터 Open API 인증키(OC) — scripts/check_law_amendments.py 전용.
+    law_go_kr_oc: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -51,6 +56,17 @@ class Settings(BaseSettings):
             for origin in self.cors_allow_origins.split(",")
             if origin.strip()
         ]
+
+    @property
+    def admin_credential_map(self) -> dict[str, str]:
+        pairs = [pair.strip() for pair in self.admin_credentials.split(",") if pair.strip()]
+        return dict(pair.split(":", 1) for pair in pairs if ":" in pair)
+
+    @property
+    def database_url_psycopg(self) -> str:
+        """LangGraph AsyncPostgresSaver는 psycopg(v3) 연결 문자열을 쓴다 — SQLAlchemy가
+        쓰는 asyncpg 드라이버 접두어(+asyncpg)와 달라 여기서 변환한다."""
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
 @lru_cache
