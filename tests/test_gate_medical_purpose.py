@@ -164,3 +164,38 @@ def test_negation_on_another_phrase_does_not_hide_medical_purpose(description: s
 )
 def test_negation_attached_to_the_keyword_is_respected(description: str) -> None:
     assert detect_medical_purpose(description) is None
+
+
+async def test_negated_expression_is_reported_without_changing_verdict(monkeypatch) -> None:
+    """부정 문맥으로 보고 넘긴 경우 — 판정은 표의 결과 그대로지만 넘긴 문구와 안내 한 줄이 응답에 남는다."""
+    steps = [HealthDataItemInput(name="걸음수", data_type="numeric", source="os_sync", item_code="lifestyle_001")]
+    _patch(monkeypatch, "질병을 진단하거나 치료하지 않고 걸음수만 기록한다.", steps, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.verdict == "PASS"
+    assert response.medical_purpose_fired is False
+    assert "진단하거나 치료하지" in response.medical_purpose_negated_phrase
+    assert len(response.reasoning) == 5
+    assert response.medical_purpose_negated_phrase in response.reasoning[-1]
+    assert "반영하지 않았습니다" in response.reasoning[-1]
+
+
+async def test_no_note_when_description_has_no_medical_expression(monkeypatch) -> None:
+    _patch(monkeypatch, "취침·기상 시간을 기록하고 주간 수면 패턴 리포트를 보여준다.", _SLEEP, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.medical_purpose_negated_phrase is None
+    assert len(response.reasoning) == 4
+
+
+async def test_record_expressions_are_neither_fired_nor_reported(monkeypatch) -> None:
+    """"진단명", "처방전"은 의료 목적과 무관한 기록 표현이라 안내도 붙지 않는다."""
+    _patch(monkeypatch, "병원에서 받은 진단명과 처방전을 기록해 두는 앱", _SLEEP, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.verdict == "PASS"
+    assert response.medical_purpose_negated_phrase is None
+    assert len(response.reasoning) == 4

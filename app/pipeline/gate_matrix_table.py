@@ -250,21 +250,38 @@ def _is_negated(clause_tail: str) -> bool:
     return bool(lack and not _VERB_MARKER.search(clause_tail[: lack.start()]))
 
 
+def scan_medical_purpose(text: str) -> tuple[str | None, str | None]:
+    """설명문의 진단·치료·처방 표현을 훑어 (의료 목적으로 본 문구, 부정 문맥으로 보고 넘긴 문구)를 돌려준다.
+
+    첫 번째 값이 있으면 FAIL 근거다. 두 번째 값은 첫 번째가 없을 때만 채운다 — 판정에는 쓰지 않고
+    "의료 표현이 있었지만 부정 문맥으로 보고 반영하지 않았다"는 사실을 응답에 남기는 용도다. 부정
+    판단은 단어 규칙이라 틀릴 수 있고, 틀리면 의료기기를 PASS로 내보내는 방향이라 조용히 넘기지
+    않는다(2026-10-07 결정). 기록 표현("진단명", "처방전")은 의료 목적과 무관해 어느 쪽에도 넣지 않는다.
+    """
+    negated_phrase = None
+    for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
+        tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
+        boundary = _CLAUSE_BOUNDARY.search(tail_raw)
+        clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
+        if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail):
+            continue
+        start = max(match.start() - _PHRASE_CONTEXT, 0)
+        if _is_negated(clause_tail):
+            if negated_phrase is None:
+                # 부정어까지 보이도록 뒤쪽을 더 길게 자른다.
+                negated_phrase = text[start : match.end() + _PHRASE_CONTEXT * 2].strip()
+            continue
+        return text[start : match.end() + _PHRASE_CONTEXT].strip(), None
+    return None, negated_phrase
+
+
 def detect_medical_purpose(text: str) -> str | None:
     """설명문에 서비스가 질병을 진단·치료·처방한다는 표현이 있으면 그 주변 문구를, 없으면 None을 돌려준다.
 
     돌려준 문구는 GATE 응답의 판정 이유에 그대로 실린다 — 어떤 표현 때문에 FAIL인지 사용자가 볼 수
     있어야 잘못 잡힌 경우에도 원인을 바로 안다.
     """
-    for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
-        tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
-        boundary = _CLAUSE_BOUNDARY.search(tail_raw)
-        clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
-        if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail) or _is_negated(clause_tail):
-            continue
-        start = max(match.start() - _PHRASE_CONTEXT, 0)
-        return text[start : match.end() + _PHRASE_CONTEXT].strip()
-    return None
+    return scan_medical_purpose(text)[0]
 
 
 def is_invasive_hardcheck(data_type: str, acquire_method: str | None, invasive_signal: bool) -> bool:

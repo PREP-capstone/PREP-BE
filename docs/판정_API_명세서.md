@@ -98,7 +98,8 @@ Authorization: Bearer `<accessToken>`
     "quote_message": "string|null"
   },
   "medical_purpose_fired": false,
-  "medical_purpose_phrase": "string|null"
+  "medical_purpose_phrase": "string|null",
+  "medical_purpose_negated_phrase": "string|null"
 }
 ```
 
@@ -115,6 +116,10 @@ Authorization: Bearer `<accessToken>`
   - 부정 표현은 같은 절 끝까지 본다. "진단하거나 치료하지 않고", "진단이나 예측 없이",
     "의료적 진단이나 치료를 대신하지 않습니다"는 대상이 아니다.
   - 표가 이미 FAIL이면(생체지표 × 수치예측·진단) 이 검사는 하지 않고 표의 근거를 그대로 쓴다.
+- `medical_purpose_negated_phrase`(2026-10-07 추가): 설명문에 진단·치료·처방 표현이 있었지만 부정
+  문맥으로 보고 판정에 반영하지 않은 경우 그 문구. **판정은 바뀌지 않는다.** 부정 판단은 단어 규칙이라
+  틀릴 수 있어, 넘긴 사실을 숨기지 않으려고 남긴다. 값이 있으면 `reasoning` 끝에 같은 내용의 안내가
+  한 줄 덧붙어 **5줄**이 된다(그 밖의 경우는 4줄 그대로).
 - `legal_basis`(2026-10-01 추가): verdict를 낸 근거 조문. 매트릭스 판정이면 6칸 각각의 근거
   (`gate_matrix_table.GATE_MATRIX_LEGAL_BASIS`), 침습적 하드체크면 웰니스 판단기준 `III.2.나`
   (고위해도 판정 규정)다. 공용 `LegalBasis` 형식이라 `quote`/`quote_status`는 위 표와 같은 규칙으로

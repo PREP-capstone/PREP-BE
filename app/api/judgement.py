@@ -46,7 +46,7 @@ from app.pipeline.gate_matrix_table import (
     MEDICAL_PURPOSE_VERDICT,
     detect_genetic_test_signal,
     detect_invasive,
-    detect_medical_purpose,
+    scan_medical_purpose,
     is_invasive_hardcheck,
 )
 from app.schemas.common import ApiResponse, HealthDataItemInput, LegalBasis
@@ -159,6 +159,10 @@ class GateResponse(BaseModel):
     # medical_purpose_phrase는 그 판단의 근거가 된 설명문 문구다. 해당 없으면 False / None.
     medical_purpose_fired: bool = False
     medical_purpose_phrase: str | None = None
+    # 설명문에 진단·치료·처방 표현이 있었지만 부정 문맥("진단하지 않는다" 등)으로 보고 판정에
+    # 반영하지 않은 문구. 판정은 바뀌지 않는다 — 부정 판단이 틀렸을 때 알아챌 수 있도록 남긴다.
+    # 값이 있으면 reasoning 끝에 같은 내용의 안내 한 줄이 덧붙는다.
+    medical_purpose_negated_phrase: str | None = None
 
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -288,6 +292,13 @@ def _build_medical_purpose_reasoning(
     ]
 
 
+def _describe_negated_medical_purpose(phrase: str) -> str:
+    return (
+        f"서비스 설명의 \"{phrase}\"에 진단·치료·처방 표현이 있지만, 그 행위를 하지 않는다는 문맥으로 보고 "
+        "판정에 반영하지 않았습니다. 실제로 그 기능을 제공한다면 의료기기 해당 가능성이 높으니 다시 확인하세요."
+    )
+
+
 def _detect_invasive_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
     # detect_invasive()는 내부에서 공백을 전부 지우고 매칭한다 — 서로 다른 필드를
     # 이어붙이면 경계가 사라져 부정표현/키워드가 필드를 가로질러 엉뚱하게 매칭된다.
@@ -358,8 +369,8 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
     # 의료 목적 하드체크 — 6칸 표가 이미 FAIL이면 그 근거(매트릭스 칸)를 그대로 쓰고, FAIL이 아닐
     # 때만 설명문을 본다. 표는 선택한 기능만 보므로 "진단하고 치료법을 처방한다"고 쓰고 기록만
     # 고른 서비스가 PASS로 나오던 것을 막는다(gate_matrix_table.py의 의료 목적 하드체크 주석 참조).
-    medical_purpose_phrase = (
-        detect_medical_purpose(analysis_session.service_description) if cell["verdict"] != "FAIL" else None
+    medical_purpose_phrase, negated_phrase = (
+        scan_medical_purpose(analysis_session.service_description) if cell["verdict"] != "FAIL" else (None, None)
     )
     if medical_purpose_phrase:
         return GateResponse(
@@ -396,10 +407,14 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         hardcheck_fired=False,
         avoidance_redesign=cell.get("avoidance_redesign"),
         avoidance_certification=avoidance_certification,
-        reasoning=_build_gate_reasoning(
-            data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
-        ),
+        reasoning=[
+            *_build_gate_reasoning(
+                data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
+            ),
+            *([_describe_negated_medical_purpose(negated_phrase)] if negated_phrase else []),
+        ],
         legal_basis=await _gate_legal_basis(GATE_MATRIX_LEGAL_BASIS[(data_type, function_type)]),
+        medical_purpose_negated_phrase=negated_phrase,
     )
 
 
