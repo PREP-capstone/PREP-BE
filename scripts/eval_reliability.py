@@ -1,8 +1,8 @@
 """신뢰성(재현성)·타당성 측정 스크립트 — 팀 문서 "PREP 신뢰성·타당성 검증 계획" 참고.
 
-    python scripts/eval_reliability.py run      --golden data/eval/golden_set.csv [--runs 10] [--split test]
-    python scripts/eval_reliability.py kappa    --golden data/eval/golden_set.csv
-    python scripts/eval_reliability.py baseline --golden data/eval/golden_set.csv [--runs 10] [--temperature 1.0]
+    python scripts/eval_reliability.py run      --golden data/eval/golden_set_<이름>.csv [--runs 10] [--split test]
+    python scripts/eval_reliability.py kappa    --golden data/eval/golden_set_<이름>.csv
+    python scripts/eval_reliability.py baseline --golden data/eval/golden_set_<이름>.csv [--runs 10] [--temperature 1.0]
                                                 [--compare data/eval/results/run_....json]
     python scripts/eval_reliability.py bm-loo
 
@@ -326,7 +326,9 @@ def layer_a(result: dict) -> dict:
         "regulatory.final_grade": regulatory["final_regulatory_grade"],
         "data_feasibility.risk_level": data["risk_level"] if data else None,
         "market.realism_grade": market["market_realism_grade"] if market else None,
-        "business_model.match_level": bm["match_level"] if bm else None,
+        # match_level은 응답 직렬화에서 빠지는 필드(Field(exclude=True))라 덤프에는 없다 —
+        # 1:1로 대응하는 공개 필드 match_scope_description으로 대신 비교한다.
+        "business_model.match_level": bm.get("match_level", bm.get("match_scope_description")) if bm else None,
         "overall_signal": result["overall_signal"],
     }
 
@@ -935,7 +937,7 @@ def main() -> None:
 
     def add_common(sub, needs_golden: bool = True) -> None:
         if needs_golden:
-            sub.add_argument("--golden", default=str(ROOT / "data" / "eval" / "golden_set.csv"), help="골든셋 CSV 경로")
+            sub.add_argument("--golden", required=True, help="골든셋 CSV 경로 (담당자별 파일, 예: data/eval/golden_set_lmg.csv)")
             sub.add_argument("--split", help="이 split만 사용 (예: test)")
         sub.add_argument("--out", default=str(DEFAULT_OUT_DIR), help="결과 저장 폴더")
 
