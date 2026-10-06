@@ -27,6 +27,12 @@ class LLMUnavailable(Exception):
 
 _REQUEST_TIMEOUT_SECONDS = 15.0  # correction_llm.py(LLM①)와 통일 (D-16).
 
+# correction_llm.py·proposal_llm.py·extract_a/b/c.py와 같은 0 고정. 이 모듈만 지정이 빠져
+# OpenAI 기본값(1.0)으로 돌고 있어 같은 세션으로 리포트를 다시 만들면 서술이 매번 크게
+# 달라졌다(신뢰성 검증 준비 중 발견, 2026-10-01). 0이어도 매번 같다는 보장은 없지만 흔들림
+# 폭이 크게 줄어든다 — 판정값은 애초에 이 모듈이 만들지 않으므로(§12) 영향 범위는 서술뿐이다.
+_TEMPERATURE = 0
+
 
 def _build_client() -> AsyncOpenAI:
     if not settings.openai_api_key:
@@ -69,6 +75,7 @@ async def generate_differentiation_point(service_description: str, competitor_ca
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            temperature=_TEMPERATURE,
             messages=[
                 {"role": "system", "content": _DIFFERENTIATION_SYSTEM_PROMPT},
                 {
@@ -143,6 +150,7 @@ async def generate_bm_card_strengths(service_description: str, recommendations: 
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            temperature=_TEMPERATURE,
             messages=[
                 {"role": "system", "content": _BM_STRENGTH_SYSTEM_PROMPT},
                 {"role": "user", "content": f"서비스 설명: {service_description}\n\nBM 후보:\n{cards_text}"},
@@ -191,6 +199,7 @@ async def generate_overall_summary(report_context: str) -> str:
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            temperature=_TEMPERATURE,
             messages=[
                 {"role": "system", "content": _OVERALL_SUMMARY_SYSTEM_PROMPT},
                 {"role": "user", "content": report_context},
@@ -235,6 +244,7 @@ async def generate_one_liner(report_context: str) -> str:
     try:
         response = await client.chat.completions.create(
             model=settings.openai_model,
+            temperature=_TEMPERATURE,
             messages=[
                 {"role": "system", "content": _ONE_LINER_SYSTEM_PROMPT},
                 {"role": "user", "content": report_context},

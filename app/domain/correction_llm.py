@@ -35,7 +35,10 @@ from app.pipeline.article_ref import normalize_article
 # /evaluate 전체가 그만큼 늘어진다. trend_client.py의 외부 API 타임아웃(10초)과 같은 결.
 _REQUEST_TIMEOUT_SECONDS = 15.0
 
-# temperature=0이라 같은 service_description은 항상 같은 결과를 내므로 캐싱이 안전하다(D-16).
+# 같은 service_description이면 같은 결과를 돌려줘도 되므로 캐싱한다(D-16). temperature=0이어도
+# OpenAI 출력이 매번 같다는 보장은 없다(팀 실측에서도 7:1로 갈린 케이스가 있었음) — TTL 동안
+# 같은 답을 보장하는 건 오히려 이 캐시다. 그래서 반복 측정할 때는 settings.
+# llm_response_cache_enabled=False로 꺼야 LLM 자체의 흔들림이 보인다.
 # trend_client.py(24시간)보다 짧게 잡는다 — 법령/가이드 문서가 갱신되면 프롬프트의
 # _KNOWN_DOCUMENTS 목록도 바뀔 수 있어서 하루씩 묵히면 갱신 반영이 너무 늦어진다.
 _CACHE_TTL_SECONDS = 60 * 60
@@ -134,12 +137,13 @@ async def generate_correction_candidates(service_description: str) -> list[dict]
     실패(quote=None)하므로, 여기서 맞춰두는 편이 quote 채워질 확률을 높인다.
     """
     cache_key = _CACHE_KEY_PREFIX + hashlib.sha256(service_description.encode()).hexdigest()
-    try:
-        cached = await redis_client.get(cache_key)
-        if cached is not None:
-            return json.loads(cached)
-    except Exception:
-        pass  # 캐시 조회 실패는 치명적이지 않다 — 그냥 다시 계산한다.
+    if settings.llm_response_cache_enabled:
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return json.loads(cached)
+        except Exception:
+            pass  # 캐시 조회 실패는 치명적이지 않다 — 그냥 다시 계산한다.
 
     client = _build_client()
     try:
@@ -171,8 +175,9 @@ async def generate_correction_candidates(service_description: str) -> list[dict]
     except (KeyError, TypeError) as error:
         raise LLMUnavailable(f"OpenAI 응답 형식이 예상과 다릅니다: {error}") from error
 
-    try:
-        await redis_client.set(cache_key, json.dumps(candidates), ex=_CACHE_TTL_SECONDS)
-    except Exception:
-        pass  # 캐시 저장 실패도 치명적이지 않다.
+    if settings.llm_response_cache_enabled:
+        try:
+            await redis_client.set(cache_key, json.dumps(candidates), ex=_CACHE_TTL_SECONDS)
+        except Exception:
+            pass  # 캐시 저장 실패도 치명적이지 않다.
     return candidates

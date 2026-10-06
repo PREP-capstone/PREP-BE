@@ -382,6 +382,27 @@ async def test_generate_missing_sections_uses_cache_on_second_call(monkeypatch) 
     assert first == second
 
 
+async def test_generate_missing_sections_skips_cache_when_disabled(monkeypatch) -> None:
+    # 반복 측정(scripts/eval_reliability.py)용 스위치 -- 꺼져 있으면 캐시에 값이 있어도 무시하고
+    # 매번 OpenAI를 다시 불러야 LLM 자체의 흔들림을 잴 수 있다. 결과도 캐시에 남기지 않는다.
+    monkeypatch.setattr(proposal_llm.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(proposal_llm.settings, "llm_response_cache_enabled", False)
+    fake_get = AsyncMock(return_value=json.dumps({"background_motivation": "캐시에 있던 값"}))
+    fake_set = AsyncMock()
+    monkeypatch.setattr(proposal_llm.redis_client, "get", fake_get)
+    monkeypatch.setattr(proposal_llm.redis_client, "set", fake_set)
+
+    target_fields = [{"field_key": "background_motivation", "label": "x", "field_type": "TEXT"}]
+    payload = json.dumps({"background_motivation": {"has_report_basis": True, "content": "새로 생성한 값"}})
+    with _patched_client(payload) as mock_openai_cls:
+        result = await generate_missing_sections("PSST", "report", {}, target_fields)
+
+    mock_openai_cls.assert_called_once()
+    assert result == {"background_motivation": "새로 생성한 값"}
+    fake_get.assert_not_awaited()
+    fake_set.assert_not_awaited()
+
+
 async def test_generate_missing_sections_splits_hallucination_prone_fields_into_own_call(monkeypatch) -> None:
     # 실측(2026-09-11): 위험 필드를 다른 필드들과 한 호출에 몰아넣으면 has_report_basis
     # 자기점검이 종종 무너졌다. 위험 필드군(현재는 bonus_criteria만 남음 -- 나머지는
