@@ -6,7 +6,7 @@
 """
 
 from app.domain.law_amendment import (
-    _article_numbers,
+    _article_keys,
     decide_relevance,
     filter_related_articles,
     find_missing_citations,
@@ -18,17 +18,21 @@ def _article(no: str, title: str = "제목") -> dict:
 
 
 def test_parses_article_number_from_our_notation() -> None:
-    assert _article_numbers("제27조") == {"27"}
+    assert _article_keys("제27조") == {"27"}
 
 
-def test_treats_branch_article_as_parent_article() -> None:
-    """가지조문(제24조의2)이 바뀌면 본조(제24조) 체계를 같이 봐야 하므로 24로 취급한다."""
-    assert _article_numbers("제24조의2") == {"24"}
+def test_keeps_branch_number_in_key() -> None:
+    assert _article_keys("제24조의2") == {"24-2"}
+
+
+def test_branch_citation_is_related_to_parent_article_change() -> None:
+    """가지조문(제24조의2)을 인용 중이면 본조(제24조) 변경도 관련으로 본다(보수적)."""
+    assert filter_related_articles([_article("24")], {"24-2"}) == [_article("24")]
 
 
 def test_guideline_notation_yields_no_article_number() -> None:
     """지침서 표기(III.2.가)는 조문 번호가 아니라 교집합 대상이 아니다."""
-    assert _article_numbers("III.2.가") == set()
+    assert _article_keys("III.2.가") == set()
 
 
 def test_filters_to_only_cited_articles() -> None:
@@ -52,7 +56,16 @@ def test_detects_citation_to_deleted_article() -> None:
     """우리가 인용하는 조문이 현행 법령에서 사라지면 그 룰은 legal_basis_article 조인이
     깨져 근거를 못 찾는다. "제25조의4 삭제" 같은 실제 케이스가 있었다."""
     current = [_article("2"), _article("27")]
-    assert find_missing_citations({"2", "27", "44"}, current) == ["44"]
+    assert find_missing_citations({"2", "27", "44"}, current) == ["제44조"]
+
+
+def test_detects_deleted_branch_article_even_when_parent_remains() -> None:
+    """제25조는 남아있고 제25조의4만 삭제된 경우 — 본조 번호로 접으면 못 잡는다."""
+    current = [
+        {"조문번호": "25", "조문키": "25"},
+        {"조문번호": "25", "조문키": "25-2"},
+    ]
+    assert find_missing_citations({"25", "25-2", "25-4"}, current) == ["제25조의4"]
 
 
 def test_no_missing_citation_when_all_articles_exist() -> None:

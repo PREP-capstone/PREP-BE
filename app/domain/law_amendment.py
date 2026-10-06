@@ -26,22 +26,30 @@ from app.db.session import AsyncSessionLocal
 
 # 우리 쪽 표기는 "제27조" 형태(article_ref.normalize_article 규칙), law.go.kr API는
 # 조문번호를 "27"처럼 숫자만 준다. 비교하려면 한쪽으로 맞춰야 한다.
-_ARTICLE_NO = re.compile(r"제\s*(\d+)\s*조")
+_ARTICLE_NO = re.compile(r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?")
 
 
-def _article_numbers(article_label: str | None) -> set[str]:
-    """"제27조", "제24조의2" 같은 표기에서 조문 번호만 뽑는다.
-
-    가지번호(제24조의2)는 본조 번호(24)로 취급한다 — 가지조문이 신설·개정되면 본조
-    체계 전체를 같이 봐야 하는 경우가 많아, 보수적으로 관련 있다고 판단하는 편이 낫다.
-    """
+def _article_keys(article_label: str | None) -> set[str]:
+    """"제27조" → "27", "제24조의2" → "24-2". law_api.article_key와 같은 형식이다."""
     if not article_label:
         return set()
-    return set(_ARTICLE_NO.findall(article_label))
+    return {
+        f"{base}-{branch}" if branch else base
+        for base, branch in _ARTICLE_NO.findall(article_label)
+    }
+
+
+def _base_number(article_key: str) -> str:
+    return article_key.split("-")[0]
+
+
+def _key_to_label(article_key: str) -> str:
+    base, _, branch = article_key.partition("-")
+    return f"제{base}조의{branch}" if branch else f"제{base}조"
 
 
 async def load_cited_articles(document_id: str) -> set[str]:
-    """이 문서(document_id)를 근거로 삼는 active 룰이 인용 중인 조문 번호 집합."""
+    """이 문서(document_id)를 근거로 삼는 active 룰이 인용 중인 조문 키 집합."""
     version_ids = await resolve_active_rule_version_ids()
     async with AsyncSessionLocal() as session:
         matrix = (
@@ -63,17 +71,25 @@ async def load_cited_articles(document_id: str) -> set[str]:
 
     cited: set[str] = set()
     for label in list(matrix) + list(rules):
-        cited |= _article_numbers(label)
+        cited |= _article_keys(label)
     return cited
 
 
-def filter_related_articles(changed_articles: list[dict], cited_numbers: set[str]) -> list[dict]:
-    """바뀐 조문 중 우리가 인용 중인 조문만 추린다."""
-    return [a for a in changed_articles if str(a.get("조문번호")) in cited_numbers]
+def filter_related_articles(changed_articles: list[dict], cited_keys: set[str]) -> list[dict]:
+    """바뀐 조문 중 우리가 인용 중인 조문만 추린다.
+
+    여기서는 본조 번호로만 비교한다(제24조의2 ↔ 제24조도 관련으로 본다) — 가지조문이
+    신설·개정되면 본조 체계 전체를 같이 봐야 하는 경우가 많아 보수적으로 잡는다.
+    """
+    cited_bases = {_base_number(key) for key in cited_keys}
+    return [a for a in changed_articles if str(a.get("조문번호")) in cited_bases]
 
 
-def find_missing_citations(cited_numbers: set[str], current_articles: list[dict]) -> list[str]:
-    """우리 룰이 인용하는 조문 중 현행 법령에 더 이상 없는 조문 번호.
+def find_missing_citations(cited_keys: set[str], current_articles: list[dict]) -> list[str]:
+    """우리 룰이 인용하는 조문 중 현행 법령에 더 이상 없는 조문 표기("제25조의4").
+
+    관련 판정과 달리 가지번호까지 정확히 대조한다 — 본조 번호로 접으면 제25조가 남아있는 한
+    제25조의4가 삭제돼도 못 잡는다.
 
     설계 단계에선 "기존 룰의 legal_basis.quote가 현행 조문에 남아있는지" 검사하려 했으나,
     확인해보니 gate_matrix/correction_rules에는 quote 컬럼이 아예 없다 — 인용문은 런타임에
@@ -83,8 +99,12 @@ def find_missing_citations(cited_numbers: set[str], current_articles: list[dict]
 
     "제25조의4 삭제 <2026.9.15>" 같은 케이스가 실제로 있었다(의료기기법, 2026-09-27 확인).
     """
-    existing = {str(a.get("조문번호")) for a in current_articles}
-    return sorted(no for no in cited_numbers if no not in existing)
+    existing = {a.get("조문키") or str(a.get("조문번호")) for a in current_articles}
+    missing = sorted(
+        (key for key in cited_keys if key not in existing),
+        key=lambda key: [int(part) for part in key.split("-")],
+    )
+    return [_key_to_label(key) for key in missing]
 
 
 def decide_relevance(document_id: str | None, related_articles: list[dict]) -> str:

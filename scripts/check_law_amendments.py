@@ -157,8 +157,8 @@ async def main() -> None:
                 f"  ⚠️ {article['조문표기']} {article['조문제목']} "
                 f"(시행 {article['조문시행일자']}) — 우리 룰이 인용 중"
             )
-        for article_no in missing:
-            print(f"  🚨 제{article_no}조 — 우리 룰이 인용하는데 현행 법령에 없음(삭제·이동)")
+        for article_label in missing:
+            print(f"  🚨 {article_label} — 우리 룰이 인용하는데 현행 법령에 없음(삭제·이동)")
 
     print("\n결과는 law_amendment_alert 테이블에 기록됐습니다 — /admin/rules 배너에서 확인하세요.")
 

@@ -20,13 +20,30 @@ from app.db.session import AsyncSessionLocal
 pytestmark = pytest.mark.db
 
 
+_LEGAL_BASIS = {"document_id": "test-decision-doc", "article": "제1조", "quote": "테스트 조문"}
+_VALID_DRAFT = {
+    "stage": "A",
+    "fields": {
+        "type": "DISEASE",
+        "keyword": "테스트키워드",
+        "keyword_category": "DATA_TYPE",
+        "data_type_focus": "NONE",
+        "verdict": "FAIL_CANDIDATE",
+        "weight": 2,
+        "legal_basis": _LEGAL_BASIS,
+    },
+    "legal_basis": _LEGAL_BASIS,
+    "source_chunk_id": "chunk-1",
+}
+
+
 async def _seed_pending(thread_id: str) -> None:
     async with AsyncSessionLocal() as session:
         session.add(
             RuleReviewQueue(
                 thread_id=thread_id,
                 document_id="test-decision-doc",
-                items=[{"draft": {"stage": "A"}, "status": "auto_passed", "reasons": []}],
+                items=[{"draft": _VALID_DRAFT, "status": "auto_passed", "reasons": []}],
                 chunks=[],
                 status="pending",
             )
@@ -101,6 +118,38 @@ async def test_decision_rejects_second_submit() -> None:
             with pytest.raises(HTTPException) as error:
                 await decide_rule_draft(thread_id, _request(), reviewer="tester")
         assert error.value.status_code == 409
+    finally:
+        await _cleanup(thread_id)
+
+
+async def test_decision_blocks_approving_unpublishable_draft() -> None:
+    """행으로 만들 수 없는 draft를 승인하면 그래프를 재개하기 전에 422로 막아야 한다 —
+    publish에서 터지면 체크포인트가 human_review를 지나 있어 재제출로 복구가 안 된다."""
+    thread_id = str(uuid.uuid4())
+    await _seed_pending(thread_id)
+    try:
+        ainvoke = AsyncMock()
+        request = RuleDraftDecisionRequest(
+            decisions=[DecisionItem(action="approve", edited_fields={"weight": "높음"})]
+        )
+        with (
+            patch.object(rule_documents, "get_checkpointer", lambda: None),
+            patch.object(rule_documents, "build_graph", lambda checkpointer=None: _graph(ainvoke)),
+            pytest.raises(HTTPException) as error,
+        ):
+            await decide_rule_draft(thread_id, request, reviewer="tester")
+        assert error.value.status_code == 422
+        ainvoke.assert_not_called()
+        assert await _status(thread_id) == "pending"
+
+        # 같은 항목을 반려하는 건 막지 않는다.
+        request = RuleDraftDecisionRequest(decisions=[DecisionItem(action="reject")])
+        with (
+            patch.object(rule_documents, "get_checkpointer", lambda: None),
+            patch.object(rule_documents, "build_graph", lambda checkpointer=None: _graph(ainvoke)),
+        ):
+            result = await decide_rule_draft(thread_id, request, reviewer="tester")
+        assert result.status == "resolved"
     finally:
         await _cleanup(thread_id)
 

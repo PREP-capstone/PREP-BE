@@ -14,9 +14,17 @@ from app.core.config import settings
 from app.pipeline.nodes.extract_a import extract_chunk_A
 from app.pipeline.nodes.extract_b import extract_chunk_B
 from app.pipeline.nodes.extract_c import _load_active_keywords, extract_chunk_C
+from app.pipeline.nodes.validate import draft_identity
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 MAX_RETRY = 3
+
+# 재추출로 고쳐질 수 없는 사유 — 이미 DB/배치에 있는 값은 다시 뽑아도 똑같이 걸린다.
+_UNFIXABLE_REASONS = {"중복후보"}
+
+
+def is_retryable(entry: dict) -> bool:
+    return any(reason not in _UNFIXABLE_REASONS for reason in entry["reasons"])
 
 
 def _build_client() -> AsyncOpenAI:
@@ -47,9 +55,16 @@ async def retry_extract(state: PipelineState) -> dict:
     client = _build_client()
 
     drafts: list[ExtractedDraft] = list(state["drafts"])
+    # 청크를 통째로 다시 뽑으므로 같은 청크에서 이미 통과한 draft도 다시 나온다 — 그대로 실으면
+    # 다음 auto_validate에서 중복후보로 걸려 재시도가 영영 수렴하지 않는다.
+    passed_keys = {draft_identity(draft) for draft in drafts}
     active_keywords = None  # Stage C가 실제로 있을 때만 로드(불필요한 DB 조회 방지)
 
     for (stage, chunk_id), group in _group_by_chunk(failed_drafts).items():
+        if not any(is_retryable(entry) for entry in group):
+            drafts.extend(entry["draft"] for entry in group)
+            continue
+
         chunk = chunks_by_id.get(chunk_id)
         extra_context = _build_extra_context(group)
 
@@ -64,6 +79,8 @@ async def retry_extract(state: PipelineState) -> dict:
             retried = await extract_chunk_C(
                 client, chunk, state["document_id"], active_keywords, extra_context
             )
+
+        retried = [draft for draft in retried if draft_identity(draft) not in passed_keys]
 
         # 재추출 결과가 0건이면 원본 draft를 그대로 다시 싣는다. 해당되는 경우는 두 가지다.
         # - Stage D(미구현)이거나 원본 청크를 못 찾아 재추출 자체가 불가능한 경우

@@ -207,7 +207,9 @@ async function openDetail(threadId) {
   container.innerHTML = "";
   detail.items.forEach((item, index) => {
     const chunk = currentChunksById[item.draft.source_chunk_id] || {};
-    const statusBadge = item.status === "auto_passed"
+    // 검증 실패 항목은 반려가 기본값 — 손대지 않고 제출해도 실패분이 승인되지 않게 한다.
+    const failed = item.status !== "auto_passed";
+    const statusBadge = !failed
       ? '<span class="badge-pass">자동검증 통과</span>'
       : `<span class="badge-fail">검증 실패: ${escapeHtml(item.reasons.join(", "))}</span>`;
 
@@ -226,12 +228,15 @@ async function openDetail(threadId) {
         <br>Stage ${escapeHtml(item.draft.stage)}
         <textarea rows="8" id="fields-${index}">${escapeHtml(JSON.stringify(item.draft.fields, null, 2))}</textarea>
         <br>
-        <label><input type="radio" name="action-${index}" value="approve" checked> 승인</label>
-        <label><input type="radio" name="action-${index}" value="reject"> 반려</label>
+        <label><input type="radio" name="action-${index}" value="approve" ${failed ? "" : "checked"}> 승인</label>
+        <label><input type="radio" name="action-${index}" value="reject" ${failed ? "checked" : ""}> 반려</label>
         <input type="text" id="reason-${index}" placeholder="반려 사유(반려 시)">
       </div>
     `;
     container.appendChild(div);
+    if (failed) {
+      document.getElementById(`reason-${index}`).value = "자동검증 실패: " + item.reasons.join(", ");
+    }
   });
 }
 
@@ -356,7 +361,7 @@ async function ingestFromLaw() {
       body: JSON.stringify(body),
     });
     document.getElementById("upload-result").textContent =
-      `투입됨: document_id=${result.document_id}, 조문 ${articleNumbers.length}건 (추출 완료까지 잠시 후 새로고침)`;
+      `투입됨: document_id=${result.document_id}, 조문 ${articleKeys.length}건 (추출 완료까지 잠시 후 새로고침)`;
   } catch (err) {
     document.getElementById("upload-result").textContent = "실패: " + err.message;
   }
@@ -428,7 +433,7 @@ async function loadAlerts() {
         변경 조문 ${a.changed_count}건 · 감지 ${a.detected_at.slice(0, 10)}
       </div>
       ${a.missing_citations.length ? `<div style="margin-top:6px;color:#cf1322">
-        🚨 <b>우리 룰이 인용하는데 현행 법령에 없는 조문: ${a.missing_citations.map(n => "제" + n + "조").join(", ")}</b>
+        🚨 <b>우리 룰이 인용하는데 현행 법령에 없는 조문: ${a.missing_citations.map(n => escapeHtml(n.startsWith("제") ? n : "제" + n + "조")).join(", ")}</b>
         <div class="alert-meta">삭제·이동된 조문입니다. 해당 룰은 근거 조회(legal_basis_article 조인)가 깨진 상태라 확인이 필요합니다.</div>
       </div>` : ""}
       ${a.related_articles.length ? "<div style='margin-top:6px'><b>우리 룰이 인용 중인 변경 조문</b>" + renderArticles(a.related_articles) + "</div>" : ""}

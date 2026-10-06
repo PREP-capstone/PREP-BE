@@ -25,6 +25,7 @@ from app.domain import law_api
 from app.pipeline.checkpointer import get_checkpointer
 from app.pipeline.document_id_normalize import normalize_document_id
 from app.pipeline.graph import build_graph
+from app.pipeline.nodes.validate import structural_errors
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +336,28 @@ class RuleDraftDecisionResponse(BaseModel):
     status: str
 
 
-async def _claim_for_resolution(thread_id: str, decision_count: int) -> None:
+def _reject_unpublishable_approvals(items: list[dict], decisions: list[DecisionItem]) -> None:
+    """승인하려는 draft가 행으로 만들 수 없는 상태면 그래프를 재개하기 전에 422로 막는다.
+
+    publish에서 터지면 체크포인트가 이미 human_review를 지나 있어, 재제출한 결정은 무시되고
+    같은 publish만 반복 실패한다 — 그 스레드는 복구할 방법이 없다.
+    """
+    for index, (item, decision) in enumerate(zip(items, decisions), start=1):
+        if decision.action != "approve":
+            continue
+        draft = item["draft"]
+        if decision.edited_fields:
+            draft = {**draft, "fields": {**draft.get("fields", {}), **decision.edited_fields}}
+        errors = structural_errors(draft)
+        if errors:
+            raise HTTPException(
+                status_code=422,
+                detail=f"항목 {index}은(는) {', '.join(errors)} 상태라 승인할 수 없습니다 — "
+                "필드를 고치거나 반려하세요.",
+            )
+
+
+async def _claim_for_resolution(thread_id: str, decisions: list[DecisionItem]) -> None:
     """pending 행만 resolving으로 선점한다.
 
     조회와 상태 변경을 한 트랜잭션(SELECT ... FOR UPDATE)으로 묶어야 한다 — 상태를 읽고
@@ -356,10 +378,11 @@ async def _claim_for_resolution(thread_id: str, decision_count: int) -> None:
             raise HTTPException(status_code=409, detail="다른 요청이 처리 중입니다.")
         if row.status != "pending":
             raise HTTPException(status_code=409, detail="이미 처리된 검수 항목입니다.")
-        if decision_count != len(row.items):
+        if len(decisions) != len(row.items):
             raise HTTPException(
                 status_code=422, detail="decisions 개수가 검수 항목 수와 일치해야 합니다."
             )
+        _reject_unpublishable_approvals(row.items, decisions)
         row.status = "resolving"
         await session.commit()
 
@@ -379,7 +402,7 @@ async def decide_rule_draft(
     request: RuleDraftDecisionRequest,
     reviewer: str = Depends(require_admin),
 ) -> RuleDraftDecisionResponse:
-    await _claim_for_resolution(thread_id, len(request.decisions))
+    await _claim_for_resolution(thread_id, request.decisions)
 
     graph = build_graph(checkpointer=get_checkpointer())
     resume_payload = {
@@ -393,6 +416,8 @@ async def decide_rule_draft(
     except Exception:
         # publish 실패 등으로 그래프가 죽으면 pending으로 되돌린다 — resolved로 남겨두면
         # 재제출이 409로 막혀 그 스레드를 손으로 DB를 고치지 않고는 살릴 수 없다.
+        # 주의: 재제출은 실패한 노드(publish)부터 **처음 결정 그대로** 이어 돈다. 새 결정은
+        # 반영되지 않으므로 일시 장애 재시도용이다.
         logger.exception("검수 결정 처리 실패: thread_id=%s", thread_id)
         await _set_review_status(thread_id, "pending")
         raise

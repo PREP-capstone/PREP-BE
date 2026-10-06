@@ -17,7 +17,7 @@ from app.pipeline.nodes.human_review import human_review
 from app.pipeline.nodes.ingest import ingest_document
 from app.pipeline.nodes.publish import publish
 from app.pipeline.nodes.reject_log import reject_log
-from app.pipeline.nodes.retry_extract import MAX_RETRY, retry_extract
+from app.pipeline.nodes.retry_extract import MAX_RETRY, is_retryable, retry_extract
 from app.pipeline.nodes.validate import auto_validate
 from app.pipeline.state import PipelineState
 
@@ -62,9 +62,13 @@ def _route_after_extract_b(state: PipelineState) -> str:
 def _route_after_validate(state: PipelineState) -> str:
     """langgraph_파이프라인_설계서.md §5.3. 재시도 소진 시에도 검증실패 draft를 버리지
     않고 human_review로 넘긴다(자동 폐기 금지 원칙)."""
-    if state["validation"]["passed"]:
+    validation = state["validation"]
+    if validation["passed"]:
         return "human_review"
-    if state["retry_count"] < MAX_RETRY:
+    # 중복후보뿐이면 다시 뽑아도 똑같이 걸린다 — LLM 호출만 쓰므로 바로 검수로 넘긴다.
+    if state["retry_count"] < MAX_RETRY and any(
+        is_retryable(entry) for entry in validation["failed_drafts"]
+    ):
         return "retry_extract"
     return "human_review"
 
