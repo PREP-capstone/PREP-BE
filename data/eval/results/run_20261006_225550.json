@@ -1,13 +1,13 @@
 {
   "meta": {
     "command": "run",
-    "started_at": "2026-10-06T21:12:02",
-    "git_commit": "e22f44d",
-    "git_dirty": true,
+    "started_at": "2026-10-06T22:39:59",
+    "git_commit": "91376cc",
+    "git_dirty": false,
     "openai_model": "gpt-4o-mini",
     "llm_response_cache_enabled": false,
     "active_rule_version_ids": "5665ae2f-cb25-47ec-a5e0-341ed4d7073e, 937d119c-a305-4b3f-94f6-0789738a598a, ee8da273-7f54-437c-a5cd-b829b327fcfa, 0a5918f2-80c4-4c6d-b77e-8395612fc68f",
-    "golden": "data/eval/golden_set.csv",
+    "golden": "data/eval/golden_set_lmj.csv",
     "split": "(전체)",
     "runs_per_case": 10,
     "category_source": "expected_category"
@@ -15,6 +15,7 @@
   "summary": {
     "cases": 15,
     "evaluated_cases": 15,
+    "cases_with_failed_runs": [],
     "reproducibility": {
       "A": {
         "all_fields_consistent_share": 1.0,
@@ -49,37 +50,38 @@
       },
       "D": {
         "bm_strengths": {
-          "available_share": 0.347,
+          "available_share": 0.267,
           "exact_match_share": 0.6,
-          "lexical_similarity": 0.709,
-          "embedding_similarity": 0.936
+          "lexical_similarity": 0.705,
+          "embedding_similarity": 0.924
         },
         "correction.llm_candidates": {
-          "set_jaccard": 0.933
+          "set_jaccard": 0.95
         },
         "differentiation_point": {
           "available_share": 0.733,
-          "exact_match_share": 0.473,
-          "lexical_similarity": 0.686,
-          "embedding_similarity": 0.904
+          "exact_match_share": 0.436,
+          "lexical_similarity": 0.619,
+          "embedding_similarity": 0.886
         },
         "one_liner": {
           "available_share": 1.0,
-          "exact_match_share": 0.78,
-          "lexical_similarity": 0.849,
-          "embedding_similarity": 0.941
+          "exact_match_share": 0.767,
+          "lexical_similarity": 0.834,
+          "embedding_similarity": 0.931
         },
         "overall_summary": {
           "available_share": 1.0,
-          "exact_match_share": 0.253,
-          "lexical_similarity": 0.639,
-          "embedding_similarity": 0.949
+          "exact_match_share": 0.233,
+          "lexical_similarity": 0.611,
+          "embedding_similarity": 0.943
         }
       }
     },
     "validity": {
       "gate": {
         "n": 13,
+        "invalid_predictions": 0,
         "confusion": {
           "PASS": {
             "PASS": 5,
@@ -116,8 +118,8 @@
       },
       "risky_phrase_recall": {
         "n": 4,
-        "rule_only": 0.5,
-        "rule_plus_llm": 1.0
+        "rule_only": 0.0,
+        "rule_plus_llm": 0.5
       }
     },
     "invariants": {
@@ -137,6 +139,7 @@
         "prompt_example"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -283,14 +286,14 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.551,
-            "embedding_similarity": 0.937
+            "lexical_similarity": 0.686,
+            "embedding_similarity": 0.974
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.8,
-            "lexical_similarity": 0.742,
-            "embedding_similarity": 0.908
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.431,
+            "embedding_similarity": 0.717
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
@@ -320,6 +323,7 @@
         "genetic"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -485,15 +489,15 @@
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.8,
-            "lexical_similarity": 0.94,
-            "embedding_similarity": 0.995
+            "exact_match_share": 0.7,
+            "lexical_similarity": 0.908,
+            "embedding_similarity": 0.992
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.573,
-            "embedding_similarity": 0.773
+            "exact_match_share": 0.7,
+            "lexical_similarity": 0.647,
+            "embedding_similarity": 0.806
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -523,6 +527,7 @@
         "genetic"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -696,15 +701,15 @@
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.651,
-            "embedding_similarity": 0.972
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.583,
+            "embedding_similarity": 0.96
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.527,
-            "embedding_similarity": 0.735
+            "exact_match_share": 0.7,
+            "lexical_similarity": 0.644,
+            "embedding_similarity": 0.8
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -734,6 +739,7 @@
         "normal"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -877,27 +883,27 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.8,
-            "lexical_similarity": 0.845,
-            "embedding_similarity": 0.974
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.455,
+            "embedding_similarity": 0.809
           },
           "bm_strengths": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.666,
-            "embedding_similarity": 0.906
+            "exact_match_share": 0.7,
+            "lexical_similarity": 0.692,
+            "embedding_similarity": 0.907
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.528,
-            "embedding_similarity": 0.905
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.509,
+            "embedding_similarity": 0.907
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.746,
+            "embedding_similarity": 0.896
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -927,6 +933,7 @@
         "input_conflict"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -1317,21 +1324,21 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.854,
-            "embedding_similarity": 0.933
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.62,
+            "embedding_similarity": 0.867
           },
           "bm_strengths": {
             "available_share": 1.0,
-            "exact_match_share": 0.9,
-            "lexical_similarity": 0.904,
-            "embedding_similarity": 0.986
+            "exact_match_share": 0.8,
+            "lexical_similarity": 0.829,
+            "embedding_similarity": 0.974
           },
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.1,
-            "lexical_similarity": 0.535,
-            "embedding_similarity": 0.925
+            "lexical_similarity": 0.457,
+            "embedding_similarity": 0.917
           },
           "one_liner": {
             "available_share": 1.0,
@@ -1359,8 +1366,8 @@
           "높음"
         ],
         "risky_phrase_recall": {
-          "rule": 1.0,
-          "all": 1.0
+          "rule": 0.0,
+          "all": 0.0
         }
       }
     },
@@ -1371,6 +1378,7 @@
         "normal"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -1761,21 +1769,21 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.752,
-            "embedding_similarity": 0.906
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.553,
+            "embedding_similarity": 0.876
           },
           "bm_strengths": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.718,
+            "embedding_similarity": 0.96
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.693,
-            "embedding_similarity": 0.97
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.627,
+            "embedding_similarity": 0.941
           },
           "one_liner": {
             "available_share": 1.0,
@@ -1803,8 +1811,8 @@
           "높음"
         ],
         "risky_phrase_recall": {
-          "rule": 1.0,
-          "all": 1.0
+          "rule": 0.0,
+          "all": 0.0
         }
       }
     },
@@ -1815,6 +1823,7 @@
         "invasive"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -1972,8 +1981,8 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.591,
-            "embedding_similarity": 0.975
+            "lexical_similarity": 0.561,
+            "embedding_similarity": 0.972
           },
           "one_liner": {
             "available_share": 1.0,
@@ -2009,6 +2018,7 @@
         "negation"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -2154,21 +2164,18 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.6,
-            "lexical_similarity": 0.802,
-            "embedding_similarity": 0.948
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.585,
+            "embedding_similarity": 0.89
           },
           "bm_strengths": {
-            "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.526,
-            "embedding_similarity": 0.906
+            "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.623,
-            "embedding_similarity": 0.948
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.594,
+            "embedding_similarity": 0.927
           },
           "one_liner": {
             "available_share": 1.0,
@@ -2204,10 +2211,11 @@
         "normal"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 5,
+        "total": 6,
         "unsafe": []
       },
       "layers": {
@@ -2349,31 +2357,31 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.1,
-            "lexical_similarity": 0.341,
-            "embedding_similarity": 0.86
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.387,
+            "embedding_similarity": 0.869
           },
           "bm_strengths": {
             "available_share": 1.0,
             "exact_match_share": 0.3,
-            "lexical_similarity": 0.704,
-            "embedding_similarity": 0.938
+            "lexical_similarity": 0.582,
+            "embedding_similarity": 0.856
           },
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.1,
-            "lexical_similarity": 0.574,
-            "embedding_similarity": 0.926
+            "lexical_similarity": 0.517,
+            "embedding_similarity": 0.932
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.749,
-            "embedding_similarity": 0.903
+            "exact_match_share": 0.5,
+            "lexical_similarity": 0.675,
+            "embedding_similarity": 0.884
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
-            "set_jaccard": 0.533
+            "set_jaccard": 0.444
           }
         }
       },
@@ -2399,10 +2407,11 @@
         "common_word"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 2,
+        "total": 1,
         "unsafe": []
       },
       "layers": {
@@ -2539,28 +2548,28 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.748,
-            "embedding_similarity": 0.956
+            "exact_match_share": 0.5,
+            "lexical_similarity": 0.881,
+            "embedding_similarity": 0.966
           },
           "bm_strengths": {
             "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.1,
-            "lexical_similarity": 0.69,
-            "embedding_similarity": 0.98
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.73,
+            "embedding_similarity": 0.978
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.545,
-            "embedding_similarity": 0.872
+            "exact_match_share": 0.5,
+            "lexical_similarity": 0.852,
+            "embedding_similarity": 0.978
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
-            "set_jaccard": 0.467
+            "set_jaccard": 1.0
           }
         }
       },
@@ -2586,6 +2595,7 @@
         "dictionary_gap"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -2727,9 +2737,9 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.522,
-            "embedding_similarity": 0.874
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.653,
+            "embedding_similarity": 0.902
           },
           "bm_strengths": {
             "available_share": 0.0
@@ -2737,14 +2747,14 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.489,
-            "embedding_similarity": 0.885
+            "lexical_similarity": 0.443,
+            "embedding_similarity": 0.882
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.672,
-            "embedding_similarity": 0.95
+            "exact_match_share": 0.7,
+            "lexical_similarity": 0.852,
+            "embedding_similarity": 0.983
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -2774,6 +2784,7 @@
         "negation"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -3041,21 +3052,18 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.6,
-            "lexical_similarity": 0.721,
-            "embedding_similarity": 0.896
+            "exact_match_share": 1.0,
+            "lexical_similarity": 1.0,
+            "embedding_similarity": 1.0
           },
           "bm_strengths": {
-            "available_share": 0.2,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.453,
-            "embedding_similarity": 0.878
+            "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.721,
-            "embedding_similarity": 0.979
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.672,
+            "embedding_similarity": 0.956
           },
           "one_liner": {
             "available_share": 1.0,
@@ -3091,10 +3099,11 @@
         "paraphrase"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 3,
+        "total": 2,
         "unsafe": []
       },
       "layers": {
@@ -3232,8 +3241,8 @@
           "differentiation_point": {
             "available_share": 1.0,
             "exact_match_share": 0.4,
-            "lexical_similarity": 0.6,
-            "embedding_similarity": 0.835
+            "lexical_similarity": 0.478,
+            "embedding_similarity": 0.836
           },
           "bm_strengths": {
             "available_share": 0.0
@@ -3241,8 +3250,8 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.524,
-            "embedding_similarity": 0.911
+            "lexical_similarity": 0.577,
+            "embedding_similarity": 0.94
           },
           "one_liner": {
             "available_share": 1.0,
@@ -3278,6 +3287,7 @@
         "advertising"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
@@ -3418,24 +3428,24 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.577,
-            "embedding_similarity": 0.837
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.454,
+            "embedding_similarity": 0.841
           },
           "bm_strengths": {
             "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.795,
-            "embedding_similarity": 0.973
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.526,
+            "embedding_similarity": 0.924
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.8,
+            "lexical_similarity": 0.892,
+            "embedding_similarity": 0.984
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
@@ -3465,10 +3475,11 @@
         "normal"
       ],
       "category_source": "expected",
+      "runs_requested": 10,
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 3,
+        "total": 4,
         "unsafe": []
       },
       "layers": {
@@ -3606,27 +3617,27 @@
           "differentiation_point": {
             "available_share": 1.0,
             "exact_match_share": 0.8,
-            "lexical_similarity": 0.779,
-            "embedding_similarity": 0.92
+            "lexical_similarity": 0.748,
+            "embedding_similarity": 0.894
           },
           "bm_strengths": {
             "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.683,
-            "embedding_similarity": 0.959
+            "exact_match_share": 0.7,
+            "lexical_similarity": 0.778,
+            "embedding_similarity": 0.942
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.8,
-            "lexical_similarity": 0.924,
-            "embedding_similarity": 0.979
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.771,
+            "embedding_similarity": 0.92
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
-            "set_jaccard": 1.0
+            "set_jaccard": 0.8
           }
         }
       },
