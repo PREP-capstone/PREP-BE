@@ -13,3 +13,4 @@ CLAUDE.md
 requirements-windows.txt
 data/rule/dump_latest.txt
 data/rule/correction_rules_generated.csv
+data/rule_uploads/
