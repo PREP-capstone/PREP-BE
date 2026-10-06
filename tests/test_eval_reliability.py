@@ -12,7 +12,7 @@ import pytest
 from scripts import eval_reliability as er
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "data" / "eval" / "golden_set_template.csv"
-GOLDEN = TEMPLATE.parent / "golden_set_lmg.csv"
+GOLDEN = TEMPLATE.parent / "golden_set_lmj.csv"
 
 
 def test_cohen_kappa_matches_hand_computation() -> None:

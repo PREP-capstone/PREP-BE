@@ -937,7 +937,7 @@ def main() -> None:
 
     def add_common(sub, needs_golden: bool = True) -> None:
         if needs_golden:
-            sub.add_argument("--golden", required=True, help="골든셋 CSV 경로 (담당자별 파일, 예: data/eval/golden_set_lmg.csv)")
+            sub.add_argument("--golden", required=True, help="골든셋 CSV 경로 (담당자별 파일, 예: data/eval/golden_set_lmj.csv)")
             sub.add_argument("--split", help="이 split만 사용 (예: test)")
         sub.add_argument("--out", default=str(DEFAULT_OUT_DIR), help="결과 저장 폴더")
 
