@@ -177,3 +177,17 @@ def test_recommend_bm_relaxes_keys_and_ranks_by_domestic_count() -> None:
     assert match_level == "relaxed_category_only"
     # 국내 수는 Subscription 1·Freemium 1 동점 → 전체 수(Freemium 2)가 앞선다
     assert recommended == ["Freemium", "Subscription"]
+
+
+def test_phrase_detected_ignores_candidates_absent_from_description() -> None:
+    description = "수면 패턴을 분석해 불면증을 진단한다"
+    # 키워드 역참조로 딸려 나온 후보는 설명문에 없으므로 탐지가 아니다.
+    assert not er.phrase_detected("진단", ["고혈압 진단"], description)
+    assert er.phrase_detected("진단", ["불면증을 진단"], description)
+
+
+def test_gate_validity_excludes_non_verdict_predictions_from_denominator() -> None:
+    result = er.gate_validity([("FAIL", "FAIL"), ("PASS", "ERROR")])
+    assert result["n"] == 1
+    assert result["invalid_predictions"] == 1
+    assert result["accuracy"] == 1.0

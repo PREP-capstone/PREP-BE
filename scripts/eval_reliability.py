@@ -211,10 +211,20 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / norm if norm else 0.0
 
 
-def phrase_detected(phrase: str, risky_texts: list[str]) -> bool:
-    """기대한 위험 구절이 교정 후보의 risky_text와 겹치는지(어느 한쪽이 다른 쪽을 포함)."""
+def phrase_detected(phrase: str, risky_texts: list[str], description: str | None = None) -> bool:
+    """기대한 위험 구절이 교정 후보의 risky_text와 겹치는지(어느 한쪽이 다른 쪽을 포함).
+
+    description을 주면 그 설명문에 실제로 들어 있는 후보만 센다 — 키워드 역참조로 딸려 나온
+    후보("고혈압 진단")가 기대 구절("진단")을 포함한다는 이유만으로 탐지로 집계되면, 사용자
+    문장을 하나도 짚지 못했는데 재현율이 1.0이 된다(2026-10-06 자체 리뷰).
+    """
     target = _compact(phrase)
-    return any(target in _compact(text) or _compact(text) in target for text in risky_texts if text)
+    source = _compact(description) if description is not None else None
+    return any(
+        target in _compact(text) or _compact(text) in target
+        for text in risky_texts
+        if text and (source is None or _compact(text) in source)
+    )
 
 
 def signal_color_mismatch(text: str, actual_signal: str) -> list[str]:
@@ -235,11 +245,15 @@ def gate_validity(pairs: list[tuple[str, str]]) -> dict:
     for expected, predicted in pairs:
         if predicted in VERDICTS:
             confusion[expected][predicted] += 1
-    n = len(pairs)
+    # 판정이 아닌 값(baseline의 API 실패 'ERROR' 등)은 분모에서 빼고 건수를 따로 남긴다 —
+    # 분모에 남기면 실패가 표시 없이 정확도를 깎는다.
+    invalid = sum(predicted not in VERDICTS for _, predicted in pairs)
+    n = len(pairs) - invalid
     expected_fail = sum(confusion["FAIL"].values())
     predicted_fail = sum(row["FAIL"] for row in confusion.values())
     return {
         "n": n,
+        "invalid_predictions": invalid,
         "confusion": confusion,
         "accuracy": round(sum(confusion[v][v] for v in VERDICTS) / n, 3) if n else None,
         "fail_recall": round(confusion["FAIL"]["FAIL"] / expected_fail, 3) if expected_fail else None,
@@ -468,6 +482,7 @@ async def run_case(
         "split": case.split,
         "tags": case.tags,
         "category_source": category_source,
+        "runs_requested": runs,
         "runs_ok": len(evaluations),
         "errors": errors,
         "corrections": corrections,
@@ -524,7 +539,7 @@ async def run_case(
             candidates = result["correction_candidates"]["candidates"]
             for scope in recalls:
                 texts = [c["risky_text"] for c in candidates if scope == "all" or c["match_source"] == "rule"]
-                hits = sum(phrase_detected(phrase, texts) for phrase in case.expected_risky_phrases)
+                hits = sum(phrase_detected(phrase, texts, case.service_description) for phrase in case.expected_risky_phrases)
                 recalls[scope].append(hits / len(case.expected_risky_phrases))
         validity["risky_phrase_recall"] = {scope: round(sum(v) / len(v), 3) for scope, v in recalls.items()}
     if category_runs and case.expected_category_1:
@@ -537,16 +552,29 @@ async def run_case(
     return record
 
 
+def _all_runs_ok(record: dict) -> bool:
+    # 일부 회차가 오류로 빠진 케이스는 남은 회차끼리 같아도 "N회 모두 일치"가 아니다.
+    return record["runs_ok"] == record.get("runs_requested", record["runs_ok"])
+
+
 def summarize_run(records: list[dict]) -> dict:
     evaluated = [r for r in records if r.get("layers")]
-    summary: dict = {"cases": len(records), "evaluated_cases": len(evaluated), "reproducibility": {}, "validity": {}}
+    summary: dict = {
+        "cases": len(records),
+        "evaluated_cases": len(evaluated),
+        "cases_with_failed_runs": [r["case_id"] for r in records if not r.get("layers") or not _all_runs_ok(r)],
+        "reproducibility": {},
+        "validity": {},
+    }
 
     for layer in ("A", "B", "C"):
         fields = sorted({field for r in evaluated for field in r["layers"][layer]})
         layer_cases = [r for r in evaluated if r["layers"][layer]]
         summary["reproducibility"][layer] = {
             "all_fields_consistent_share": round(
-                sum(all(v["consistent"] for v in r["layers"][layer].values()) for r in layer_cases) / len(layer_cases), 3
+                sum(_all_runs_ok(r) and all(v["consistent"] for v in r["layers"][layer].values()) for r in layer_cases)
+                / len(layer_cases),
+                3,
             )
             if layer_cases
             else None,
@@ -687,7 +715,7 @@ def recommend_bm(pool: list, held_out) -> tuple[str, list[str]]:
 def _git_state() -> dict:
     try:
         commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout.strip())
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True, text=True).stdout.strip())
         return {"git_commit": commit or None, "git_dirty": dirty}
     except OSError:
         return {"git_commit": None, "git_dirty": None}
