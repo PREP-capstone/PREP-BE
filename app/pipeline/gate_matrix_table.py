@@ -197,11 +197,11 @@ def detect_genetic_test_signal(text: str) -> bool:
 # 잘못 잡으면 정상 서비스가 FAIL이 되므로 세 가지로 범위를 좁힌다.
 #   1) 서비스가 그 행위를 "한다"는 표현만 본다. "진단명 기록", "처방전 보관", "치료 중인 환자"처럼
 #      이미 일어난 사실을 기록하는 표현은 _MEDICAL_PURPOSE_RECORD_SUFFIXES로 제외한다.
-#   2) 부정 표현은 같은 절 끝까지 본다. "진단이나 치료를 대신하지 않는다", "진단하거나 경고하지
+#   2) 부정 표현은 같은 절 안에서 본다. "진단이나 치료를 대신하지 않는다", "진단하거나 경고하지
 #      않는다", "진단이나 예측 없이"는 신호가 아니다. judgement.py의 _NEGATION_WINDOW(5글자)는
 #      "진단하거나 치료하지 않고"의 "진단"을 놓쳐서(검증 R6) 여기서는 쓰지 않는다.
-#   3) 다만 "진단하고 치료는 하지 않는다"처럼 키워드 뒤에 순차 연결어미(-하고, -하며, -해서)가
-#      먼저 오면 그 뒤의 부정은 다른 행위에 걸리는 것이라 키워드는 긍정으로 본다.
+#   3) 다만 부정이 키워드가 아닌 다른 말에 걸린 경우는 긍정으로 본다 — "진단하고 치료는 하지
+#      않는다", "진단해 부담 없이 관리한다". 판단 규칙은 아래 _is_negated 주석 참조.
 # 예방은 넣지 않았다 — "생활습관병 예방을 위한 걸음수 기록"처럼 웰니스 문맥에서 흔해 과탐이 크다.
 MEDICAL_PURPOSE_VERDICT = "FAIL"
 MEDICAL_PURPOSE_LEGAL_BASIS: tuple[str, str] = ("kr-medical-device-act-20260701", "제2조")
@@ -213,17 +213,41 @@ MEDICAL_PURPOSE_AVOIDANCE_CERTIFICATION = f"진단·치료·처방 기능을 그
 
 _MEDICAL_PURPOSE_KEYWORD = re.compile(r"진단|치료|처방")
 # 키워드 바로 뒤에 붙으면 "이미 일어난 의료 사실의 기록"을 뜻하는 말 — 서비스의 목적이 아니다.
-# "진단 서비스", "치료 전문", "치료 중심", "진단 후보"는 기록 표현이 아니라서 부정 전방탐색으로 뺀다.
+# 비슷하게 생겼지만 서비스의 행위인 표현("진단 서비스", "치료 전문", "진단 후보", "처방 약국 연계",
+# "진단받을 수 있다")은 전방탐색으로 걸러 감지 대상에 남긴다.
 _MEDICAL_PURPOSE_RECORD_SUFFIXES = re.compile(
-    r"명|서(?!비스)|전(?!문)|(?:을|를)?받|이력|기록|내역|일정|일지|중(?:인|에|이던)|후(?!보)|약|된"
+    r"명|서(?!비스)|전(?!문)|(?:을|를)?받(?:은|았|던|고있)|이력|기록|내역|일정|일지|중(?:인|에|이던)|후(?!보)|약(?!국|속)|된"
 )
 _CLAUSE_BOUNDARY = re.compile(r"[.,;!?\n。]")
-_CLAUSE_NEGATION = re.compile(
-    r"지(?:는|도)?않|지못|없이|없습|없다|없음|없는|없고|없으|아닌|아니|아닙|안합|안함|안해"
+# 부정은 두 종류로 나눠 본다. 한 가지 규칙으로 묶으면 "진단해 부담 없이 관리"나 "진단하는 앱으로
+# 개인정보를 저장하지 않습니다"처럼 다른 말에 걸린 부정 때문에 의료 목적을 놓친다(FAIL을 PASS로
+# 내보내는 쪽이라 더 위험하다).
+#   - 서술어 부정(않·못·아니): 키워드가 그 서술어에 이어져 있을 때만 부정으로 본다. 사이에 순차
+#     연결어미나 관형형(-하고, -하며, -해서, -해, -하는 + 명사)이 있으면 키워드는 이미 긍정으로
+#     끝난 것이고, 사이가 너무 길어도(_PREDICATE_NEGATION_REACH) 다른 서술어로 본다.
+#   - 부재 표현(없이·없다): 키워드가 "없다"의 대상인 명사일 때만 부정으로 본다. 사이에 용언(하·해·한·
+#     할·된)이 끼면 키워드는 서술어로 쓰인 것이라 부정이 아니다.
+_PREDICATE_NEGATION = re.compile(r"지(?:는|도)?않|지못|아닌|아니|아닙|안합|안함|안해")
+_LACK_NEGATION = re.compile(r"없이|없습|없다|없음|없는|없고|없으")
+_ASSERTING_CONNECTIVE = re.compile(
+    r"하고|하며|하면서|해서|하여|한뒤|한후|해주고|해주며|해(?!주지|드리지)|하는(?!것|게|건)"
 )
-_SEQUENTIAL_CONNECTIVE = re.compile(r"하고|하며|하면서|해서|하여|한뒤|한후|해주고|해주며")
+_VERB_MARKER = re.compile(r"[하해한할된됩]")
+_PREDICATE_NEGATION_REACH = 14
 _CLAUSE_LOOKAHEAD = 60
 _PHRASE_CONTEXT = 8
+
+
+def _is_negated(clause_tail: str) -> bool:
+    predicate = _PREDICATE_NEGATION.search(clause_tail)
+    if predicate and predicate.start() <= _PREDICATE_NEGATION_REACH:
+        # 잘라낸 앞부분이 아니라 절 전체에서 찾고 위치로 거른다 — "해주지 않"의 "해"를 전방탐색
+        # (?!주지)으로 걸러내려면 부정 표현까지 보여야 한다.
+        connective = _ASSERTING_CONNECTIVE.search(clause_tail)
+        if not (connective and connective.start() < predicate.start()):
+            return True
+    lack = _LACK_NEGATION.search(clause_tail)
+    return bool(lack and not _VERB_MARKER.search(clause_tail[: lack.start()]))
 
 
 def detect_medical_purpose(text: str) -> str | None:
@@ -236,10 +260,7 @@ def detect_medical_purpose(text: str) -> str | None:
         tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
         boundary = _CLAUSE_BOUNDARY.search(tail_raw)
         clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
-        if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail):
-            continue
-        negation = _CLAUSE_NEGATION.search(clause_tail)
-        if negation and not _SEQUENTIAL_CONNECTIVE.search(clause_tail[: negation.start()]):
+        if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail) or _is_negated(clause_tail):
             continue
         start = max(match.start() - _PHRASE_CONTEXT, 0)
         return text[start : match.end() + _PHRASE_CONTEXT].strip()

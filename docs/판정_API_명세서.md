@@ -70,7 +70,7 @@ Authorization: Bearer `<accessToken>`
 ### Description
 
 규칙 기반(LLM 미사용)으로 `data_type`/`function_type`/`acquire_method`를 판별하고,
-6칸 매트릭스 + 침습적 하드체크로 `verdict`(PASS/CONDITIONAL/FAIL)를 결정한다.
+6칸 매트릭스 + 침습적 하드체크 + 의료 목적 하드체크로 `verdict`(PASS/CONDITIONAL/FAIL)를 결정한다.
 
 ### Request
 
@@ -96,12 +96,25 @@ Authorization: Bearer `<accessToken>`
     "quote": "string|null",
     "quote_status": "FOUND|UNTRUSTED_DOCUMENT|MISSING_CHUNK|LOOKUP_FAILED|null",
     "quote_message": "string|null"
-  }
+  },
+  "medical_purpose_fired": false,
+  "medical_purpose_phrase": "string|null"
 }
 ```
 
 - `avoidance_redesign`/`avoidance_certification`: `verdict=FAIL`일 때만 채워지는 회피 방향 2가지.
-- `reasoning`: 판정 근거 4줄(데이터·수집방법 / 기능 / 침습 신호 / 최종 판정).
+- `reasoning`: 판정 근거 4줄(데이터·수집방법 / 기능 / 침습 신호 / 최종 판정). 의료 목적 하드체크로
+  FAIL이 된 경우에는 3번째 줄이 침습 신호 대신 설명문에서 잡힌 문구를, 4번째 줄이 "선택한 기능
+  조합만으로는 PASS(또는 CONDITIONAL)이지만 설명에 질병 진단·치료 목적이 명시돼 FAIL"임을 보여준다.
+- `medical_purpose_fired`/`medical_purpose_phrase`(2026-10-07 추가, 이슈 #141): 6칸 표로는 FAIL이
+  아니지만 서비스 설명에 질병을 진단·치료·처방한다는 표현이 있어 FAIL로 올린 경우 `true`와 그 근거
+  문구가 내려간다. 해당 없으면 `false`/`null`. 이때 `legal_basis`는 의료기기법 제2조
+  (`kr-medical-device-act-20260701`)이고 `hardcheck_fired`는 `false`다(침습 하드체크와 구분).
+  - 서비스가 그 행위를 "한다"는 표현만 본다. "진단명 기록", "처방전 보관", "치료 중인 환자"처럼
+    이미 일어난 사실을 기록하는 표현은 대상이 아니다.
+  - 부정 표현은 같은 절 끝까지 본다. "진단하거나 치료하지 않고", "진단이나 예측 없이",
+    "의료적 진단이나 치료를 대신하지 않습니다"는 대상이 아니다.
+  - 표가 이미 FAIL이면(생체지표 × 수치예측·진단) 이 검사는 하지 않고 표의 근거를 그대로 쓴다.
 - `legal_basis`(2026-10-01 추가): verdict를 낸 근거 조문. 매트릭스 판정이면 6칸 각각의 근거
   (`gate_matrix_table.GATE_MATRIX_LEGAL_BASIS`), 침습적 하드체크면 웰니스 판단기준 `III.2.나`
   (고위해도 판정 규정)다. 공용 `LegalBasis` 형식이라 `quote`/`quote_status`는 위 표와 같은 규칙으로

@@ -136,3 +136,31 @@ async def test_matrix_fail_keeps_its_own_basis(monkeypatch) -> None:
 )
 def test_record_suffix_exclusions_do_not_hide_service_expressions(description: str) -> None:
     assert detect_medical_purpose(description) is not None
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        # 부정이 키워드가 아닌 다른 말에 걸린 경우 — 의료 목적을 놓치면 FAIL이 PASS로 나간다.
+        "불면증을 진단해 부담 없이 관리하도록 돕는다",
+        "우울증을 진단하는 앱으로 개인정보를 서버에 저장하지 않습니다",
+        "수면무호흡을 진단하며 부작용이 없는 관리법을 안내한다",
+        "AI로 우울증을 진단받을 수 있는 서비스",
+        "증상에 맞는 처방 약국 연계 서비스를 제공한다",
+    ],
+)
+def test_negation_on_another_phrase_does_not_hide_medical_purpose(description: str) -> None:
+    assert detect_medical_purpose(description) is not None
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "진단해 주지 않습니다. 기록만 합니다.",
+        "질병을 진단하는 것이 아니라 생활 기록을 돕습니다",
+        "진단 및 치료를 목적으로 하지 않습니다",
+        "병원에서 진단받은 내용을 메모해 두는 앱",
+    ],
+)
+def test_negation_attached_to_the_keyword_is_respected(description: str) -> None:
+    assert detect_medical_purpose(description) is None
