@@ -399,12 +399,14 @@ async def generate_missing_sections(
         return {}
 
     cache_key = _cache_key(template_type, report_text, field_values, target_fields)
-    try:
-        cached = await redis_client.get(cache_key)
-        if cached is not None:
-            return json.loads(cached)
-    except Exception:
-        pass  # 캐시 조회 실패는 치명적이지 않다 -- 그냥 다시 계산한다.
+    # 반복 측정(scripts/eval_reliability.py) 중에는 끈다 -- settings.llm_response_cache_enabled 참고.
+    if settings.llm_response_cache_enabled:
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                return json.loads(cached)
+        except Exception:
+            pass  # 캐시 조회 실패는 치명적이지 않다 -- 그냥 다시 계산한다.
 
     prone_fields = [f for f in target_fields if f["field_key"] in HALLUCINATION_PRONE_FIELDS]
     normal_fields = [f for f in target_fields if f["field_key"] not in HALLUCINATION_PRONE_FIELDS]
@@ -437,7 +439,7 @@ async def generate_missing_sections(
         # 그대로 올려 llm_status="unavailable"로 총실패 처리한다.
         raise next(result for result in results if isinstance(result, BaseException))
 
-    if not any_batch_failed:
+    if not any_batch_failed and settings.llm_response_cache_enabled:
         # 일부 배치만 실패했을 때는 caching하지 않는다 -- 부분 결과를 10분간 그대로
         # 캐싱하면, 재시도했을 때 OpenAI가 복구돼도 같은 요청이 캐시 히트로 계속
         # 불완전한 결과를 돌려받는다.

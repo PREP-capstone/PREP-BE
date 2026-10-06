@@ -33,10 +33,12 @@ from app.domain.legal_documents import DOCUMENT_TITLES
 from app.domain.scoring import grade_by_threshold, max_grade
 from app.pipeline.correction_terms import keyword_score
 from app.pipeline.gate_matrix_table import (
+    GATE_MATRIX_LEGAL_BASIS,
     GATE_MATRIX_TABLE,
     GENETIC_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_CERTIFICATION,
     HARDCHECK_AVOIDANCE_REDESIGN,
+    HARDCHECK_LEGAL_BASIS,
     HARDCHECK_VERDICT,
     detect_genetic_test_signal,
     detect_invasive,
@@ -143,6 +145,11 @@ class GateResponse(BaseModel):
     avoidance_redesign: str | None
     avoidance_certification: str | None
     reasoning: list[str]
+    # verdict를 낸 근거 조문(매트릭스 칸 또는 하드체크) — 판정엔진_개발설계서.md §10.5 "SECTION 1
+    # GATE 판정 결과 및 근거". regulatory-risk의 matched_rules와 같은 LegalBasis 형식이고 quote도
+    # 같은 화이트리스트 규칙으로 채운다. judge_gate는 항상 채운다 — None 기본값은 이 필드가 생기기
+    # 전에 GateResponse를 직접 만들던 호출부(테스트 등) 호환용이다.
+    legal_basis: LegalBasis | None = None
 
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -265,6 +272,15 @@ def _detect_genetic_test_signal(service_description: str, items: list[HealthData
     return any(detect_genetic_test_signal(text) for text in texts)
 
 
+async def _gate_legal_basis(basis: tuple[str, str]) -> LegalBasis:
+    """GATE verdict의 근거 조문 1건을 만들고 quote까지 채운다 — regulatory-risk와 같은 화이트리스트
+    규칙(_fill_legal_basis_quotes)을 그대로 탄다. RAG 조회가 실패해도 quote만 비고 판정은 그대로다."""
+    document_id, article = basis
+    legal_basis = LegalBasis(document_id=document_id, article=article, title=DOCUMENT_TITLES.get(document_id))
+    await _fill_legal_basis_quotes([legal_basis])
+    return legal_basis
+
+
 @router.post(
     "/gate",
     response_model=GateResponse,
@@ -305,6 +321,7 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
             reasoning=_build_gate_reasoning(
                 data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=True
             ),
+            legal_basis=await _gate_legal_basis(HARDCHECK_LEGAL_BASIS),
         )
 
     cell = GATE_MATRIX_TABLE[(data_type, function_type)]
@@ -326,6 +343,7 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
         reasoning=_build_gate_reasoning(
             data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
         ),
+        legal_basis=await _gate_legal_basis(GATE_MATRIX_LEGAL_BASIS[(data_type, function_type)]),
     )
 
 
@@ -457,39 +475,45 @@ async def _match_gate_keywords(service_description: str, rule_version_ids: list[
 
 
 async def _fill_quotes(matches: list[CorrectionMatch]) -> None:
-    """화이트리스트 문서에 한해 RAG에서 조문 원문을 조회해 legal_basis.quote를 채운다(in-place).
+    """correction 매칭 결과의 legal_basis.quote를 채운다(in-place) — _fill_legal_basis_quotes 참고."""
+    await _fill_legal_basis_quotes([match.legal_basis for match in matches])
 
-    RAG 조회가 실패해도 조용히 넘어간다 — RAG는 판정 결과를 절대 바꾸지 않는 부가 정보라서
-    (판정엔진_개발설계서.md §10.1), RAG 장애로 핵심 응답까지 깨지면 안 된다.
+
+async def _fill_legal_basis_quotes(legal_bases: list[LegalBasis]) -> None:
+    """화이트리스트 문서에 한해 RAG에서 조문 원문을 조회해 quote를 채운다(in-place).
+
+    correction 매칭(_fill_quotes)과 GATE 근거(_gate_legal_basis)가 같은 규칙을 쓰도록 LegalBasis
+    단위로 받는다. RAG 조회가 실패해도 조용히 넘어간다 — RAG는 판정 결과를 절대 바꾸지 않는
+    부가 정보라서(판정엔진_개발설계서.md §10.1), RAG 장애로 핵심 응답까지 깨지면 안 된다.
     """
-    by_document: dict[str, list[CorrectionMatch]] = {}
-    for match in matches:
-        if match.legal_basis.document_id in _RAG_TRUSTED_DOCUMENT_IDS:
-            by_document.setdefault(match.legal_basis.document_id, []).append(match)
+    by_document: dict[str, list[LegalBasis]] = {}
+    for legal_basis in legal_bases:
+        if legal_basis.document_id in _RAG_TRUSTED_DOCUMENT_IDS:
+            by_document.setdefault(legal_basis.document_id, []).append(legal_basis)
         else:
-            match.legal_basis.quote_status = "UNTRUSTED_DOCUMENT"
-            match.legal_basis.quote_message = _QUOTE_UNTRUSTED_DOCUMENT_MESSAGE
+            legal_basis.quote_status = "UNTRUSTED_DOCUMENT"
+            legal_basis.quote_message = _QUOTE_UNTRUSTED_DOCUMENT_MESSAGE
 
     for document_id, group in by_document.items():
-        section_ids = list({m.legal_basis.article for m in group})
+        section_ids = list({legal_basis.article for legal_basis in group})
         try:
             response = await lookup_rag_chunks(
                 RagChunkLookupRequest(document_id=document_id, section_ids=section_ids)
             )
         except Exception:
-            for match in group:
-                match.legal_basis.quote_status = "LOOKUP_FAILED"
-                match.legal_basis.quote_message = _QUOTE_LOOKUP_FAILED_MESSAGE
+            for legal_basis in group:
+                legal_basis.quote_status = "LOOKUP_FAILED"
+                legal_basis.quote_message = _QUOTE_LOOKUP_FAILED_MESSAGE
             continue
         chunk_by_section = {chunk.section_id: chunk.chunk_text for chunk in response.result}
-        for match in group:
-            match.legal_basis.quote = chunk_by_section.get(match.legal_basis.article)
-            if match.legal_basis.quote is None:
-                match.legal_basis.quote_status = "MISSING_CHUNK"
-                match.legal_basis.quote_message = _QUOTE_MISSING_CHUNK_MESSAGE
+        for legal_basis in group:
+            legal_basis.quote = chunk_by_section.get(legal_basis.article)
+            if legal_basis.quote is None:
+                legal_basis.quote_status = "MISSING_CHUNK"
+                legal_basis.quote_message = _QUOTE_MISSING_CHUNK_MESSAGE
             else:
-                match.legal_basis.quote_status = "FOUND"
-                match.legal_basis.quote_message = None
+                legal_basis.quote_status = "FOUND"
+                legal_basis.quote_message = None
 
 
 async def _match_correction_rules(

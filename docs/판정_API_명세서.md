@@ -82,12 +82,31 @@ Authorization: Bearer `<accessToken>`
 {
   "data_type": "라이프스타일|생체지표",
   "function_type": "단순기록|비교·추이분석|수치예측·진단",
-  "acquire_method": "수동입력|기기연동|OS연동|null",
+  "acquire_method": "수동입력|기기연동|OS연동|기관연동|null",
   "invasive_signal": true,
   "verdict": "PASS|CONDITIONAL|FAIL",
-  "hardcheck_fired": true
+  "hardcheck_fired": true,
+  "avoidance_redesign": "string|null",
+  "avoidance_certification": "string|null",
+  "reasoning": ["string"],
+  "legal_basis": {
+    "document_id": "kr-mfds-wellness-0091-03-20260212",
+    "article": "IV.3",
+    "title": "의료기기와 개인용 건강관리(웰니스) 제품 판단기준",
+    "quote": "string|null",
+    "quote_status": "FOUND|UNTRUSTED_DOCUMENT|MISSING_CHUNK|LOOKUP_FAILED|null",
+    "quote_message": "string|null"
+  }
 }
 ```
+
+- `avoidance_redesign`/`avoidance_certification`: `verdict=FAIL`일 때만 채워지는 회피 방향 2가지.
+- `reasoning`: 판정 근거 4줄(데이터·수집방법 / 기능 / 침습 신호 / 최종 판정).
+- `legal_basis`(2026-10-01 추가): verdict를 낸 근거 조문. 매트릭스 판정이면 6칸 각각의 근거
+  (`gate_matrix_table.GATE_MATRIX_LEGAL_BASIS`), 침습적 하드체크면 웰니스 판단기준 `III.2.나`
+  (고위해도 판정 규정)다. 공용 `LegalBasis` 형식이라 `quote`/`quote_status`는 위 표와 같은 규칙으로
+  채워진다 — 예를 들어 (라이프스타일, 수치예측·진단)의 근거인 LLM 가이드라인은 화이트리스트 밖이라
+  항상 `UNTRUSTED_DOCUMENT`다. SECTION 1 "GATE 판정 결과 및 근거"와 부록에 그대로 쓰면 된다.
 
 ---
 

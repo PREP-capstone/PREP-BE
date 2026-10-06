@@ -90,6 +90,36 @@ async def test_generate_correction_candidates_raises_on_missing_expected_key(mon
             await correction_llm.generate_correction_candidates("아무 문장")
 
 
+async def test_generate_correction_candidates_skips_cache_when_disabled(monkeypatch) -> None:
+    """반복 측정(scripts/eval_reliability.py)용 스위치 — 꺼져 있으면 캐시를 읽지도 쓰지도
+    않는다. 켜진 채로 10회 반복하면 두 번째부터 캐시 히트라 "10/10 일치"가 저절로 나온다."""
+    monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(correction_llm.settings, "llm_response_cache_enabled", False)
+    fake_get = AsyncMock(return_value=json.dumps([{"risky_text": "캐시에 있던 값"}]))
+    fake_set = AsyncMock()
+    monkeypatch.setattr(correction_llm.redis_client, "get", fake_get)
+    monkeypatch.setattr(correction_llm.redis_client, "set", fake_set)
+
+    payload = json.dumps(
+        {
+            "candidates": [
+                {
+                    "risky_text": "수면 상태를 진단해드려요",
+                    "safe_text": "수면 기록을 정리해드려요",
+                    "legal_basis": {"document_id": "kr-medical-act-20260407", "article": "제27조"},
+                }
+            ]
+        }
+    )
+    with _patched_client(payload) as mock_openai_cls:
+        result = await correction_llm.generate_correction_candidates("수면 상태를 진단해드려요")
+
+    mock_openai_cls.assert_called_once()
+    assert result[0]["risky_text"] == "수면 상태를 진단해드려요"
+    fake_get.assert_not_awaited()
+    fake_set.assert_not_awaited()
+
+
 async def test_generate_correction_candidates_uses_cache_on_second_call(monkeypatch) -> None:
     """같은 service_description을 두 번 호출하면 두 번째는 캐시를 써서 OpenAI를 다시 안 부른다(D-16)."""
     monkeypatch.setattr(correction_llm.settings, "openai_api_key", "sk-test")

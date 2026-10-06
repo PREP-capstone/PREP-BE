@@ -11,7 +11,21 @@ import openai
 import pytest
 
 from app.domain import report_llm
-from app.domain.report_llm import LLMUnavailable, generate_bm_card_strengths, generate_differentiation_point
+from app.domain.report_llm import (
+    LLMUnavailable,
+    generate_bm_card_strengths,
+    generate_differentiation_point,
+    generate_one_liner,
+    generate_overall_summary,
+)
+
+
+def _fake_client(content: str) -> MagicMock:
+    client = MagicMock()
+    response = MagicMock()
+    response.choices = [MagicMock(message=MagicMock(content=content))]
+    client.chat.completions.create = AsyncMock(return_value=response)
+    return client
 
 
 async def test_generate_differentiation_point_raises_without_api_key(monkeypatch) -> None:
@@ -30,6 +44,32 @@ async def test_generate_differentiation_point_converts_real_call_failure_to_llm_
 
     with pytest.raises(LLMUnavailable):
         await generate_differentiation_point("테스트 서비스", [])
+
+
+@pytest.mark.parametrize(
+    ("call", "content"),
+    [
+        (lambda: generate_differentiation_point("테스트 서비스", []), '{"differentiation_point": "x"}'),
+        (
+            lambda: generate_bm_card_strengths(
+                "테스트 서비스", [{"bm_pattern": "Freemium", "contributing_competitor_ids": None}]
+            ),
+            '{"cards": [{"bm_pattern": "Freemium", "strength": "x"}]}',
+        ),
+        (lambda: generate_overall_summary("확정된 판정 결과"), '{"overall_summary": "x"}'),
+        (lambda: generate_one_liner("확정된 판정 결과"), '{"one_liner": "x"}'),
+    ],
+    ids=["LLM2-differentiation", "LLM3-bm-strengths", "LLM4-overall-summary", "LLM5-one-liner"],
+)
+async def test_report_llm_calls_pin_temperature_zero(monkeypatch, call, content) -> None:
+    # 이 모듈만 temperature 지정이 빠져 OpenAI 기본값(1.0)으로 돌던 문제(2026-10-01) 회귀 방지 —
+    # 같은 세션으로 리포트를 다시 만들 때 서술이 크게 흔들리지 않도록 4개 호출 전부 0으로 고정한다.
+    client = _fake_client(content)
+    monkeypatch.setattr(report_llm, "_build_client", lambda: client)
+
+    await call()
+
+    assert client.chat.completions.create.await_args.kwargs["temperature"] == 0
 
 
 async def test_generate_bm_card_strengths_returns_empty_without_calling_when_no_recommendations() -> None:

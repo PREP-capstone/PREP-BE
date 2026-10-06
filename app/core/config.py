@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int = 1536
+    # False면 LLM 응답 캐시(correction_llm.py 1시간, proposal_llm.py 10분)를 읽지도 쓰지도
+    # 않는다 — scripts/eval_reliability.py의 반복 측정용. 켜둔 채로 같은 입력을 10번 돌리면
+    # 두 번째부터 캐시 히트라 LLM이 실제로 흔들리는지와 무관하게 "10/10 일치"가 나온다.
+    # trend_client.py(외부 데이터) 캐시는 이 설정과 무관 — "같은 기준 시점"을 고정해주는
+    # 역할이라 측정 중에도 켜두는 게 맞다.
+    llm_response_cache_enabled: bool = True
     rag_retrieval_top_k: int = 5
     chroma_persist_directory: str = "data/chroma"
     chroma_collection_name: str = "evidence_chunks"

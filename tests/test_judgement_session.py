@@ -140,6 +140,8 @@ async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
         assert response.avoidance_certification == HARDCHECK_AVOIDANCE_CERTIFICATION
         assert "하드체크로 FAIL 판정" in response.reasoning[-1]
         assert "침습적 신호가 감지됐습니다" in response.reasoning[2]
+        # 근거 조문도 매트릭스 칸이 아니라 고위해도 판정 규정이어야 한다(§10.5).
+        assert response.legal_basis.article == "III.2.나"
     finally:
         await _delete_session(session_id)
 
@@ -194,6 +196,8 @@ async def test_gate_fails_via_matrix_for_biomarker_prediction_without_hardcheck(
         assert response.avoidance_certification is not None
         assert "가장 높은 조합" in response.reasoning[1]
         assert "매트릭스 기준" in response.reasoning[-1]
+        assert response.legal_basis.document_id == "kr-mfds-wellness-0091-03-20260212"
+        assert response.legal_basis.article == "IV.3"
     finally:
         await _delete_session(session_id)
 

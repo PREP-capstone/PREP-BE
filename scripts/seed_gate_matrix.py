@@ -34,22 +34,9 @@ from app.db.models import GateMatrix, RuleVersion
 from app.db.session import AsyncSessionLocal
 from app.pipeline.article_ref import normalize_article
 from app.pipeline.nodes.publish import publish
-from app.pipeline.gate_matrix_table import GATE_MATRIX_TABLE, VERDICT_PRIORITY
-
-WELLNESS = "kr-mfds-wellness-0091-03-20260212"  # 웰니스 판단기준 지침서-0091-03
-LLM_GUIDE = "kr-mfds-llm-digital-medical-device-1511-01-20260630"  # LLM 기반 디지털의료기기 가이드라인
-
-# (data_type, function_type) → 판정 근거. §3.2 매핑표의 "exemption_note / 근거" 열.
-# article은 §1.5.1 표기 규칙(로마숫자 ASCII, 마침표 구분)을 따르며 RAG evidence_chunks.section_id와
-# 조인되는 키다.
-LEGAL_BASIS: dict[tuple[str, str], tuple[str, str]] = {
-    ("생체지표", "단순기록"): (WELLNESS, "IV.1.가"),
-    ("생체지표", "비교·추이분석"): (WELLNESS, "III.가"),
-    ("생체지표", "수치예측·진단"): (WELLNESS, "IV.3"),
-    ("라이프스타일", "단순기록"): (WELLNESS, "IV.1"),
-    ("라이프스타일", "비교·추이분석"): (WELLNESS, "III.다"),
-    ("라이프스타일", "수치예측·진단"): (LLM_GUIDE, "표3-1"),
-}
+# (data_type, function_type) → 판정 근거는 GATE 응답(judge_gate)과 같은 상수를 쓴다 — 예전엔 여기에만
+# 따로 적혀 있어서, 운영 DB에서 고친 III.2.가/III.2.다 표기가 이 파일엔 반영되지 않은 채 남아 있었다.
+from app.pipeline.gate_matrix_table import GATE_MATRIX_LEGAL_BASIS, GATE_MATRIX_TABLE, VERDICT_PRIORITY
 
 
 async def _active_combos() -> set[tuple[str, str]]:
@@ -74,7 +61,7 @@ async def seed() -> None:
     for combo in missing:
         data_type, function_type = combo
         lookup = GATE_MATRIX_TABLE[combo]
-        legal_basis_doc, legal_basis_article = LEGAL_BASIS[combo]
+        legal_basis_doc, legal_basis_article = GATE_MATRIX_LEGAL_BASIS[combo]
         legal_basis = {
             "document_id": legal_basis_doc,
             "article": normalize_article(legal_basis_article),
