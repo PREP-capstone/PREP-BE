@@ -199,8 +199,9 @@ def detect_genetic_test_signal(text: str) -> bool:
 #      이미 일어난 사실을 기록하는 표현, "치료사"·"건강진단" 같은 복합어, 질병과 무관한 "피부 타입
 #      진단"·"운동 처방"은 뺀다(_is_non_medical_usage).
 #   2) 부정 표현은 같은 절 안에서 본다. "진단이나 치료를 대신하지 않는다", "진단하거나 경고하지
-#      않는다", "진단이나 예측 없이"는 신호가 아니다. judgement.py의 _NEGATION_WINDOW(5글자)는
-#      "진단하거나 치료하지 않고"의 "진단"을 놓쳐서(검증 R6) 여기서는 쓰지 않는다.
+#      않는다", "진단이나 예측 없이"는 신호가 아니다. 규제위험도 키워드 매칭도 같은 규칙을
+#      쓴다(is_negated_after) — 예전의 "키워드 뒤 5글자" 방식은 "진단하거나 치료하지 않고"의
+#      "진단"을 놓쳤다(검증 R6).
 #   3) 다만 부정이 키워드가 아닌 다른 말에 걸린 경우는 긍정으로 본다 — "진단하고 치료는 하지
 #      않는다", "진단해 부담 없이 관리한다". 판단 규칙은 아래 _is_negated 주석 참조.
 # 예방은 넣지 않았다 — "생활습관병 예방을 위한 걸음수 기록"처럼 웰니스 문맥에서 흔해 과탐이 크다.
@@ -255,10 +256,20 @@ _CLAUSE_BOUNDARY = re.compile(r"[.,;!?\n。]")
 #     끝난 것이고, 사이가 너무 길어도(_PREDICATE_NEGATION_REACH) 다른 서술어로 본다.
 #   - 부재 표현(없이·없다): 키워드가 "없다"의 대상인 명사일 때만 부정으로 본다. 사이에 용언(하·해·한·
 #     할·된)이 끼면 키워드는 서술어로 쓰인 것이라 부정이 아니다.
-_PREDICATE_NEGATION = re.compile(r"지(?:는|도)?않|지못|아닌|아니|아닙|안합|안함|안해")
+# "아니"는 어미가 붙은 형태만 본다 — "피아니스트", "아니메이션"처럼 무관한 단어 속의 "아니"를
+# 부정으로 읽으면 정상 매칭이 지워진다(2026-09-27 코드리뷰에서 확인된 오탐).
+_PREDICATE_NEGATION = re.compile(
+    r"지(?:는|도)?않|지못|아닌|아닙|아니(?:라|며|고|다|에요|지만|므로|어서)|안합|안함|안해"
+)
 _LACK_NEGATION = re.compile(r"없이|없습|없다|없음|없는|없고|없으")
+# "하다" 계열 외에 설명문에 흔한 "주다·드리다" 계열 연결어미도 넣는다 — "진단 결과를 알려주고 병원은
+# 추천하지 않는다"의 "진단"은 긍정이다. "~할 수 있어 병원에 가지 않아도 됩니다", "~하므로/하니 약을
+# 먹지 않아도 됩니다"도 키워드는 긍정이고 부정은 뒤의 다른 행위에 걸린다 — 이런 문장을 부정으로 읽으면
+# 가장 위험한 문구를 놓친다(PR #151 자체 리뷰). 다만 "진단할 수 있는 것은 아닙니다"는 부정이다.
 _ASSERTING_CONNECTIVE = re.compile(
-    r"하고|하며|하면서|해서|하여|한뒤|한후|해주고|해주며|해(?!주지|드리지)|하는(?!것|게|건)"
+    r"하고|하며|하면서|해서|하여|한뒤|한후|해주고|해주며|주고|주며|드리고|드리며"
+    r"|하므로|하니|수있(?!는것|는게|는건|지않|지는않|지도않)"
+    r"|해(?!주지|드리지)|하는(?!것|게|건)"
 )
 _VERB_MARKER = re.compile(r"[하해한할된됩]")
 _PREDICATE_NEGATION_REACH = 14
@@ -276,6 +287,23 @@ def _is_negated(clause_tail: str) -> bool:
             return True
     lack = _LACK_NEGATION.search(clause_tail)
     return bool(lack and not _VERB_MARKER.search(clause_tail[: lack.start()]))
+
+
+def _clause_tail(text: str, end: int) -> str:
+    """text[end:]에서 같은 절 끝까지를 공백 없이 돌려준다."""
+    tail_raw = text[end : end + _CLAUSE_LOOKAHEAD]
+    boundary = _CLAUSE_BOUNDARY.search(tail_raw)
+    return _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
+
+
+def is_negated_after(text: str, end: int) -> bool:
+    """text[:end]로 끝나는 표현(키워드·위험 문구)이 바로 뒤 같은 절에서 부정되는지.
+
+    GATE 의료 목적 하드체크와 규제위험도 키워드 매칭이 같은 문장을 같게 읽도록 함께 쓴다(#141 R6).
+    예전에는 규제위험도만 키워드 뒤 5글자를 봐서 "진단하거나 치료하지 않고"의 "진단"을 위험 표현으로
+    잡았고, GATE는 PASS인데 규제위험도는 중간으로 나왔다.
+    """
+    return _is_negated(_clause_tail(text, end))
 
 
 def _sentence_around(text: str, start: int, end: int) -> str:
@@ -333,9 +361,7 @@ def scan_medical_purpose(text: str) -> tuple[str | None, str | None, str | None]
     negated_phrase = None
     self_check_phrase = None
     for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
-        tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
-        boundary = _CLAUSE_BOUNDARY.search(tail_raw)
-        clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
+        clause_tail = _clause_tail(text, match.end())
         start = max(match.start() - _PHRASE_CONTEXT, 0)
         if _is_disease_self_check(text, match) and not _is_negated(clause_tail):
             if self_check_phrase is None:
