@@ -1,8 +1,8 @@
 {
   "meta": {
     "command": "run",
-    "started_at": "2026-10-06T22:39:59",
-    "git_commit": "91376cc",
+    "started_at": "2026-10-07T22:28:45",
+    "git_commit": "80bb625",
     "git_dirty": false,
     "openai_model": "gpt-4o-mini",
     "llm_response_cache_enabled": false,
@@ -51,30 +51,30 @@
       "D": {
         "bm_strengths": {
           "available_share": 0.267,
-          "exact_match_share": 0.6,
-          "lexical_similarity": 0.705,
-          "embedding_similarity": 0.924
+          "exact_match_share": 0.55,
+          "lexical_similarity": 0.788,
+          "embedding_similarity": 0.968
         },
         "correction.llm_candidates": {
-          "set_jaccard": 0.95
+          "set_jaccard": 0.927
         },
         "differentiation_point": {
-          "available_share": 0.733,
-          "exact_match_share": 0.436,
-          "lexical_similarity": 0.619,
-          "embedding_similarity": 0.886
+          "available_share": 0.6,
+          "exact_match_share": 0.389,
+          "lexical_similarity": 0.589,
+          "embedding_similarity": 0.877
         },
         "one_liner": {
           "available_share": 1.0,
-          "exact_match_share": 0.767,
-          "lexical_similarity": 0.834,
-          "embedding_similarity": 0.931
+          "exact_match_share": 0.687,
+          "lexical_similarity": 0.757,
+          "embedding_similarity": 0.904
         },
         "overall_summary": {
           "available_share": 1.0,
-          "exact_match_share": 0.233,
-          "lexical_similarity": 0.611,
-          "embedding_similarity": 0.943
+          "exact_match_share": 0.207,
+          "lexical_similarity": 0.576,
+          "embedding_similarity": 0.937
         }
       }
     },
@@ -94,23 +94,18 @@
             "FAIL": 0
           },
           "FAIL": {
-            "PASS": 1,
-            "CONDITIONAL": 1,
-            "FAIL": 4
+            "PASS": 0,
+            "CONDITIONAL": 0,
+            "FAIL": 6
           }
         },
-        "accuracy": 0.846,
-        "fail_recall": 0.667,
+        "accuracy": 1.0,
+        "fail_recall": 1.0,
         "fail_precision": 1.0,
-        "critical_errors": 1,
-        "conditional_rate": 0.231,
-        "critical_error_cases": [
-          "S5"
-        ],
-        "wrong_cases": [
-          "S5",
-          "S6"
-        ]
+        "critical_errors": 0,
+        "conditional_rate": 0.154,
+        "critical_error_cases": [],
+        "wrong_cases": []
       },
       "final_grade_accuracy": {
         "n": 15,
@@ -126,7 +121,7 @@
       "signal_color_mismatch_runs": 0,
       "ungrounded_number_runs": 0,
       "total_runs": 150,
-      "corrections_total": 109,
+      "corrections_total": 113,
       "corrections_unsafe": 20
     }
   },
@@ -285,15 +280,15 @@
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.686,
-            "embedding_similarity": 0.974
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.589,
+            "embedding_similarity": 0.942
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.431,
-            "embedding_similarity": 0.717
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.4,
+            "embedding_similarity": 0.739
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
@@ -489,15 +484,15 @@
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.7,
-            "lexical_similarity": 0.908,
-            "embedding_similarity": 0.992
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.699,
+            "embedding_similarity": 0.964
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.7,
-            "lexical_similarity": 0.647,
-            "embedding_similarity": 0.806
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.597,
+            "embedding_similarity": 0.778
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -701,15 +696,15 @@
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.583,
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.614,
             "embedding_similarity": 0.96
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.7,
-            "lexical_similarity": 0.644,
-            "embedding_similarity": 0.8
+            "exact_match_share": 0.8,
+            "lexical_similarity": 0.78,
+            "embedding_similarity": 0.915
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -883,27 +878,27 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.455,
-            "embedding_similarity": 0.809
+            "exact_match_share": 0.8,
+            "lexical_similarity": 0.755,
+            "embedding_similarity": 0.917
           },
           "bm_strengths": {
             "available_share": 1.0,
             "exact_match_share": 0.7,
-            "lexical_similarity": 0.692,
-            "embedding_similarity": 0.907
+            "lexical_similarity": 0.974,
+            "embedding_similarity": 0.999
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.1,
-            "lexical_similarity": 0.509,
-            "embedding_similarity": 0.907
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.642,
+            "embedding_similarity": 0.936
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.6,
-            "lexical_similarity": 0.746,
-            "embedding_similarity": 0.896
+            "exact_match_share": 1.0,
+            "lexical_similarity": 1.0,
+            "embedding_similarity": 1.0
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -1003,7 +998,7 @@
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "PASS"
+            "modal": "FAIL"
           },
           "gate.data_type": {
             "consistent": true,
@@ -1043,19 +1038,19 @@
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "LOW"
+            "modal": null
           },
           "market.realism_grade": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "높음"
+            "modal": null
           },
           "business_model.match_level": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "타깃과 서비스 형태는 제외하고 카테고리와 세부 기능이 같은 선례를 기준으로 비교했습니다."
+            "modal": null
           },
           "overall_signal": {
             "consistent": true,
@@ -1070,8 +1065,8 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "kr-mfds-wellness-0091-03-20260212",
-              "IV.1"
+              "kr-medical-device-act-20260701",
+              "제2조"
             ]
           },
           "regulatory.matched_rules": {
@@ -1281,7 +1276,7 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "현재 기능 구성은 웰니스 제품에 해당합니다. 향후 분석·피드백 기능을 추가하면 판정이 바뀔 수 있으니 기능 추가 전 재확인하고, 지금은 사전상담 없이 움직일 수 있는 구간이니 규제 검토보다 사용자 확보에 리소스를 집중하세요.",
+              "GATE FAIL 판정입니다. 현재 서비스 설명에 '진단·치료·예방' 등 의료기기법상 목적성 표현이 포함되어 의료기기로 분류될 가능성이 높습니다. 지금 상태로 출시하면 허가받지 않은 의료기기 판매로 간주되어 제재 대상이 될 수 있으니, 해당 표현을 '분석·기록·관리' 같은 웰니스 어휘로 교체하거나 식약처 디지털의료기기 사전상담 제도를 통해 정식 판정을 먼저 받아보세요.",
               "표현 위험도가 높아 의료법·의료기기법 위반으로 지적될 가능성이 큽니다. 본 리포트의 교정 결과대로 인앱 카피는 물론 앱스토어 설명·랜딩페이지 문구까지 위험 표현을 전부 교체한 뒤에만 출시를 진행하세요.",
               "걸음수·수면시간 같은 라이프스타일 데이터는 민감도가 낮아 별도 동의 요건까지는 발생하지 않습니다. 다만 이후 생체지표나 병력 데이터를 추가하면 민감도가 올라가니, 수집 항목을 늘릴 때마다 이 진단을 다시 확인하세요.",
               "이 섹션의 판정은 지금 입력한 서비스 설명을 기준으로 합니다. 실제 앱스토어 설명이나 랜딩페이지 문구가 리포트의 교정 결과와 다르다면 지금 맞추세요."
@@ -1292,30 +1287,25 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "데이터 확보에 큰 장애가 없습니다. 로드맵 STAGE 1을 바로 착수해 2~3주 안에 첫 사용자 데이터를 확보하세요.",
-              "진입 여지가 큰 매력적인 시장입니다. 경쟁 서비스가 늘어나기 전에 주요 기능 위주로 빠르게 MVP를 출시하여 시장을 먼저 선점하세요. 디자인이나 퀄리티를 포기하고 런칭하는 것도 하나의 방법입니다.",
               "코딩할 필요 없이 '타일리'나 '프리머' 같은 노코드 툴로 랜딩 페이지를 당장 만드세요. 일주일 내로 사전 예약자(이메일) 50명을 모으지 못한다면 아이디어 자체를 처음부터 재검토해야 합니다.",
               "플레이스토어나 앱스토어에서 동일 카테고리 상위 3개 앱을 다운받아 가입부터 결제까지 직접 사용해보세요. 그리고 우리 서비스만이 제공할 수 있는 '단 한 번의 클릭으로 해결되는 차별화된 UX 포인트' 1가지를 명확히 정의하세요.",
-              "수집이 쉬운 만큼 개인정보 보호의 책임도 커집니다. 대량의 사용자 데이터를 안전하게 보관할 수 있는 클라우드 데이터베이스의 암호화 및 보안 설정을 선제적으로 적용하세요.",
-              "시장성이 높은 만큼 초기 마케팅이 중요합니다. 고객 획득 비용(CAC)을 낮추기 위해 타겟 고객이 가장 많이 모여있는 커뮤니티나 제휴 채널을 미리 확보해 두세요.",
               "개인정보보호포털(privacy.go.kr)의 '개인정보 처리방침 만들기' 기능을 활용해서 [수집 항목, 보유 기간, 제3자 제공 여부]를 명시한 개인정보 처리방침 문서를 작성하세요. 앱스토어 심사 리젝을 막기 위한 필수 1순위 요건입니다.",
-              "앱스토어 설명과 랜딩페이지 마케팅 문구에 '진단', '치료' 같은 의료법 위반 표현이 없는지, 본 리포트의 교정 결과에 맞춰 최종 점검하세요."
+              "앱스토어 설명과 랜딩페이지 마케팅 문구에 '진단', '치료' 같은 의료법 위반 표현이 없는지, 본 리포트의 교정 결과에 맞춰 최종 점검하세요.",
+              "향후 서비스가 확장되어 새로운 분석·피드백 기능이 추가된다면 판정이 바뀔 수 있으니, 기능 추가 전 본 진단을 다시 실행해 확인하세요."
             ]
           },
           "business_model.patterns": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": [
-              "Subscription(구독형)"
-            ]
+            "modal": null
           },
           "section_links": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "GATE PASS 상태입니다. 시장 현실성·수익 구조 섹션에서 사업성을 이어서 검토하세요.",
+              "GATE FAIL 판정입니다. 규제 위험도 섹션에서 판정 근거와 교정 후보를 먼저 확인하세요.",
               "라이프스타일 데이터 기반 서비스는 시장 경쟁이 치열한 편입니다. 시장 현실성 섹션의 포화도를 확인하세요."
             ]
           }
@@ -1323,22 +1313,16 @@
         "C": {},
         "D": {
           "differentiation_point": {
-            "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.62,
-            "embedding_similarity": 0.867
+            "available_share": 0.0
           },
           "bm_strengths": {
-            "available_share": 1.0,
-            "exact_match_share": 0.8,
-            "lexical_similarity": 0.829,
-            "embedding_similarity": 0.974
+            "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.1,
-            "lexical_similarity": 0.457,
-            "embedding_similarity": 0.917
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.56,
+            "embedding_similarity": 0.954
           },
           "one_liner": {
             "available_share": 1.0,
@@ -1359,7 +1343,7 @@
       "validity": {
         "gate": [
           "FAIL",
-          "PASS"
+          "FAIL"
         ],
         "final_grade": [
           "높음",
@@ -1448,7 +1432,7 @@
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "CONDITIONAL"
+            "modal": "FAIL"
           },
           "gate.data_type": {
             "consistent": true,
@@ -1488,19 +1472,19 @@
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "LOW"
+            "modal": null
           },
           "market.realism_grade": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "높음"
+            "modal": null
           },
           "business_model.match_level": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "타깃과 서비스 형태는 제외하고 카테고리와 세부 기능이 같은 선례를 기준으로 비교했습니다."
+            "modal": null
           },
           "overall_signal": {
             "consistent": true,
@@ -1515,8 +1499,8 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "kr-mfds-llm-digital-medical-device-1511-01-20260630",
-              "표3-1"
+              "kr-medical-device-act-20260701",
+              "제2조"
             ]
           },
           "regulatory.matched_rules": {
@@ -1726,7 +1710,7 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "일부 기능이 의료기기 경계선에 걸쳐 있어 표현이나 세부 기능에 따라 판정이 달라질 수 있습니다. 기능 하나만 추가돼도 FAIL로 바뀔 수 있으니, 본 리포트가 지적한 위험 표현부터 교정하고 신규 기능을 기획할 때마다 '진단·치료' 관련 문구가 들어가는지 먼저 점검하세요.",
+              "GATE FAIL 판정입니다. 현재 서비스 설명에 '진단·치료·예방' 등 의료기기법상 목적성 표현이 포함되어 의료기기로 분류될 가능성이 높습니다. 지금 상태로 출시하면 허가받지 않은 의료기기 판매로 간주되어 제재 대상이 될 수 있으니, 해당 표현을 '분석·기록·관리' 같은 웰니스 어휘로 교체하거나 식약처 디지털의료기기 사전상담 제도를 통해 정식 판정을 먼저 받아보세요.",
               "표현 위험도가 높아 의료법·의료기기법 위반으로 지적될 가능성이 큽니다. 본 리포트의 교정 결과대로 인앱 카피는 물론 앱스토어 설명·랜딩페이지 문구까지 위험 표현을 전부 교체한 뒤에만 출시를 진행하세요.",
               "걸음수·수면시간 같은 라이프스타일 데이터는 민감도가 낮아 별도 동의 요건까지는 발생하지 않습니다. 다만 이후 생체지표나 병력 데이터를 추가하면 민감도가 올라가니, 수집 항목을 늘릴 때마다 이 진단을 다시 확인하세요.",
               "이 섹션의 판정은 지금 입력한 서비스 설명을 기준으로 합니다. 실제 앱스토어 설명이나 랜딩페이지 문구가 리포트의 교정 결과와 다르다면 지금 맞추세요."
@@ -1737,59 +1721,48 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "데이터 확보에 큰 장애가 없습니다. 로드맵 STAGE 1을 바로 착수해 2~3주 안에 첫 사용자 데이터를 확보하세요.",
-              "진입 여지가 큰 매력적인 시장입니다. 경쟁 서비스가 늘어나기 전에 주요 기능 위주로 빠르게 MVP를 출시하여 시장을 먼저 선점하세요. 디자인이나 퀄리티를 포기하고 런칭하는 것도 하나의 방법입니다.",
               "코딩할 필요 없이 '타일리'나 '프리머' 같은 노코드 툴로 랜딩 페이지를 당장 만드세요. 일주일 내로 사전 예약자(이메일) 50명을 모으지 못한다면 아이디어 자체를 처음부터 재검토해야 합니다.",
               "플레이스토어나 앱스토어에서 동일 카테고리 상위 3개 앱을 다운받아 가입부터 결제까지 직접 사용해보세요. 그리고 우리 서비스만이 제공할 수 있는 '단 한 번의 클릭으로 해결되는 차별화된 UX 포인트' 1가지를 명확히 정의하세요.",
-              "수집이 쉬운 만큼 개인정보 보호의 책임도 커집니다. 대량의 사용자 데이터를 안전하게 보관할 수 있는 클라우드 데이터베이스의 암호화 및 보안 설정을 선제적으로 적용하세요.",
-              "시장성이 높은 만큼 초기 마케팅이 중요합니다. 고객 획득 비용(CAC)을 낮추기 위해 타겟 고객이 가장 많이 모여있는 커뮤니티나 제휴 채널을 미리 확보해 두세요.",
               "개인정보보호포털(privacy.go.kr)의 '개인정보 처리방침 만들기' 기능을 활용해서 [수집 항목, 보유 기간, 제3자 제공 여부]를 명시한 개인정보 처리방침 문서를 작성하세요. 앱스토어 심사 리젝을 막기 위한 필수 1순위 요건입니다.",
-              "앱스토어 설명과 랜딩페이지 마케팅 문구에 '진단', '치료' 같은 의료법 위반 표현이 없는지, 본 리포트의 교정 결과에 맞춰 최종 점검하세요."
+              "앱스토어 설명과 랜딩페이지 마케팅 문구에 '진단', '치료' 같은 의료법 위반 표현이 없는지, 본 리포트의 교정 결과에 맞춰 최종 점검하세요.",
+              "향후 서비스가 확장되어 새로운 분석·피드백 기능이 추가된다면 판정이 바뀔 수 있으니, 기능 추가 전 본 진단을 다시 실행해 확인하세요."
             ]
           },
           "business_model.patterns": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": [
-              "Subscription(구독형)"
-            ]
+            "modal": null
           },
           "section_links": {
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "라이프스타일 데이터 기반 서비스는 시장 경쟁이 치열한 편입니다. 시장 현실성 섹션의 포화도를 확인하세요.",
-              "조건부 통과(CONDITIONAL) 상태입니다. 규제 위험도 섹션의 판단근거를 함께 검토하세요."
+              "GATE FAIL 판정입니다. 규제 위험도 섹션에서 판정 근거와 교정 후보를 먼저 확인하세요.",
+              "라이프스타일 데이터 기반 서비스는 시장 경쟁이 치열한 편입니다. 시장 현실성 섹션의 포화도를 확인하세요."
             ]
           }
         },
         "C": {},
         "D": {
           "differentiation_point": {
-            "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.553,
-            "embedding_similarity": 0.876
+            "available_share": 0.0
           },
           "bm_strengths": {
-            "available_share": 1.0,
-            "exact_match_share": 0.6,
-            "lexical_similarity": 0.718,
-            "embedding_similarity": 0.96
+            "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.1,
-            "lexical_similarity": 0.627,
-            "embedding_similarity": 0.941
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.55,
+            "embedding_similarity": 0.97
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.6,
+            "lexical_similarity": 0.597,
+            "embedding_similarity": 0.778
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -1804,7 +1777,7 @@
       "validity": {
         "gate": [
           "FAIL",
-          "CONDITIONAL"
+          "FAIL"
         ],
         "final_grade": [
           "높음",
@@ -1981,8 +1954,8 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.561,
-            "embedding_similarity": 0.972
+            "lexical_similarity": 0.572,
+            "embedding_similarity": 0.969
           },
           "one_liner": {
             "available_share": 1.0,
@@ -2077,7 +2050,7 @@
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "낮음"
+            "modal": "중간"
           },
           "business_model.match_level": {
             "consistent": true,
@@ -2131,11 +2104,11 @@
             "modal_share": 1.0,
             "modal": [
               "핵심 데이터(API, 기기 연동) 자동 수집이 당장 불가능합니다. PHQ-9(우울증 척도) 같은 무료 공개 표준 척도나, 사용자가 직접 타이핑하는 수동 기록(예: 구글 폼 활용) 방식으로 첫 MVP(최소 기능 제품) 방향을 수정하세요.",
-              "현재 타겟 시장의 수요가 부족하거나 지불 의향이 낮습니다. 서비스를 B2B(병원, 기업 복지 연동 등)로 피봇(Pivot)하거나 타겟 고객층을 훨씬 좁고 뾰족하게 재설정하세요. (ex. 일반 직장인 > 야근이 잦은 IT 개발자)",
+              "수요와 경쟁이 모두 적당히 존재하는 무난한 시장입니다. 자칫하면 뻔한 앱이 될 수 있으므로, 기존 1위 서비스가 놓치고 있는 '틈새 타겟(Niche)'을 찾아 우리 앱만의 핵심 기능 1~2개로 뾰족하게 어필하세요.",
               "코딩할 필요 없이 '타일리'나 '프리머' 같은 노코드 툴로 랜딩 페이지를 당장 만드세요. 일주일 내로 사전 예약자(이메일) 50명을 모으지 못한다면 아이디어 자체를 처음부터 재검토해야 합니다.",
               "플레이스토어나 앱스토어에서 동일 카테고리 상위 3개 앱을 다운받아 가입부터 결제까지 직접 사용해보세요. 그리고 우리 서비스만이 제공할 수 있는 '단 한 번의 클릭으로 해결되는 차별화된 UX 포인트' 1가지를 명확히 정의하세요.",
               "데이터를 확보할 수 있는 무료로 접근 가능한 대안 소스(공공 데이터, 타겟 B2B 제휴 등) 리스트를 우선적으로 리서치하여 데이터 확보 플랜B를 수립하세요.",
-              "경쟁 강도가 높고 수요가 낮은 레드오션일 수 있습니다. 본 리포트의 '차별화 포인트'를 참고하여, 경쟁 서비스들이 제공하지 못하는 우리만의 핵심 가치 1가지를 명확히 검증하세요. 타겟 고객에게 직접 인터뷰하는 것도 방법 중 하나입니다.",
+              "시장성은 있지만 사용자가 실제로 돈을 지불할 의향이 있는지는 별개의 문제입니다. 랜딩 페이지나 사전 타겟 설문을 통해, 우리가 기획한 유료 모델에 대한 고객의 실제 지불 의향을 확실히 테스트하세요. '아임웹'이나 '노션'으로 가짜 결제 버튼이 있는 랜딩페이지를 만들어, 실제 클릭(구매 전환율)이 몇 퍼센트 정도인지 테스트하는 것도 방법입니다.",
               "개인정보보호포털(privacy.go.kr)의 '개인정보 처리방침 만들기' 기능을 활용해서 [수집 항목, 보유 기간, 제3자 제공 여부]를 명시한 개인정보 처리방침 문서를 작성하세요. 앱스토어 심사 리젝을 막기 위한 필수 1순위 요건입니다.",
               "앱스토어 설명과 랜딩페이지 마케팅 문구에 '진단', '치료' 같은 의료법 위반 표현이 없는지, 본 리포트의 교정 결과에 맞춰 최종 점검하세요."
             ]
@@ -2145,7 +2118,8 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "Lock-in(락인)"
+              "Lock-in(락인)",
+              "Leverage Customer Data(데이터활용)"
             ]
           },
           "section_links": {
@@ -2164,24 +2138,27 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.585,
-            "embedding_similarity": 0.89
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.522,
+            "embedding_similarity": 0.86
           },
           "bm_strengths": {
-            "available_share": 0.0
+            "available_share": 1.0,
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.718,
+            "embedding_similarity": 0.977
           },
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.1,
-            "lexical_similarity": 0.594,
-            "embedding_similarity": 0.927
+            "lexical_similarity": 0.582,
+            "embedding_similarity": 0.943
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.488,
+            "embedding_similarity": 0.786
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -2215,7 +2192,7 @@
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 6,
+        "total": 5,
         "unsafe": []
       },
       "layers": {
@@ -2357,31 +2334,31 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.387,
-            "embedding_similarity": 0.869
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.454,
+            "embedding_similarity": 0.906
           },
           "bm_strengths": {
             "available_share": 1.0,
-            "exact_match_share": 0.3,
-            "lexical_similarity": 0.582,
-            "embedding_similarity": 0.856
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.475,
+            "embedding_similarity": 0.895
           },
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.1,
-            "lexical_similarity": 0.517,
-            "embedding_similarity": 0.932
+            "lexical_similarity": 0.538,
+            "embedding_similarity": 0.905
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.675,
-            "embedding_similarity": 0.884
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.608,
+            "embedding_similarity": 0.86
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
-            "set_jaccard": 0.444
+            "set_jaccard": 0.467
           }
         }
       },
@@ -2411,7 +2388,7 @@
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 1,
+        "total": 3,
         "unsafe": []
       },
       "layers": {
@@ -2548,28 +2525,28 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.881,
-            "embedding_similarity": 0.966
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.812,
+            "embedding_similarity": 0.945
           },
           "bm_strengths": {
             "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.73,
-            "embedding_similarity": 0.978
+            "exact_match_share": 0.3,
+            "lexical_similarity": 0.617,
+            "embedding_similarity": 0.952
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.5,
-            "lexical_similarity": 0.852,
-            "embedding_similarity": 0.978
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.482,
+            "embedding_similarity": 0.843
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
-            "set_jaccard": 1.0
+            "set_jaccard": 0.444
           }
         }
       },
@@ -2737,9 +2714,9 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.6,
-            "lexical_similarity": 0.653,
-            "embedding_similarity": 0.902
+            "exact_match_share": 0.5,
+            "lexical_similarity": 0.609,
+            "embedding_similarity": 0.894
           },
           "bm_strengths": {
             "available_share": 0.0
@@ -2747,14 +2724,14 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.443,
-            "embedding_similarity": 0.882
+            "lexical_similarity": 0.491,
+            "embedding_similarity": 0.911
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.7,
-            "lexical_similarity": 0.852,
-            "embedding_similarity": 0.983
+            "exact_match_share": 0.8,
+            "lexical_similarity": 0.892,
+            "embedding_similarity": 0.989
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -2877,7 +2854,7 @@
             "consistent": true,
             "distinct": 1,
             "modal_share": 1.0,
-            "modal": "낮음"
+            "modal": "중간"
           },
           "business_model.match_level": {
             "consistent": true,
@@ -3021,11 +2998,11 @@
             "modal_share": 1.0,
             "modal": [
               "데이터 확보에 큰 장애가 없습니다. 로드맵 STAGE 1을 바로 착수해 2~3주 안에 첫 사용자 데이터를 확보하세요.",
-              "현재 타겟 시장의 수요가 부족하거나 지불 의향이 낮습니다. 서비스를 B2B(병원, 기업 복지 연동 등)로 피봇(Pivot)하거나 타겟 고객층을 훨씬 좁고 뾰족하게 재설정하세요. (ex. 일반 직장인 > 야근이 잦은 IT 개발자)",
+              "수요와 경쟁이 모두 적당히 존재하는 무난한 시장입니다. 자칫하면 뻔한 앱이 될 수 있으므로, 기존 1위 서비스가 놓치고 있는 '틈새 타겟(Niche)'을 찾아 우리 앱만의 핵심 기능 1~2개로 뾰족하게 어필하세요.",
               "코딩할 필요 없이 '타일리'나 '프리머' 같은 노코드 툴로 랜딩 페이지를 당장 만드세요. 일주일 내로 사전 예약자(이메일) 50명을 모으지 못한다면 아이디어 자체를 처음부터 재검토해야 합니다.",
               "플레이스토어나 앱스토어에서 동일 카테고리 상위 3개 앱을 다운받아 가입부터 결제까지 직접 사용해보세요. 그리고 우리 서비스만이 제공할 수 있는 '단 한 번의 클릭으로 해결되는 차별화된 UX 포인트' 1가지를 명확히 정의하세요.",
               "수집이 쉬운 만큼 개인정보 보호의 책임도 커집니다. 대량의 사용자 데이터를 안전하게 보관할 수 있는 클라우드 데이터베이스의 암호화 및 보안 설정을 선제적으로 적용하세요.",
-              "경쟁 강도가 높고 수요가 낮은 레드오션일 수 있습니다. 본 리포트의 '차별화 포인트'를 참고하여, 경쟁 서비스들이 제공하지 못하는 우리만의 핵심 가치 1가지를 명확히 검증하세요. 타겟 고객에게 직접 인터뷰하는 것도 방법 중 하나입니다.",
+              "시장성은 있지만 사용자가 실제로 돈을 지불할 의향이 있는지는 별개의 문제입니다. 랜딩 페이지나 사전 타겟 설문을 통해, 우리가 기획한 유료 모델에 대한 고객의 실제 지불 의향을 확실히 테스트하세요. '아임웹'이나 '노션'으로 가짜 결제 버튼이 있는 랜딩페이지를 만들어, 실제 클릭(구매 전환율)이 몇 퍼센트 정도인지 테스트하는 것도 방법입니다.",
               "개인정보보호포털(privacy.go.kr)의 '개인정보 처리방침 만들기' 기능을 활용해서 [수집 항목, 보유 기간, 제3자 제공 여부]를 명시한 개인정보 처리방침 문서를 작성하세요. 앱스토어 심사 리젝을 막기 위한 필수 1순위 요건입니다.",
               "앱스토어 설명과 랜딩페이지 마케팅 문구에 '진단', '치료' 같은 의료법 위반 표현이 없는지, 본 리포트의 교정 결과에 맞춰 최종 점검하세요."
             ]
@@ -3035,7 +3012,8 @@
             "distinct": 1,
             "modal_share": 1.0,
             "modal": [
-              "Lock-in(락인)"
+              "Lock-in(락인)",
+              "Leverage Customer Data(데이터활용)"
             ]
           },
           "section_links": {
@@ -3052,24 +3030,27 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.71,
+            "embedding_similarity": 0.868
           },
           "bm_strengths": {
-            "available_share": 0.0
+            "available_share": 1.0,
+            "exact_match_share": 0.9,
+            "lexical_similarity": 0.984,
+            "embedding_similarity": 0.999
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.672,
-            "embedding_similarity": 0.956
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.561,
+            "embedding_similarity": 0.903
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 1.0,
-            "lexical_similarity": 1.0,
-            "embedding_similarity": 1.0
+            "exact_match_share": 0.9,
+            "lexical_similarity": 0.829,
+            "embedding_similarity": 0.92
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 0,
@@ -3103,7 +3084,7 @@
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 2,
+        "total": 4,
         "unsafe": []
       },
       "layers": {
@@ -3240,18 +3221,18 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.4,
-            "lexical_similarity": 0.478,
-            "embedding_similarity": 0.836
+            "exact_match_share": 0.2,
+            "lexical_similarity": 0.519,
+            "embedding_similarity": 0.835
           },
           "bm_strengths": {
             "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.2,
-            "lexical_similarity": 0.577,
-            "embedding_similarity": 0.94
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.55,
+            "embedding_similarity": 0.943
           },
           "one_liner": {
             "available_share": 1.0,
@@ -3429,8 +3410,8 @@
           "differentiation_point": {
             "available_share": 1.0,
             "exact_match_share": 0.2,
-            "lexical_similarity": 0.454,
-            "embedding_similarity": 0.841
+            "lexical_similarity": 0.421,
+            "embedding_similarity": 0.844
           },
           "bm_strengths": {
             "available_share": 0.0
@@ -3438,8 +3419,8 @@
           "overall_summary": {
             "available_share": 1.0,
             "exact_match_share": 0.1,
-            "lexical_similarity": 0.526,
-            "embedding_similarity": 0.924
+            "lexical_similarity": 0.543,
+            "embedding_similarity": 0.937
           },
           "one_liner": {
             "available_share": 1.0,
@@ -3479,7 +3460,7 @@
       "runs_ok": 10,
       "errors": [],
       "corrections": {
-        "total": 4,
+        "total": 5,
         "unsafe": []
       },
       "layers": {
@@ -3616,28 +3597,28 @@
         "D": {
           "differentiation_point": {
             "available_share": 1.0,
-            "exact_match_share": 0.8,
-            "lexical_similarity": 0.748,
-            "embedding_similarity": 0.894
+            "exact_match_share": 0.4,
+            "lexical_similarity": 0.502,
+            "embedding_similarity": 0.821
           },
           "bm_strengths": {
             "available_share": 0.0
           },
           "overall_summary": {
             "available_share": 1.0,
-            "exact_match_share": 0.7,
-            "lexical_similarity": 0.778,
-            "embedding_similarity": 0.942
+            "exact_match_share": 0.1,
+            "lexical_similarity": 0.528,
+            "embedding_similarity": 0.868
           },
           "one_liner": {
             "available_share": 1.0,
-            "exact_match_share": 0.6,
-            "lexical_similarity": 0.771,
-            "embedding_similarity": 0.92
+            "exact_match_share": 0.5,
+            "lexical_similarity": 0.79,
+            "embedding_similarity": 0.975
           },
           "correction.llm_candidates": {
             "runs_with_llm_candidates": 10,
-            "set_jaccard": 0.8
+            "set_jaccard": 1.0
           }
         }
       },

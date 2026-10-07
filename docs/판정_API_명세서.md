@@ -70,7 +70,7 @@ Authorization: Bearer `<accessToken>`
 ### Description
 
 규칙 기반(LLM 미사용)으로 `data_type`/`function_type`/`acquire_method`를 판별하고,
-6칸 매트릭스 + 침습적 하드체크로 `verdict`(PASS/CONDITIONAL/FAIL)를 결정한다.
+6칸 매트릭스 + 침습적 하드체크 + 의료 목적 하드체크로 `verdict`(PASS/CONDITIONAL/FAIL)를 결정한다.
 
 ### Request
 
@@ -96,12 +96,41 @@ Authorization: Bearer `<accessToken>`
     "quote": "string|null",
     "quote_status": "FOUND|UNTRUSTED_DOCUMENT|MISSING_CHUNK|LOOKUP_FAILED|null",
     "quote_message": "string|null"
-  }
+  },
+  "medical_purpose_fired": false,
+  "medical_purpose_phrase": "string|null",
+  "medical_purpose_negated_phrase": "string|null",
+  "medical_purpose_self_check_phrase": "string|null"
 }
 ```
 
 - `avoidance_redesign`/`avoidance_certification`: `verdict=FAIL`일 때만 채워지는 회피 방향 2가지.
-- `reasoning`: 판정 근거 4줄(데이터·수집방법 / 기능 / 침습 신호 / 최종 판정).
+- `reasoning`: 판정 근거 4줄(데이터·수집방법 / 기능 / 침습 신호 / 최종 판정). 의료 목적 하드체크로
+  FAIL이 된 경우에는 3번째 줄이 침습 신호 대신 설명문에서 잡힌 문구를, 4번째 줄이 "선택한 기능
+  조합만으로는 PASS(또는 CONDITIONAL)이지만 설명에 질병 진단·치료 목적이 명시돼 FAIL"임을 보여준다.
+- `medical_purpose_fired`/`medical_purpose_phrase`(2026-10-07 추가, 이슈 #141): 6칸 표로는 FAIL이
+  아니지만 서비스 설명에 질병을 진단·치료·처방한다는 표현이 있어 FAIL로 올린 경우 `true`와 그 근거
+  문구가 내려간다. 해당 없으면 `false`/`null`. 이때 `legal_basis`는 의료기기법 제2조
+  (`kr-medical-device-act-20260701`)이고 `hardcheck_fired`는 `false`다(침습 하드체크와 구분).
+  - 서비스가 그 행위를 "한다"는 표현만 본다. "진단명 기록", "처방전 보관", "치료 중인 환자",
+    "진단 결과를 입력"처럼 이미 일어난 사실을 기록하는 표현은 대상이 아니다.
+  - 질병과 무관한 쓰임은 대상이 아니다. "진단"과 "처방"은 같은 문장에 질병이나 의료 대상(질환·증상·
+    병명, 약·인슐린 등)이 함께 있을 때만 본다 — "피부 타입 진단", "운동 처방"은 대상이 아니다.
+    "치료사"·"치료센터"·"치료비", "건강진단", "자가진단"도 대상이 아니다.
+  - 부정 표현은 같은 절 끝까지 본다. "진단하거나 치료하지 않고", "진단이나 예측 없이",
+    "의료적 진단이나 치료를 대신하지 않습니다"는 대상이 아니다.
+  - 표가 이미 FAIL이면(생체지표 × 수치예측·진단) 이 검사는 하지 않고 표의 근거를 그대로 쓴다.
+- `medical_purpose_negated_phrase`(2026-10-07 추가): 설명문에 진단·치료·처방 표현이 있었지만 부정
+  문맥으로 보고 판정에 반영하지 않은 경우 그 문구. **판정은 바뀌지 않는다.** 부정 판단은 단어 규칙이라
+  틀릴 수 있어, 넘긴 사실을 숨기지 않으려고 남긴다. 값이 있으면 `reasoning` 끝에 같은 내용의 안내가
+  한 줄 덧붙는다.
+- `medical_purpose_self_check_phrase`(2026-10-07 추가): 병명과 함께 쓰인 "자가진단" 문구(예: "우울증
+  자가진단 테스트"). **판정은 바뀌지 않는다.** 웰니스 판단기준 IV.3은 자가진단 설문지로 감정 상태를
+  검사·기록하는 소프트웨어를 개인용 건강관리제품 예시로 들지만, 결과로 병명을 판정해 주면 의료기기법
+  제2조의 진단 목적에 해당할 수 있어 확인하라는 안내를 `reasoning` 끝에 한 줄 덧붙인다. "스트레스
+  자가진단"처럼 병명이 없으면 붙지 않는다.
+- `reasoning` 줄 수: 기본 4줄. 위 두 안내는 해당할 때만 각각 한 줄씩 붙어 최대 6줄이다. 프론트는 줄
+  수를 가정하지 말고 받은 만큼 표시한다.
 - `legal_basis`(2026-10-01 추가): verdict를 낸 근거 조문. 매트릭스 판정이면 6칸 각각의 근거
   (`gate_matrix_table.GATE_MATRIX_LEGAL_BASIS`), 침습적 하드체크면 웰니스 판단기준 `III.2.나`
   (고위해도 판정 규정)다. 공용 `LegalBasis` 형식이라 `quote`/`quote_status`는 위 표와 같은 규칙으로

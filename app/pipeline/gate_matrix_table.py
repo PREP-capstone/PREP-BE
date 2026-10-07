@@ -187,6 +187,180 @@ def detect_genetic_test_signal(text: str) -> bool:
     return any(keyword in compact for keyword in GENETIC_TEST_KEYWORDS)
 
 
+# ---- 의료 목적 하드체크 (6칸 표가 FAIL이 아닐 때 적용) ----
+#
+# 6칸 표는 데이터 유형과 "선택한 기능"만 본다. 그래서 설명문에 "불면증을 진단하고 치료법을
+# 처방한다"고 써도 기능을 기록만 고르면 PASS가 나왔다(2026-10-06 검증 S5 — 의료기기를 PASS로
+# 판정한 치명 오류, 이슈 #141). 의료기기법 제2조는 질병을 진단·치료·경감·처치·예방할 "목적"이면
+# 의료기기로 보므로, 설명문에 그 목적이 명시되면 데이터 유형·선택 기능과 무관하게 FAIL로 올린다.
+#
+# 잘못 잡으면 정상 서비스가 FAIL이 되므로 세 가지로 범위를 좁힌다.
+#   1) 서비스가 그 행위를 "한다"는 표현만 본다. "진단명 기록", "처방전 보관", "치료 중인 환자"처럼
+#      이미 일어난 사실을 기록하는 표현, "치료사"·"건강진단" 같은 복합어, 질병과 무관한 "피부 타입
+#      진단"·"운동 처방"은 뺀다(_is_non_medical_usage).
+#   2) 부정 표현은 같은 절 안에서 본다. "진단이나 치료를 대신하지 않는다", "진단하거나 경고하지
+#      않는다", "진단이나 예측 없이"는 신호가 아니다. judgement.py의 _NEGATION_WINDOW(5글자)는
+#      "진단하거나 치료하지 않고"의 "진단"을 놓쳐서(검증 R6) 여기서는 쓰지 않는다.
+#   3) 다만 부정이 키워드가 아닌 다른 말에 걸린 경우는 긍정으로 본다 — "진단하고 치료는 하지
+#      않는다", "진단해 부담 없이 관리한다". 판단 규칙은 아래 _is_negated 주석 참조.
+# 예방은 넣지 않았다 — "생활습관병 예방을 위한 걸음수 기록"처럼 웰니스 문맥에서 흔해 과탐이 크다.
+MEDICAL_PURPOSE_VERDICT = "FAIL"
+MEDICAL_PURPOSE_LEGAL_BASIS: tuple[str, str] = ("kr-medical-device-act-20260701", "제2조")
+MEDICAL_PURPOSE_AVOIDANCE_REDESIGN = (
+    "서비스 설명에서 질병을 진단·치료·처방한다는 표현과 그에 해당하는 기능을 빼고, 기록·추이 확인 같은 "
+    "일상 건강관리 범위로 한정하면 다시 판정받을 수 있습니다."
+)
+MEDICAL_PURPOSE_AVOIDANCE_CERTIFICATION = f"진단·치료·처방 기능을 그대로 유지하려면 {_CERTIFICATION_GUIDANCE}"
+
+_MEDICAL_PURPOSE_KEYWORD = re.compile(r"진단|치료|처방")
+# 키워드 바로 뒤에 붙으면 "이미 일어난 의료 사실의 기록"을 뜻하는 말 — 서비스의 목적이 아니다.
+# 비슷하게 생겼지만 서비스의 행위인 표현("진단 서비스", "치료 전문", "진단 후보", "진단받을 수 있다")은
+# 전방탐색으로 걸러 감지 대상에 남긴다. "진단 결과를 기록/입력"도 기록이다.
+_MEDICAL_PURPOSE_RECORD_SUFFIXES = re.compile(
+    r"명|서(?!비스)|전(?!문)|(?:을|를)?받(?:은|았|던|고있)|이력|기록|내역|일정|일지|중(?:인|에|이던)|후(?!보)|된"
+    r"|(?:결과|내용|정보|소견)?(?:를|을)?(?:기록|입력|저장|보관|업로드|등록)"
+)
+# 키워드별로 "서비스가 질병을 다룬다"는 뜻이 아닌 쓰임을 뺀다(2026-10-07 2차 자체 리뷰).
+#   - 치료: 사람·장소·비용을 가리키는 복합어. "물리치료사 매칭", "심리치료센터 위치", "치료비 비교".
+#   - 처방: "처방약 복용 기록", "처방전 보관"은 기록이다(처방전은 위 "전"으로 이미 빠진다).
+#   - 진단: "건강진단"(건강검진), "자가진단"(설문형 자기 점검). 자가진단은 의료 목적일 수도 있어 애매하지만,
+#     PREP의 MVP 템플릿이 "자가진단 MVP"를 직접 권하고 있어 FAIL로 올리면 서비스 안에서 모순된다. 규제위험도의
+#     "진단" 키워드 점수로는 계속 잡힌다.
+_KEYWORD_SUFFIX_EXCLUSIONS = {
+    "치료": re.compile(r"사|실|센터|기관|원(?!리)|비(?!법)"),
+    "처방": re.compile(r"약(?!국|속)"),
+}
+_KEYWORD_PREFIX_EXCLUSIONS = {"진단": ("건강", "자가")}
+# "진단"과 "처방"은 질병과 무관하게도 널리 쓰인다 — "피부 타입 진단", "퍼스널컬러 진단", "운동 처방",
+# "식단 처방". 의료기기법 제2조의 대상은 "질병의" 진단·치료이므로, 이 두 키워드는 같은 문장에 질병이나
+# 의료 대상이 함께 있을 때만 의료 목적으로 본다. "치료"는 그 자체가 질병을 전제해 문맥 조건을 두지 않는다.
+# 목록에 없는 병명은 놓친다 — 한계로 문서에 적었다(판정엔진_개발설계서.md §5.3.1).
+_DISEASE_CONTEXT = re.compile(
+    r"질병|질환|증상|환자|병력|발병|합병증|의료|의학|"
+    r"당뇨|혈당|혈압|고지혈|부정맥|심전도|산소포화도|우울|불면|무호흡|치매|비만|천식|조현|공황|불안장애|섭식장애|"
+    r"탈모|아토피|관절염|디스크|골다공증|빈혈|감염|독감|폐렴|뇌졸중|심근경색|갑상선|대사증후군|통증|종양"
+)
+_PRESCRIPTION_CONTEXT = re.compile(r"약|인슐린|흡입기|영양제|보충제|주사|병원|의원|의사")
+_KEYWORD_CONTEXT = {
+    "진단": (_DISEASE_CONTEXT,),
+    "처방": (_DISEASE_CONTEXT, _PRESCRIPTION_CONTEXT),
+}
+_SENTENCE_BOUNDARY = re.compile(r"[.!?\n。]")
+_CLAUSE_BOUNDARY = re.compile(r"[.,;!?\n。]")
+# 부정은 두 종류로 나눠 본다. 한 가지 규칙으로 묶으면 "진단해 부담 없이 관리"나 "진단하는 앱으로
+# 개인정보를 저장하지 않습니다"처럼 다른 말에 걸린 부정 때문에 의료 목적을 놓친다(FAIL을 PASS로
+# 내보내는 쪽이라 더 위험하다).
+#   - 서술어 부정(않·못·아니): 키워드가 그 서술어에 이어져 있을 때만 부정으로 본다. 사이에 순차
+#     연결어미나 관형형(-하고, -하며, -해서, -해, -하는 + 명사)이 있으면 키워드는 이미 긍정으로
+#     끝난 것이고, 사이가 너무 길어도(_PREDICATE_NEGATION_REACH) 다른 서술어로 본다.
+#   - 부재 표현(없이·없다): 키워드가 "없다"의 대상인 명사일 때만 부정으로 본다. 사이에 용언(하·해·한·
+#     할·된)이 끼면 키워드는 서술어로 쓰인 것이라 부정이 아니다.
+_PREDICATE_NEGATION = re.compile(r"지(?:는|도)?않|지못|아닌|아니|아닙|안합|안함|안해")
+_LACK_NEGATION = re.compile(r"없이|없습|없다|없음|없는|없고|없으")
+_ASSERTING_CONNECTIVE = re.compile(
+    r"하고|하며|하면서|해서|하여|한뒤|한후|해주고|해주며|해(?!주지|드리지)|하는(?!것|게|건)"
+)
+_VERB_MARKER = re.compile(r"[하해한할된됩]")
+_PREDICATE_NEGATION_REACH = 14
+_CLAUSE_LOOKAHEAD = 60
+_PHRASE_CONTEXT = 8
+
+
+def _is_negated(clause_tail: str) -> bool:
+    predicate = _PREDICATE_NEGATION.search(clause_tail)
+    if predicate and predicate.start() <= _PREDICATE_NEGATION_REACH:
+        # 잘라낸 앞부분이 아니라 절 전체에서 찾고 위치로 거른다 — "해주지 않"의 "해"를 전방탐색
+        # (?!주지)으로 걸러내려면 부정 표현까지 보여야 한다.
+        connective = _ASSERTING_CONNECTIVE.search(clause_tail)
+        if not (connective and connective.start() < predicate.start()):
+            return True
+    lack = _LACK_NEGATION.search(clause_tail)
+    return bool(lack and not _VERB_MARKER.search(clause_tail[: lack.start()]))
+
+
+def _sentence_around(text: str, start: int, end: int) -> str:
+    before = [m.end() for m in _SENTENCE_BOUNDARY.finditer(text, 0, start)]
+    after = _SENTENCE_BOUNDARY.search(text, end)
+    return text[(before[-1] if before else 0) : (after.start() if after else len(text))]
+
+
+def _is_non_medical_usage(text: str, match: re.Match, clause_tail: str) -> bool:
+    """키워드가 기록·복합어·질병과 무관한 쓰임이면 True — 의료 목적 판단에서 아예 뺀다(안내도 붙이지 않는다)."""
+    keyword = match.group()
+    if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail):
+        return True
+    suffix_exclusion = _KEYWORD_SUFFIX_EXCLUSIONS.get(keyword)
+    if suffix_exclusion and suffix_exclusion.match(clause_tail):
+        return True
+    preceding = _WHITESPACE.sub("", text[max(match.start() - 6, 0) : match.start()])
+    if preceding.endswith(_KEYWORD_PREFIX_EXCLUSIONS.get(keyword, ())) and keyword in _KEYWORD_PREFIX_EXCLUSIONS:
+        return True
+    contexts = _KEYWORD_CONTEXT.get(keyword)
+    if contexts:
+        sentence = _sentence_around(text, match.start(), match.end())
+        # 키워드 자신("진단", "처방")이 문맥어로 잡히지 않도록 빼고 본다.
+        rest = sentence.replace(keyword, " ")
+        if not any(context.search(rest) for context in contexts):
+            return True
+    return False
+
+
+def _is_disease_self_check(text: str, match: re.Match) -> bool:
+    """병명과 함께 쓰인 "자가진단"인지 — "우울증 자가진단 테스트"는 해당, "스트레스 자가진단"은 아니다."""
+    if match.group() != "진단":
+        return False
+    preceding = _WHITESPACE.sub("", text[max(match.start() - 6, 0) : match.start()])
+    if not preceding.endswith("자가"):
+        return False
+    sentence = _sentence_around(text, match.start(), match.end())
+    return bool(_DISEASE_CONTEXT.search(sentence.replace("진단", " ")))
+
+
+def scan_medical_purpose(text: str) -> tuple[str | None, str | None, str | None]:
+    """설명문의 진단·치료·처방 표현을 훑어 (의료 목적 문구, 부정 문맥으로 넘긴 문구, 병명 자가진단 문구)를 돌려준다.
+
+    첫 번째 값이 있으면 FAIL 근거다. 나머지 둘은 첫 번째가 없을 때만 채우고 판정에는 쓰지 않는다 —
+    "판정에 반영하지 않았지만 확인이 필요한 표현"을 응답에 남기는 용도다.
+      - 부정 문맥: 부정 판단은 단어 규칙이라 틀릴 수 있고, 틀리면 의료기기를 PASS로 내보내는 방향이라
+        조용히 넘기지 않는다(2026-10-07 결정).
+      - 병명 자가진단: 웰니스 판단기준 IV.3은 "지필 검사법의 자가진단 설문지로 감정 상태를 검사·기록"하는
+        소프트웨어를 개인용 건강관리제품 예시로 들지만, 설문 결과로 질병 유무나 병명을 판정해 주면
+        의료기기법 제2조의 진단 목적에 해당할 수 있다. 문구만으로는 둘을 가를 수 없어 FAIL로 올리지 않고
+        확인하라는 안내만 붙인다.
+    기록·복합어·질병과 무관한 쓰임("진단명", "치료사", "피부 타입 진단", "스트레스 자가진단")은 의료 목적과
+    무관해 어느 쪽에도 넣지 않는다.
+    """
+    negated_phrase = None
+    self_check_phrase = None
+    for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
+        tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
+        boundary = _CLAUSE_BOUNDARY.search(tail_raw)
+        clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
+        start = max(match.start() - _PHRASE_CONTEXT, 0)
+        if _is_disease_self_check(text, match) and not _is_negated(clause_tail):
+            if self_check_phrase is None:
+                self_check_phrase = text[start : match.end() + _PHRASE_CONTEXT].strip()
+            continue
+        if _is_non_medical_usage(text, match, clause_tail):
+            continue
+        if _is_negated(clause_tail):
+            if negated_phrase is None:
+                # 부정어까지 보이도록 뒤쪽을 더 길게 자른다.
+                negated_phrase = text[start : match.end() + _PHRASE_CONTEXT * 2].strip()
+            continue
+        return text[start : match.end() + _PHRASE_CONTEXT].strip(), None, None
+    return None, negated_phrase, self_check_phrase
+
+
+def detect_medical_purpose(text: str) -> str | None:
+    """설명문에 서비스가 질병을 진단·치료·처방한다는 표현이 있으면 그 주변 문구를, 없으면 None을 돌려준다.
+
+    돌려준 문구는 GATE 응답의 판정 이유에 그대로 실린다 — 어떤 표현 때문에 FAIL인지 사용자가 볼 수
+    있어야 잘못 잡힌 경우에도 원인을 바로 안다.
+    """
+    return scan_medical_purpose(text)[0]
+
+
 def is_invasive_hardcheck(data_type: str, acquire_method: str | None, invasive_signal: bool) -> bool:
     """FAIL 하드 오버라이드 대상인지 판단한다. function_type은 의도적으로 보지 않는다."""
     return data_type == "생체지표" and acquire_method == "기기연동" and invasive_signal
