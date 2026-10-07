@@ -196,7 +196,8 @@ def detect_genetic_test_signal(text: str) -> bool:
 #
 # 잘못 잡으면 정상 서비스가 FAIL이 되므로 세 가지로 범위를 좁힌다.
 #   1) 서비스가 그 행위를 "한다"는 표현만 본다. "진단명 기록", "처방전 보관", "치료 중인 환자"처럼
-#      이미 일어난 사실을 기록하는 표현은 _MEDICAL_PURPOSE_RECORD_SUFFIXES로 제외한다.
+#      이미 일어난 사실을 기록하는 표현, "치료사"·"건강진단" 같은 복합어, 질병과 무관한 "피부 타입
+#      진단"·"운동 처방"은 뺀다(_is_non_medical_usage).
 #   2) 부정 표현은 같은 절 안에서 본다. "진단이나 치료를 대신하지 않는다", "진단하거나 경고하지
 #      않는다", "진단이나 예측 없이"는 신호가 아니다. judgement.py의 _NEGATION_WINDOW(5글자)는
 #      "진단하거나 치료하지 않고"의 "진단"을 놓쳐서(검증 R6) 여기서는 쓰지 않는다.
@@ -213,11 +214,38 @@ MEDICAL_PURPOSE_AVOIDANCE_CERTIFICATION = f"진단·치료·처방 기능을 그
 
 _MEDICAL_PURPOSE_KEYWORD = re.compile(r"진단|치료|처방")
 # 키워드 바로 뒤에 붙으면 "이미 일어난 의료 사실의 기록"을 뜻하는 말 — 서비스의 목적이 아니다.
-# 비슷하게 생겼지만 서비스의 행위인 표현("진단 서비스", "치료 전문", "진단 후보", "처방 약국 연계",
-# "진단받을 수 있다")은 전방탐색으로 걸러 감지 대상에 남긴다.
+# 비슷하게 생겼지만 서비스의 행위인 표현("진단 서비스", "치료 전문", "진단 후보", "진단받을 수 있다")은
+# 전방탐색으로 걸러 감지 대상에 남긴다. "진단 결과를 기록/입력"도 기록이다.
 _MEDICAL_PURPOSE_RECORD_SUFFIXES = re.compile(
-    r"명|서(?!비스)|전(?!문)|(?:을|를)?받(?:은|았|던|고있)|이력|기록|내역|일정|일지|중(?:인|에|이던)|후(?!보)|약(?!국|속)|된"
+    r"명|서(?!비스)|전(?!문)|(?:을|를)?받(?:은|았|던|고있)|이력|기록|내역|일정|일지|중(?:인|에|이던)|후(?!보)|된"
+    r"|(?:결과|내용|정보|소견)?(?:를|을)?(?:기록|입력|저장|보관|업로드|등록)"
 )
+# 키워드별로 "서비스가 질병을 다룬다"는 뜻이 아닌 쓰임을 뺀다(2026-10-07 2차 자체 리뷰).
+#   - 치료: 사람·장소·비용을 가리키는 복합어. "물리치료사 매칭", "심리치료센터 위치", "치료비 비교".
+#   - 처방: "처방약 복용 기록", "처방전 보관"은 기록이다(처방전은 위 "전"으로 이미 빠진다).
+#   - 진단: "건강진단"(건강검진), "자가진단"(설문형 자기 점검). 자가진단은 의료 목적일 수도 있어 애매하지만,
+#     PREP의 MVP 템플릿이 "자가진단 MVP"를 직접 권하고 있어 FAIL로 올리면 서비스 안에서 모순된다. 규제위험도의
+#     "진단" 키워드 점수로는 계속 잡힌다.
+_KEYWORD_SUFFIX_EXCLUSIONS = {
+    "치료": re.compile(r"사|실|센터|기관|원(?!리)|비(?!법)"),
+    "처방": re.compile(r"약(?!국|속)"),
+}
+_KEYWORD_PREFIX_EXCLUSIONS = {"진단": ("건강", "자가")}
+# "진단"과 "처방"은 질병과 무관하게도 널리 쓰인다 — "피부 타입 진단", "퍼스널컬러 진단", "운동 처방",
+# "식단 처방". 의료기기법 제2조의 대상은 "질병의" 진단·치료이므로, 이 두 키워드는 같은 문장에 질병이나
+# 의료 대상이 함께 있을 때만 의료 목적으로 본다. "치료"는 그 자체가 질병을 전제해 문맥 조건을 두지 않는다.
+# 목록에 없는 병명은 놓친다 — 한계로 문서에 적었다(판정엔진_개발설계서.md §5.3.1).
+_DISEASE_CONTEXT = re.compile(
+    r"질병|질환|증상|환자|병력|발병|합병증|의료|의학|"
+    r"당뇨|혈당|혈압|고지혈|부정맥|심전도|산소포화도|우울|불면|무호흡|치매|비만|천식|조현|공황|불안장애|섭식장애|"
+    r"탈모|아토피|관절염|디스크|골다공증|빈혈|감염|독감|폐렴|뇌졸중|심근경색|갑상선|대사증후군|통증|종양"
+)
+_PRESCRIPTION_CONTEXT = re.compile(r"약|인슐린|흡입기|영양제|보충제|주사|병원|의원|의사")
+_KEYWORD_CONTEXT = {
+    "진단": (_DISEASE_CONTEXT,),
+    "처방": (_DISEASE_CONTEXT, _PRESCRIPTION_CONTEXT),
+}
+_SENTENCE_BOUNDARY = re.compile(r"[.!?\n。]")
 _CLAUSE_BOUNDARY = re.compile(r"[.,;!?\n。]")
 # 부정은 두 종류로 나눠 본다. 한 가지 규칙으로 묶으면 "진단해 부담 없이 관리"나 "진단하는 앱으로
 # 개인정보를 저장하지 않습니다"처럼 다른 말에 걸린 부정 때문에 의료 목적을 놓친다(FAIL을 PASS로
@@ -250,20 +278,48 @@ def _is_negated(clause_tail: str) -> bool:
     return bool(lack and not _VERB_MARKER.search(clause_tail[: lack.start()]))
 
 
+def _sentence_around(text: str, start: int, end: int) -> str:
+    before = [m.end() for m in _SENTENCE_BOUNDARY.finditer(text, 0, start)]
+    after = _SENTENCE_BOUNDARY.search(text, end)
+    return text[(before[-1] if before else 0) : (after.start() if after else len(text))]
+
+
+def _is_non_medical_usage(text: str, match: re.Match, clause_tail: str) -> bool:
+    """키워드가 기록·복합어·질병과 무관한 쓰임이면 True — 의료 목적 판단에서 아예 뺀다(안내도 붙이지 않는다)."""
+    keyword = match.group()
+    if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail):
+        return True
+    suffix_exclusion = _KEYWORD_SUFFIX_EXCLUSIONS.get(keyword)
+    if suffix_exclusion and suffix_exclusion.match(clause_tail):
+        return True
+    preceding = _WHITESPACE.sub("", text[max(match.start() - 6, 0) : match.start()])
+    if preceding.endswith(_KEYWORD_PREFIX_EXCLUSIONS.get(keyword, ())) and keyword in _KEYWORD_PREFIX_EXCLUSIONS:
+        return True
+    contexts = _KEYWORD_CONTEXT.get(keyword)
+    if contexts:
+        sentence = _sentence_around(text, match.start(), match.end())
+        # 키워드 자신("진단", "처방")이 문맥어로 잡히지 않도록 빼고 본다.
+        rest = sentence.replace(keyword, " ")
+        if not any(context.search(rest) for context in contexts):
+            return True
+    return False
+
+
 def scan_medical_purpose(text: str) -> tuple[str | None, str | None]:
     """설명문의 진단·치료·처방 표현을 훑어 (의료 목적으로 본 문구, 부정 문맥으로 보고 넘긴 문구)를 돌려준다.
 
     첫 번째 값이 있으면 FAIL 근거다. 두 번째 값은 첫 번째가 없을 때만 채운다 — 판정에는 쓰지 않고
     "의료 표현이 있었지만 부정 문맥으로 보고 반영하지 않았다"는 사실을 응답에 남기는 용도다. 부정
     판단은 단어 규칙이라 틀릴 수 있고, 틀리면 의료기기를 PASS로 내보내는 방향이라 조용히 넘기지
-    않는다(2026-10-07 결정). 기록 표현("진단명", "처방전")은 의료 목적과 무관해 어느 쪽에도 넣지 않는다.
+    않는다(2026-10-07 결정). 기록·복합어·질병과 무관한 쓰임("진단명", "치료사", "피부 타입 진단")은
+    의료 목적과 무관해 어느 쪽에도 넣지 않는다.
     """
     negated_phrase = None
     for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
         tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
         boundary = _CLAUSE_BOUNDARY.search(tail_raw)
         clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
-        if _MEDICAL_PURPOSE_RECORD_SUFFIXES.match(clause_tail):
+        if _is_non_medical_usage(text, match, clause_tail):
             continue
         start = max(match.start() - _PHRASE_CONTEXT, 0)
         if _is_negated(clause_tail):
