@@ -8,14 +8,14 @@ import re
 
 import pytest
 
-from app.api.judgement import _has_unnegated_match
+from app.api.judgement import _compact_description, _has_unnegated_match
 from app.pipeline.gate_matrix_table import scan_medical_purpose
 
 _WHITESPACE = re.compile(r"\s+")
 
 
 def _matches(description: str, keyword: str) -> bool:
-    return _has_unnegated_match(_WHITESPACE.sub("", description), _WHITESPACE.sub("", keyword))
+    return _has_unnegated_match(_compact_description(description), _WHITESPACE.sub("", keyword))
 
 
 @pytest.mark.parametrize(
@@ -34,6 +34,8 @@ def _matches(description: str, keyword: str) -> bool:
         ("복약지도를 하지 않고 단순 정보만 제공한다.", "복약지도"),
         ("복약지도를 하지는 않습니다.", "복약지도"),
         ("이 서비스는 질병 진단 목적이 아닙니다", "진단"),
+        ("질병을 진단할 수 있는 것은 아닙니다", "진단"),
+        ("질병을 진단하기 위한 서비스가 아닙니다", "진단"),
     ],
 )
 def test_negated_keyword_is_not_matched(description: str, keyword: str) -> None:
@@ -49,6 +51,13 @@ def test_negated_keyword_is_not_matched(description: str, keyword: str) -> None:
         ("혈당을 진단해 부담 없이 관리하도록 돕습니다", "진단"),
         ("진단 결과를 알려주고 병원은 추천하지 않는다", "진단"),
         ("질병을 예측하고 약은 권하지 않는다", "질병"),
+        # "~할 수 있어/하므로/하니 …하지 않아도 됩니다" — 키워드는 긍정이고 가장 위험한 문구다.
+        ("불면증을 진단할 수 있어 병원에 가지 않아도 됩니다", "진단"),
+        ("혈당 수치를 예측할 수 있고 병원 방문은 필요하지 않습니다", "예측"),
+        ("우울증을 치료하므로 약을 먹지 않아도 됩니다", "치료"),
+        ("당뇨를 진단하니 병원에 가지 않아도 됩니다", "진단"),
+        # 마침표 없이 줄만 바꿔 쓴 입력 — 다음 줄의 부정이 넘어오지 않는다.
+        ("질병을 진단\n광고는 하지 않음", "진단"),
         # 절이 바뀌면 부정이 넘어오지 않는다.
         ("질병을 진단합니다. 개인정보는 저장하지 않습니다", "진단"),
         ("질병을 진단하며, 광고는 보여주지 않습니다", "진단"),
@@ -70,6 +79,10 @@ def test_asserted_keyword_is_matched(description: str, keyword: str) -> None:
         "의료적 진단이나 치료를 대신하지 않고 생활 습관 개선만 돕습니다",
         "불면증을 진단하고 무리한 운동은 권하지 않습니다",
         "수면 패턴을 분석해 불면증을 진단하고 맞춤 치료법을 처방한다",
+        "불면증을 진단할 수 있어 병원에 가지 않아도 됩니다",
+        "당뇨를 진단하니 병원에 가지 않아도 됩니다",
+        "질병을 진단\n광고는 하지 않음",
+        "질병을 진단할 수 있는 것은 아닙니다",
     ],
 )
 def test_gate_and_regulatory_read_negation_the_same_way(description: str) -> None:

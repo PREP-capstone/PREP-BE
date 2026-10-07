@@ -512,6 +512,14 @@ def _dedupe_matched_rules(matches: list[CorrectionMatch]) -> list[MatchedRule]:
 # 봐서 "진단하거나 치료하지 않고"의 "진단"·"질병"을 위험 표현으로 잡았고, 같은 문장을 GATE는
 # 부정으로, 규제위험도는 위험으로 읽었다.
 _WHITESPACE = re.compile(r"\s+")
+# 설명문을 붙여 쓸 때 줄바꿈은 남긴다 — 마침표 없이 줄만 바꿔 쓴 입력("질병을 진단\n광고는 하지 않음")에서
+# 다음 줄의 부정이 앞줄 키워드에 걸리지 않게 하려는 것이다. GATE는 원문을 그대로 보므로 줄바꿈이 절
+# 경계로 남는데, 여기서 지우면 같은 문장을 두 곳이 다르게 읽는다.
+_INLINE_WHITESPACE = re.compile(r"[^\S\n]+")
+
+
+def _compact_description(service_description: str) -> str:
+    return _INLINE_WHITESPACE.sub("", service_description)
 
 
 def _has_unnegated_match(compact_text: str, needle: str) -> bool:
@@ -538,7 +546,7 @@ async def _match_gate_keywords(service_description: str, rule_version_ids: list[
     from_keyword_id)에도 쓰이므로, 여기서 빠지면 DATA_TYPE 명사만으로 파생된 correction_rule도
     실제 risky_text 문구가 있어야만(phrase_hit) 매칭된다.
     """
-    compact_description = _WHITESPACE.sub("", service_description)
+    compact_description = _compact_description(service_description)
     async with AsyncSessionLocal() as session:
         rows = (
             await session.execute(
@@ -606,7 +614,7 @@ async def _match_correction_rules(
     (원래 반대 방향 추적용 FK를 거꾸로 탄, 더 관대한 매칭).
     """
     matched_keyword_ids = {row.keyword_id for row in matched_keywords}
-    compact_description = _WHITESPACE.sub("", service_description)
+    compact_description = _compact_description(service_description)
 
     async with AsyncSessionLocal() as session:
         rows = (
