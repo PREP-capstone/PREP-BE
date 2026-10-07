@@ -31,6 +31,7 @@ class FailedDraft(TypedDict):
 class ValidationResult(TypedDict):
     passed: bool
     failed_checks: list[str]  # ["필드누락", "값오류", "인용미확인", "중복후보", "파생값불일치"]
+    # 검수 승인 전 구조 검증(structural_errors)에서는 "판정미확정"도 나온다 — Stage B 전용(#144).
     # 사유별 발생 건수. 사유 목록만으로는 "무엇이 얼마나 걸렀는지"를 알 수 없어
     # 프롬프트를 고칠지 검증을 고칠지 판단할 근거가 없다.
     failed_counts: dict[str, int]
