@@ -163,6 +163,10 @@ class GateResponse(BaseModel):
     # 반영하지 않은 문구. 판정은 바뀌지 않는다 — 부정 판단이 틀렸을 때 알아챌 수 있도록 남긴다.
     # 값이 있으면 reasoning 끝에 같은 내용의 안내 한 줄이 덧붙는다.
     medical_purpose_negated_phrase: str | None = None
+    # 병명과 함께 쓰인 "자가진단" 문구(예: "우울증 자가진단 테스트"). 판정은 바뀌지 않는다 — 설문으로
+    # 상태를 점검·기록하는 수준이면 건강관리 범위지만 병명을 판정해 주면 의료기기 해당 가능성이 있어,
+    # 확인하라는 안내를 reasoning 끝에 한 줄 덧붙인다(웰니스 판단기준 IV.3, 의료기기법 제2조).
+    medical_purpose_self_check_phrase: str | None = None
 
 
 # 여러 액션이 섞이면 가장 위험한 쪽 채택 (db_구축_설계서.md §3.2 "복수 조합 시 FAIL 우선").
@@ -299,6 +303,14 @@ def _describe_negated_medical_purpose(phrase: str) -> str:
     )
 
 
+def _describe_disease_self_check(phrase: str) -> str:
+    return (
+        f"서비스 설명의 \"{phrase}\"는 병명과 함께 쓰인 자가진단 표현입니다. 설문으로 상태를 스스로 점검·기록하는 "
+        "수준이면 건강관리 범위지만, 결과로 질병 유무나 병명을 판정해 알려준다면 의료기기 해당 가능성이 높습니다. "
+        "\"진단\" 대신 \"점검\"·\"체크\" 같은 표현을 권합니다."
+    )
+
+
 def _detect_invasive_signal(service_description: str, items: list[HealthDataItemInput]) -> bool:
     # detect_invasive()는 내부에서 공백을 전부 지우고 매칭한다 — 서로 다른 필드를
     # 이어붙이면 경계가 사라져 부정표현/키워드가 필드를 가로질러 엉뚱하게 매칭된다.
@@ -369,8 +381,8 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
     # 의료 목적 하드체크 — 6칸 표가 이미 FAIL이면 그 근거(매트릭스 칸)를 그대로 쓰고, FAIL이 아닐
     # 때만 설명문을 본다. 표는 선택한 기능만 보므로 "진단하고 치료법을 처방한다"고 쓰고 기록만
     # 고른 서비스가 PASS로 나오던 것을 막는다(gate_matrix_table.py의 의료 목적 하드체크 주석 참조).
-    medical_purpose_phrase, negated_phrase = (
-        scan_medical_purpose(analysis_session.service_description) if cell["verdict"] != "FAIL" else (None, None)
+    medical_purpose_phrase, negated_phrase, self_check_phrase = (
+        scan_medical_purpose(analysis_session.service_description) if cell["verdict"] != "FAIL" else (None, None, None)
     )
     if medical_purpose_phrase:
         return GateResponse(
@@ -412,9 +424,11 @@ async def judge_gate(request: GateRequest) -> GateResponse | JSONResponse:
                 data_type, function_type, acquire_method, invasive_signal, hardcheck_fired=False, verdict=cell["verdict"]
             ),
             *([_describe_negated_medical_purpose(negated_phrase)] if negated_phrase else []),
+            *([_describe_disease_self_check(self_check_phrase)] if self_check_phrase else []),
         ],
         legal_basis=await _gate_legal_basis(GATE_MATRIX_LEGAL_BASIS[(data_type, function_type)]),
         medical_purpose_negated_phrase=negated_phrase,
+        medical_purpose_self_check_phrase=self_check_phrase,
     )
 
 

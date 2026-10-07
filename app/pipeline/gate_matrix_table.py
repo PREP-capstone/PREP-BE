@@ -305,30 +305,51 @@ def _is_non_medical_usage(text: str, match: re.Match, clause_tail: str) -> bool:
     return False
 
 
-def scan_medical_purpose(text: str) -> tuple[str | None, str | None]:
-    """설명문의 진단·치료·처방 표현을 훑어 (의료 목적으로 본 문구, 부정 문맥으로 보고 넘긴 문구)를 돌려준다.
+def _is_disease_self_check(text: str, match: re.Match) -> bool:
+    """병명과 함께 쓰인 "자가진단"인지 — "우울증 자가진단 테스트"는 해당, "스트레스 자가진단"은 아니다."""
+    if match.group() != "진단":
+        return False
+    preceding = _WHITESPACE.sub("", text[max(match.start() - 6, 0) : match.start()])
+    if not preceding.endswith("자가"):
+        return False
+    sentence = _sentence_around(text, match.start(), match.end())
+    return bool(_DISEASE_CONTEXT.search(sentence.replace("진단", " ")))
 
-    첫 번째 값이 있으면 FAIL 근거다. 두 번째 값은 첫 번째가 없을 때만 채운다 — 판정에는 쓰지 않고
-    "의료 표현이 있었지만 부정 문맥으로 보고 반영하지 않았다"는 사실을 응답에 남기는 용도다. 부정
-    판단은 단어 규칙이라 틀릴 수 있고, 틀리면 의료기기를 PASS로 내보내는 방향이라 조용히 넘기지
-    않는다(2026-10-07 결정). 기록·복합어·질병과 무관한 쓰임("진단명", "치료사", "피부 타입 진단")은
-    의료 목적과 무관해 어느 쪽에도 넣지 않는다.
+
+def scan_medical_purpose(text: str) -> tuple[str | None, str | None, str | None]:
+    """설명문의 진단·치료·처방 표현을 훑어 (의료 목적 문구, 부정 문맥으로 넘긴 문구, 병명 자가진단 문구)를 돌려준다.
+
+    첫 번째 값이 있으면 FAIL 근거다. 나머지 둘은 첫 번째가 없을 때만 채우고 판정에는 쓰지 않는다 —
+    "판정에 반영하지 않았지만 확인이 필요한 표현"을 응답에 남기는 용도다.
+      - 부정 문맥: 부정 판단은 단어 규칙이라 틀릴 수 있고, 틀리면 의료기기를 PASS로 내보내는 방향이라
+        조용히 넘기지 않는다(2026-10-07 결정).
+      - 병명 자가진단: 웰니스 판단기준 IV.3은 "지필 검사법의 자가진단 설문지로 감정 상태를 검사·기록"하는
+        소프트웨어를 개인용 건강관리제품 예시로 들지만, 설문 결과로 질병 유무나 병명을 판정해 주면
+        의료기기법 제2조의 진단 목적에 해당할 수 있다. 문구만으로는 둘을 가를 수 없어 FAIL로 올리지 않고
+        확인하라는 안내만 붙인다.
+    기록·복합어·질병과 무관한 쓰임("진단명", "치료사", "피부 타입 진단", "스트레스 자가진단")은 의료 목적과
+    무관해 어느 쪽에도 넣지 않는다.
     """
     negated_phrase = None
+    self_check_phrase = None
     for match in _MEDICAL_PURPOSE_KEYWORD.finditer(text):
         tail_raw = text[match.end() : match.end() + _CLAUSE_LOOKAHEAD]
         boundary = _CLAUSE_BOUNDARY.search(tail_raw)
         clause_tail = _WHITESPACE.sub("", tail_raw[: boundary.start()] if boundary else tail_raw)
+        start = max(match.start() - _PHRASE_CONTEXT, 0)
+        if _is_disease_self_check(text, match) and not _is_negated(clause_tail):
+            if self_check_phrase is None:
+                self_check_phrase = text[start : match.end() + _PHRASE_CONTEXT].strip()
+            continue
         if _is_non_medical_usage(text, match, clause_tail):
             continue
-        start = max(match.start() - _PHRASE_CONTEXT, 0)
         if _is_negated(clause_tail):
             if negated_phrase is None:
                 # 부정어까지 보이도록 뒤쪽을 더 길게 자른다.
                 negated_phrase = text[start : match.end() + _PHRASE_CONTEXT * 2].strip()
             continue
-        return text[start : match.end() + _PHRASE_CONTEXT].strip(), None
-    return None, negated_phrase
+        return text[start : match.end() + _PHRASE_CONTEXT].strip(), None, None
+    return None, negated_phrase, self_check_phrase
 
 
 def detect_medical_purpose(text: str) -> str | None:

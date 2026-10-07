@@ -99,7 +99,8 @@ Authorization: Bearer `<accessToken>`
   },
   "medical_purpose_fired": false,
   "medical_purpose_phrase": "string|null",
-  "medical_purpose_negated_phrase": "string|null"
+  "medical_purpose_negated_phrase": "string|null",
+  "medical_purpose_self_check_phrase": "string|null"
 }
 ```
 
@@ -122,7 +123,14 @@ Authorization: Bearer `<accessToken>`
 - `medical_purpose_negated_phrase`(2026-10-07 추가): 설명문에 진단·치료·처방 표현이 있었지만 부정
   문맥으로 보고 판정에 반영하지 않은 경우 그 문구. **판정은 바뀌지 않는다.** 부정 판단은 단어 규칙이라
   틀릴 수 있어, 넘긴 사실을 숨기지 않으려고 남긴다. 값이 있으면 `reasoning` 끝에 같은 내용의 안내가
-  한 줄 덧붙어 **5줄**이 된다(그 밖의 경우는 4줄 그대로).
+  한 줄 덧붙는다.
+- `medical_purpose_self_check_phrase`(2026-10-07 추가): 병명과 함께 쓰인 "자가진단" 문구(예: "우울증
+  자가진단 테스트"). **판정은 바뀌지 않는다.** 웰니스 판단기준 IV.3은 자가진단 설문지로 감정 상태를
+  검사·기록하는 소프트웨어를 개인용 건강관리제품 예시로 들지만, 결과로 병명을 판정해 주면 의료기기법
+  제2조의 진단 목적에 해당할 수 있어 확인하라는 안내를 `reasoning` 끝에 한 줄 덧붙인다. "스트레스
+  자가진단"처럼 병명이 없으면 붙지 않는다.
+- `reasoning` 줄 수: 기본 4줄. 위 두 안내는 해당할 때만 각각 한 줄씩 붙어 최대 6줄이다. 프론트는 줄
+  수를 가정하지 말고 받은 만큼 표시한다.
 - `legal_basis`(2026-10-01 추가): verdict를 낸 근거 조문. 매트릭스 판정이면 6칸 각각의 근거
   (`gate_matrix_table.GATE_MATRIX_LEGAL_BASIS`), 침습적 하드체크면 웰니스 판단기준 `III.2.나`
   (고위해도 판정 규정)다. 공용 `LegalBasis` 형식이라 `quote`/`quote_status`는 위 표와 같은 규칙으로

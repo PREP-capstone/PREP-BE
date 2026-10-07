@@ -246,3 +246,49 @@ async def test_non_medical_usage_gets_neither_fail_nor_note(monkeypatch) -> None
     assert response.medical_purpose_fired is False
     assert response.medical_purpose_negated_phrase is None
     assert len(response.reasoning) == 4
+
+
+async def test_disease_self_check_keeps_verdict_and_adds_note(monkeypatch) -> None:
+    """병명 + 자가진단 — FAIL로 올리지 않고, 병명을 판정하는 기능인지 확인하라는 안내만 붙인다."""
+    _patch(monkeypatch, "우울증 자가진단 테스트를 제공하고 결과를 기록한다.", _SLEEP, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.verdict == "PASS"
+    assert response.medical_purpose_fired is False
+    assert "우울증 자가진단" in response.medical_purpose_self_check_phrase
+    assert response.medical_purpose_negated_phrase is None
+    assert len(response.reasoning) == 5
+    assert "자가진단 표현" in response.reasoning[-1]
+    assert "병명을 판정" in response.reasoning[-1]
+
+
+async def test_self_check_without_disease_name_gets_no_note(monkeypatch) -> None:
+    _patch(monkeypatch, "스트레스 자가진단 설문으로 현재 상태를 점검한다.", _SLEEP, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.verdict == "PASS"
+    assert response.medical_purpose_self_check_phrase is None
+    assert len(response.reasoning) == 4
+
+
+async def test_self_check_does_not_hide_an_asserted_medical_purpose(monkeypatch) -> None:
+    """자가진단과 함께 치료를 내세우면 치료 표현으로 FAIL이고, 자가진단 안내는 따로 붙이지 않는다."""
+    _patch(monkeypatch, "우울증 자가진단 후 맞춤 치료 프로그램을 제공한다.", _SLEEP, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.verdict == "FAIL"
+    assert response.medical_purpose_fired is True
+    assert "치료" in response.medical_purpose_phrase
+    assert response.medical_purpose_self_check_phrase is None
+
+
+async def test_negated_self_check_is_not_reported_as_self_check(monkeypatch) -> None:
+    _patch(monkeypatch, "우울증 자가진단은 제공하지 않고 기분만 기록한다.", _SLEEP, ["record"])
+
+    response = await judge_gate(GateRequest(session_id="unit-test"))
+
+    assert response.verdict == "PASS"
+    assert response.medical_purpose_self_check_phrase is None
