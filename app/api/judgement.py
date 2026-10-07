@@ -46,6 +46,7 @@ from app.pipeline.gate_matrix_table import (
     MEDICAL_PURPOSE_VERDICT,
     detect_genetic_test_signal,
     detect_invasive,
+    is_negated_after,
     scan_medical_purpose,
     is_invasive_hardcheck,
 )
@@ -504,21 +505,17 @@ def _dedupe_matched_rules(matches: list[CorrectionMatch]) -> list[MatchedRule]:
     return list(by_basis.values())
 
 
-# 부정 표현 처리(이슈 2) — 위험 단어/문구 뒤에 "~하지 않고", "~없이" 등이 바로 붙으면
-# 실제로는 위험 기능이 없다는 뜻이라 매칭에서 제외한다. 공백 제거 후 검사하는 건
-# gate_matrix_table.py의 detect_invasive()와 같은 전략이나, 거기는 접두형("비침습")이라
-# 정규식으로 바로 지울 수 있었던 반면 여기는 후위형("진단하지 않고")이라 매칭 위치 뒤
-# 윈도우를 봐야 한다. "아니"는 일부러 안 넣는다 — "피아니스트"처럼 무관한 단어 중간에 낀
-# 부분 문자열까지 부정으로 오인해 정상 매칭을 지워버리는 오탐이 코드리뷰로 확인됨
-# (2026-09-27). 윈도우는 "~를 하지는 않"(4글자 뒤 "않")까지 잡을 수 있는 최소값(5)으로 둔다 —
-# 너무 넓히면 위 오탐 종류가 다시 생긴다.
+# 부정 표현 처리(이슈 2) — 위험 단어/문구 뒤에 "~하지 않고", "~없이" 등이 붙으면 실제로는
+# 위험 기능이 없다는 뜻이라 매칭에서 제외한다. 판단은 GATE 의료 목적 하드체크와 같은 규칙
+# (gate_matrix_table.is_negated_after)을 쓴다 — 같은 절 끝까지 보되, 사이에 연결어미가 있거나
+# 부정이 다른 말에 걸려 있으면 긍정으로 본다(2026-10-07, #141 R6). 예전에는 매칭 위치 뒤 5글자만
+# 봐서 "진단하거나 치료하지 않고"의 "진단"·"질병"을 위험 표현으로 잡았고, 같은 문장을 GATE는
+# 부정으로, 규제위험도는 위험으로 읽었다.
 _WHITESPACE = re.compile(r"\s+")
-_NEGATION_WINDOW = 5
-_NEGATION_PATTERN = re.compile(r"(지(?:는|도)?\s*않|없이)")
 
 
 def _has_unnegated_match(compact_text: str, needle: str) -> bool:
-    """needle이 compact_text에 있고, 그 직후에 부정 표현이 붙지 않은 occurrence가 하나라도 있으면 True."""
+    """needle이 compact_text에 있고, 같은 절에서 부정되지 않은 occurrence가 하나라도 있으면 True."""
     if not needle:
         return False
     start = 0
@@ -526,8 +523,7 @@ def _has_unnegated_match(compact_text: str, needle: str) -> bool:
         idx = compact_text.find(needle, start)
         if idx == -1:
             return False
-        tail = compact_text[idx + len(needle) : idx + len(needle) + _NEGATION_WINDOW]
-        if not _NEGATION_PATTERN.search(tail):
+        if not is_negated_after(compact_text, idx + len(needle)):
             return True
         start = idx + len(needle)
 
