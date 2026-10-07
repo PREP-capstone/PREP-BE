@@ -366,6 +366,36 @@ def is_invasive_hardcheck(data_type: str, acquire_method: str | None, invasive_s
     return data_type == "생체지표" and acquire_method == "기기연동" and invasive_signal
 
 
+def derive_matrix_fields(fields: dict) -> dict:
+    """gate_matrix 행의 verdict에서 파생되는 필드(exemption_note·avoidance_*·priority)를 다시 채운다.
+
+    검수자가 검수 대기용 CONDITIONAL의 verdict를 고쳐 승인하면(#144) 나머지 필드는 CONDITIONAL일 때
+    값 그대로 남는다 — FAIL인데 회피 방향이 비고 priority가 2인 행이 된다. extract_b가 처음 만들 때와
+    같은 규칙으로 다시 계산한다. 승인할 수 있는 두 형태(침습적 하드체크, 6칸 표 그대로)가 아니면
+    손대지 않는다 — 그런 행은 승인 전 검증(validate._check_confirmed_verdict_b)이 막는다.
+    """
+    data_type, verdict = fields.get("data_type"), fields.get("verdict")
+    acquire_method = fields.get("acquire_method")
+    if acquire_method is not None:
+        if not (data_type == "생체지표" and acquire_method == "기기연동" and verdict == HARDCHECK_VERDICT):
+            return fields
+        derived = {
+            "exemption_note": None,
+            "avoidance_redesign": HARDCHECK_AVOIDANCE_REDESIGN,
+            "avoidance_certification": HARDCHECK_AVOIDANCE_CERTIFICATION,
+        }
+    else:
+        cell = GATE_MATRIX_TABLE.get((data_type, fields.get("function_type")))
+        if cell is None or cell["verdict"] != verdict:
+            return fields
+        derived = {
+            "exemption_note": cell["exemption_note"],
+            "avoidance_redesign": cell.get("avoidance_redesign"),
+            "avoidance_certification": cell.get("avoidance_certification"),
+        }
+    return {**fields, **derived, "priority": VERDICT_PRIORITY[verdict]}
+
+
 def needs_invasive_review(
     data_type: str, acquire_method: str | None, invasive_signal: bool, keyword_hit: bool
 ) -> bool:

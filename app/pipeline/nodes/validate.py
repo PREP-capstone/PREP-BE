@@ -122,6 +122,9 @@ def structural_errors(draft: ExtractedDraft) -> list[str]:
     이미 human_review를 지난 뒤라, 재제출해도 새 결정이 반영되지 않고 같은 publish만 반복
     실패한다(2026-10-06 LangGraph로 재현 확인). 인용미확인·중복후보는 사람이 판단해 승인할 수
     있어 여기서 막지 않는다.
+
+    Stage B는 판정이 확정됐는지도 본다(_check_confirmed_verdict_b) — 검수 대기용 CONDITIONAL을
+    그대로 승인하면 6칸 표와 다른 행이 발행된다(#144).
     """
     stage = draft.get("stage")
     if stage == "A":
@@ -129,7 +132,9 @@ def structural_errors(draft: ExtractedDraft) -> list[str]:
         if not checks:
             checks = _check_enums_a(draft) + _check_weight_range(draft)
     elif stage == "B":
-        checks = _check_required_fields_b(draft) or _check_enums_b(draft)
+        checks = (
+            _check_required_fields_b(draft) or _check_enums_b(draft) or _check_confirmed_verdict_b(draft)
+        )
     elif stage == "C":
         checks = _check_required_fields_c(draft)
         if not checks:
@@ -365,6 +370,33 @@ def _check_derived_verdict(draft: ExtractedDraft) -> list[str]:
     expected = GATE_MATRIX_TABLE.get((fields["data_type"], fields["function_type"]))
     if expected is None or expected["verdict"] != fields["verdict"]:
         return ["파생값불일치"]
+    return []
+
+
+def _check_confirmed_verdict_b(draft: ExtractedDraft) -> list[str]:
+    """승인하려는 gate_matrix 행의 판정이 확정된 값인지 확인한다(#144).
+
+    extract_b는 사람이 봐야 하는 조합(침습 신호 불일치, 경계 케이스)을 CONDITIONAL로 만들어 검수
+    큐에 올린다. 이 CONDITIONAL은 "판정"이 아니라 "확인 요청"이라, 그대로 승인하면 6칸 표와 다른
+    행이 발행된다 — 2026-10-06에 지운 (생체지표, 단순기록, 기기연동)=CONDITIONAL 같은 행이다.
+    런타임 GATE는 코드의 6칸 표만 보므로 판정은 안 바뀌지만 DB와 코드의 기준이 어긋난다.
+
+    승인할 수 있는 행은 둘뿐이다.
+    - 6칸 표 그대로: acquire_method 없음 + verdict가 표와 같음
+    - 침습적 하드체크: 생체지표 + 기기연동 + FAIL
+    검수자는 침습이면 verdict를 FAIL로, 아니면 acquire_method를 비우고 verdict를 표 값으로 고쳐
+    승인하거나 반려한다.
+    """
+    fields = draft["fields"]
+    acquire_method = fields.get("acquire_method")
+    if acquire_method is not None:
+        hardcheck_row = (
+            fields["data_type"] == "생체지표" and acquire_method == "기기연동" and fields["verdict"] == "FAIL"
+        )
+        return [] if hardcheck_row else ["판정미확정"]
+    expected = GATE_MATRIX_TABLE.get((fields["data_type"], fields["function_type"]))
+    if expected is None or expected["verdict"] != fields["verdict"]:
+        return ["판정미확정"]
     return []
 
 

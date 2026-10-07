@@ -16,11 +16,14 @@ from app.pipeline.gate_matrix_table import (
     GATE_MATRIX_LEGAL_BASIS,
     GATE_MATRIX_TABLE,
     GENETIC_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_AVOIDANCE_CERTIFICATION,
+    HARDCHECK_AVOIDANCE_REDESIGN,
     HARDCHECK_LEGAL_BASIS,
     HARDCHECK_VERDICT,
     INVASIVE_KEYWORDS,
     MATRIX_VERDICT_ENUM,
     VERDICT_PRIORITY,
+    derive_matrix_fields,
     detect_genetic_test_signal,
     detect_invasive,
     is_invasive_hardcheck,
@@ -287,3 +290,41 @@ def test_genetic_avoidance_certification_does_not_promise_certification_is_enoug
     assert "제49조" in GENETIC_AVOIDANCE_CERTIFICATION
     assert "제50조" in GENETIC_AVOIDANCE_CERTIFICATION
     assert "의료기관" in GENETIC_AVOIDANCE_CERTIFICATION
+
+
+def _review_fields(**overrides) -> dict:
+    return {
+        "data_type": "생체지표",
+        "function_type": "단순기록",
+        "verdict": "CONDITIONAL",
+        "exemption_note": None,
+        "acquire_method": "기기연동",
+        "avoidance_redesign": None,
+        "avoidance_certification": None,
+        "priority": VERDICT_PRIORITY["CONDITIONAL"],
+        **overrides,
+    }
+
+
+def test_derive_matrix_fields_fills_hardcheck_row_after_reviewer_sets_fail() -> None:
+    """#144: 검수자가 침습으로 확정해 verdict만 FAIL로 고친 경우."""
+    fields = derive_matrix_fields(_review_fields(verdict="FAIL"))
+    assert fields["priority"] == VERDICT_PRIORITY["FAIL"]
+    assert fields["avoidance_redesign"] == HARDCHECK_AVOIDANCE_REDESIGN
+    assert fields["avoidance_certification"] == HARDCHECK_AVOIDANCE_CERTIFICATION
+    assert fields["exemption_note"] is None
+
+
+def test_derive_matrix_fields_fills_table_row_after_reviewer_clears_acquire_method() -> None:
+    fields = derive_matrix_fields(_review_fields(acquire_method=None, verdict="PASS"))
+    cell = GATE_MATRIX_TABLE[("생체지표", "단순기록")]
+    assert fields["priority"] == VERDICT_PRIORITY["PASS"]
+    assert fields["exemption_note"] == cell["exemption_note"]
+    assert fields["avoidance_redesign"] is None
+
+
+def test_derive_matrix_fields_leaves_unresolved_row_untouched() -> None:
+    unresolved = _review_fields()
+    assert derive_matrix_fields(unresolved) == unresolved
+    mismatch = _review_fields(acquire_method=None)  # 표는 PASS인데 CONDITIONAL
+    assert derive_matrix_fields(mismatch) == mismatch

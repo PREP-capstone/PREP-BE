@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db.models import RuleReviewQueue
 from app.db.session import AsyncSessionLocal
+from app.pipeline.gate_matrix_table import derive_matrix_fields
 from app.pipeline.state import ExtractedDraft, PipelineState
 
 
@@ -63,7 +64,11 @@ async def human_review(state: PipelineState) -> dict:
         if item_decision["action"] == "approve":
             edited_fields = item_decision.get("edited_fields")
             if edited_fields:
-                draft = {**draft, "fields": {**draft["fields"], **edited_fields}}
+                fields = {**draft["fields"], **edited_fields}
+                if draft["stage"] == "B":
+                    # 판정을 고쳐 승인했으면 회피 방향·우선순위도 그 판정에 맞춘다(#144).
+                    fields = derive_matrix_fields(fields)
+                draft = {**draft, "fields": fields}
             approved.append(draft)
         else:
             rejected.append({"draft": draft, "reason": item_decision.get("reason")})
