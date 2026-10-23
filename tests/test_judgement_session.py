@@ -68,7 +68,7 @@ async def test_gate_uses_stored_health_data_and_service_actions() -> None:
         assert response.avoidance_redesign is None
         assert response.avoidance_certification is None
         assert len(response.reasoning) == 4
-        assert "하드체크 대상이 아닙니다" in response.reasoning[0]
+        assert "침습형 기기 기준에는 해당하지 않습니다" in response.reasoning[0]
     finally:
         await _delete_session(session_id)
 
@@ -140,7 +140,7 @@ async def test_gate_fails_on_invasive_device_sync_hardcheck() -> None:
         # 하드체크 FAIL은 매트릭스를 안 거치므로 avoidance 문구도 하드체크 전용 상수여야 한다(D-2).
         assert response.avoidance_redesign == HARDCHECK_AVOIDANCE_REDESIGN
         assert response.avoidance_certification == HARDCHECK_AVOIDANCE_CERTIFICATION
-        assert "하드체크로 FAIL 판정" in response.reasoning[-1]
+        assert "다른 조건과 관계없이 FAIL로 판정" in response.reasoning[-1]
         assert "침습적 신호가 감지됐습니다" in response.reasoning[2]
         # 근거 조문도 매트릭스 칸이 아니라 고위해도 판정 규정이어야 한다(§10.5).
         assert response.legal_basis.article == "III.2.나"
@@ -258,7 +258,7 @@ async def test_gate_reasoning_explains_device_sync_without_invasive_signal() -> 
         response = await judge_gate(GateRequest(session_id=session_id))
         assert response.verdict == "PASS"
         assert response.hardcheck_fired is False
-        assert "침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다" in response.reasoning[0]
+        assert "측정 방식은 보이지 않아 침습형 기기 기준에는 해당하지 않습니다" in response.reasoning[0]
     finally:
         await _delete_session(session_id)
 
@@ -277,7 +277,7 @@ async def test_gate_reasoning_explains_lifestyle_data_with_invasive_signal() -> 
         assert response.data_type == "라이프스타일"
         assert response.hardcheck_fired is False
         assert response.invasive_signal is True
-        assert "침습적 신호가 감지됐지만 생체지표가 아니라 하드체크 대상이 아닙니다" in response.reasoning[0]
+        assert "침습적 신호가 감지됐지만 생체지표 데이터가 아니라 침습형 기기 기준에는 해당하지 않습니다" in response.reasoning[0]
     finally:
         await _delete_session(session_id)
 

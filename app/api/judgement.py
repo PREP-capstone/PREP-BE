@@ -228,17 +228,17 @@ def _describe_data_and_acquire(
         # data_type/acquire_method는 각각 다른 데이터 항목에서 나왔을 수 있다(_classify_data_type은
         # 생체지표 항목 하나만 있어도, _classify_acquire_method는 전체 항목 중 우선순위가 가장 높은
         # 수집방법을 고른다) — "이 조합"처럼 동일 항목을 암시하지 않도록 문구를 분리해서 서술한다.
-        return f"등록된 항목 중 {data_type}에 해당하는 항목이 있고, 전체 항목 기준 수집방법이 {acquire_method}으로 분류되어 침습적 하드체크 대상입니다."
+        return f"등록된 항목 중 {data_type}에 해당하는 항목이 있고, 전체 항목 기준 수집방법이 {acquire_method}으로 분류되어, 침습형 기기(피부를 뚫거나 몸에 넣어 측정하는 기기) 기준이 적용됩니다."
     if data_type == "생체지표" and acquire_method == "기기연동":
         # hardcheck_fired=False인데 여기 도달했다는 건 invasive_signal=False였다는 뜻
         # (is_invasive_hardcheck는 생체지표+기기연동+invasive_signal 셋 다 True일 때만 발동).
-        return "생체지표 데이터를 기기연동으로 수집하지만 침습적 신호는 감지되지 않아 하드체크 대상이 아닙니다."
+        return "생체지표 데이터를 기기연동으로 수집하지만, 피부를 뚫거나 몸에 넣는 측정 방식은 보이지 않아 침습형 기기 기준에는 해당하지 않습니다."
     if data_type == "생체지표":
-        return f"생체지표 데이터를 다루지만 수집 방법이 기기연동이 아닌 {acquire_method}이라 침습적 하드체크 대상이 아닙니다."
+        return f"생체지표 데이터를 다루지만 수집 방법이 기기연동이 아닌 {acquire_method}이라 침습형 기기 기준에는 해당하지 않습니다."
     if invasive_signal:
         # data_type=="라이프스타일"이면 is_invasive_hardcheck가 절대 발동하지 않는다 — 침습 신호가
         # 있어도 왜 하드체크로 안 이어지는지 명시해야 reasoning[2](침습 신호 감지)와 모순돼 보이지 않는다.
-        return f"{data_type} 데이터를 {acquire_method}으로 수집하며, 침습적 신호가 감지됐지만 생체지표가 아니라 하드체크 대상이 아닙니다."
+        return f"{data_type} 데이터를 {acquire_method}으로 수집하며, 침습적 신호가 감지됐지만 생체지표 데이터가 아니라 침습형 기기 기준에는 해당하지 않습니다."
     return f"{data_type} 데이터를 {acquire_method}으로 수집합니다."
 
 
@@ -250,7 +250,10 @@ def _describe_invasive_signal(invasive_signal: bool) -> str:
 
 def _describe_verdict(verdict: str | None, hardcheck_fired: bool) -> str:
     if hardcheck_fired:
-        return "생체지표·기기연동·침습적 신호가 모두 겹쳐 하드체크로 FAIL 판정됐습니다."
+        return (
+            "생체지표를 기기로 연동하고 설명·항목명에 피부를 뚫거나 몸에 넣어 측정한다는 표현이 있어, "
+            "침습형 기기 기준에 따라 다른 조건과 관계없이 FAIL로 판정됐습니다."
+        )
     if verdict == "PASS":
         return "위 조합은 GATE 매트릭스 기준 의료기기 해당 가능성이 낮은 조합으로 판정됐습니다(PASS)."
     if verdict == "CONDITIONAL":

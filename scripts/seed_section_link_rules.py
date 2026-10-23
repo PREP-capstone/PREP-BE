@@ -50,7 +50,7 @@ ROWS = [
         "condition_type": "data_type",
         "condition_value": "생체지표",
         "target_section": "SECTION 1 GATE",
-        "message": "생체지표 데이터를 다루는 서비스입니다. GATE 판정 결과에서 침습적 하드체크 해당 여부를 확인하세요.",
+        "message": "생체지표 데이터를 다루는 서비스입니다. GATE 판정 결과에서 침습형 기기(피부를 뚫거나 몸에 넣는 측정 기기)에 해당하는지 확인하세요.",
     },
     {
         "rule_id": "link_biomarker_to_privacy",
@@ -71,7 +71,7 @@ ROWS = [
         "condition_type": "service_type",
         "condition_value": "기기연동",
         "target_section": "SECTION 2-1 규제 위험도",
-        "message": "기기 연동 서비스는 침습적 신호와 결합되면 GATE FAIL 하드체크 대상이 될 수 있습니다.",
+        "message": "기기 연동 서비스는 피부를 뚫거나 몸에 넣어 측정하는 방식이면 침습형 기기 기준에 따라 GATE FAIL이 될 수 있습니다.",
     },
     {
         "rule_id": "link_wearable_to_market",
