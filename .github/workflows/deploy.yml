@@ -63,6 +63,8 @@ jobs:
             docker compose -p prep-be -f compose.prod.yml exec -T api alembic upgrade head
             docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/seed_standard_scales.py
             docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/seed_proposal_fields.py
+            docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/seed_section_link_rules.py
+            docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/seed_service_law_map.py
             docker compose -p prep-be -f compose.prod.yml exec -T api python scripts/check_deploy_ready.py --skip-chroma
             curl -fsS http://127.0.0.1:8000/api/v1/health
             curl -fsS -X POST http://127.0.0.1:8000/api/v1/category-classifier/predict \

@@ -76,7 +76,7 @@ HARDCHECK_VERDICT = "FAIL"
 # 하드체크 FAIL은 매트릭스를 안 거치므로 avoidance 문구도 별도로 둔다(§3.2, D-2 코드 템플릿).
 HARDCHECK_AVOIDANCE_REDESIGN = (
     "채혈·삽입형 센서처럼 각질층을 관통하는 침습적 측정 방식을 비침습 방식으로 바꾸거나, "
-    "기기연동을 없애고 사용자가 직접 입력하는 방식으로 전환하면 하드체크 대상에서 제외됩니다."
+    "기기연동을 없애고 사용자가 직접 입력하는 방식으로 전환하면 침습형 기기 기준에서 벗어납니다."
 )
 HARDCHECK_AVOIDANCE_CERTIFICATION = f"침습적 측정 기능을 그대로 유지하려면 {_CERTIFICATION_GUIDANCE}"
 
