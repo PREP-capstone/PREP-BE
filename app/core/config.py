@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     analysis_ttl_seconds: int = 1800
+    # 검진 결과 PDF 다운로드용 임시 보관 시간. 결과는 Redis에만 두고 만료되면 자동 삭제한다.
+    report_result_ttl_seconds: int = 600
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     openai_embedding_model: str = "text-embedding-3-small"

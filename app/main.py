@@ -22,6 +22,7 @@ from app.api.funding import router as funding_router
 from app.api.judgement import router as judgement_router
 from app.api.proposals import router as proposals_router
 from app.api.rag import router as rag_router
+from app.api.reports import router as reports_router
 from app.api.rule_documents import router as rule_documents_router
 from app.core.config import settings
 from app.core.redis_client import redis_client
@@ -52,6 +53,8 @@ app.add_middleware(
     allow_origin_regex=settings.cors_allow_origin_regex or None,
     allow_methods=["*"],
     allow_headers=["*"],
+    # FE가 Blob 다운로드 시 파일명을 읽을 수 있게 한다.
+    expose_headers=["Content-Disposition"],
 )
 app.include_router(analysis_sessions_router)
 app.include_router(business_model_router)
@@ -62,6 +65,7 @@ app.include_router(funding_router)
 app.include_router(judgement_router)
 app.include_router(proposals_router)
 app.include_router(rag_router)
+app.include_router(reports_router)
 app.include_router(rule_documents_router)
 
 
