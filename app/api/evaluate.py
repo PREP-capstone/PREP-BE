@@ -51,6 +51,7 @@ from app.domain.report_llm import (
     generate_one_liner,
     generate_overall_summary,
 )
+from app.domain.analysis_report_cache import cache_analysis_result
 from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
@@ -548,7 +549,7 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
     )
     overall_summary, one_liner = await _run_llm_stage2(report_context)
 
-    return EvaluateResponse(
+    response = EvaluateResponse(
         isSuccess=True,
         code="ANALYSIS_EVALUATED",
         message="통합 판정이 완료되었습니다.",
@@ -570,3 +571,6 @@ async def evaluate_analysis(request: EvaluateRequest) -> EvaluateResponse | JSON
             one_liner=one_liner,
         ),
     )
+    # PDF 다운로드는 동일한 판정 결과를 써야 한다. DB에는 저장하지 않고 Redis TTL만 적용한다.
+    await cache_analysis_result(request.session_id, response.result.model_dump(mode="json"))
+    return response
