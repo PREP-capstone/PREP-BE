@@ -10,6 +10,7 @@ import logging
 import re
 from datetime import datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
@@ -37,7 +38,8 @@ def _error(status_code: int, code: str, message: str) -> JSONResponse:
 def _filename(service_name: str, session_id: str) -> str:
     # 헤더 인젝션·파일 경로 문자를 제거하고 한글 파일명은 RFC 5987 filename*으로 전달한다.
     safe_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", service_name).strip() or session_id
-    return f"PREP_아이디어검진_{safe_name}_{datetime.now():%Y-%m-%d}.pdf"
+    issued_on = datetime.now(ZoneInfo("Asia/Seoul"))
+    return f"PREP_아이디어검진_{safe_name}_{issued_on:%Y-%m-%d}.pdf"
 
 
 @router.get(

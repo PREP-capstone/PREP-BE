@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from io import BytesIO
 
 import pytest
@@ -113,6 +114,18 @@ def test_render_analysis_report_pdf_wraps_long_legal_quote_across_pages() -> Non
     pdf = render_analysis_report_pdf(report)
 
     assert len(PdfReader(BytesIO(pdf)).pages) >= 2
+
+
+def test_report_filename_uses_korea_standard_time(monkeypatch) -> None:
+    class SeoulDatetime:
+        @classmethod
+        def now(cls, timezone):
+            assert getattr(timezone, "key", None) == "Asia/Seoul"
+            return datetime(2026, 10, 24, 0, 5)
+
+    monkeypatch.setattr(reports, "datetime", SeoulDatetime)
+
+    assert reports._filename("혈당 기록 서비스", "session_pdf_test").endswith("_2026-10-24.pdf")
 
 
 async def test_report_result_cache_uses_configured_ttl(monkeypatch) -> None:
